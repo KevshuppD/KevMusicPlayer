@@ -241,7 +241,7 @@ fun LibraryScreen(
                                 imageVector = Icons.Rounded.Search,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         },
                         trailingIcon = {
@@ -251,7 +251,7 @@ fun LibraryScreen(
                                           imageVector = Icons.Rounded.Clear,
                                           contentDescription = "Clear",
                                           tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                          modifier = Modifier.size(20.dp)
+                                          modifier = Modifier.size(18.dp)
                                       )
                                   }
                             }
@@ -261,12 +261,12 @@ fun LibraryScreen(
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
                             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
                             unfocusedBorderColor = Color.Transparent
                         ),
                         modifier = Modifier
                             .weight(1f)
-                            .heightIn(min = 48.dp)
+                            .height(44.dp)
                     )
 
                     IconButton(
@@ -279,13 +279,13 @@ fun LibraryScreen(
                         colors = IconButtonDefaults.iconButtonColors(
                             containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                         ),
-                        modifier = Modifier.size(44.dp)
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Shuffle,
                             contentDescription = "Shuffle Play",
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -826,13 +826,13 @@ fun SongListView(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = 16.dp, 
-                end = 16.dp,
+                end = 24.dp, // Extra space for the sidebar
                 top = 8.dp, 
                 bottom = 8.dp
             ),
@@ -1047,35 +1047,24 @@ fun SongListView(
                     }
             ) {
                 // The visible bar inside the touch area
-                AnimatedVisibility(
-                    visible = showAlphabetPopup,
-                    enter = fadeIn() + slideInHorizontally(initialOffsetX = { it }),
-                    exit = fadeOut() + slideOutHorizontally(targetOffsetX = { it }),
-                    modifier = Modifier.align(Alignment.CenterEnd)
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(28.dp)
+                        .padding(vertical = 12.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .width(36.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp)
-                            )
-                            .padding(vertical = 12.dp),
-                        verticalArrangement = Arrangement.SpaceEvenly,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        visibleAlphabetRange?.forEach { letter ->
-                            val isCurrent = currentLetter == letter
-                            Text(
-                                text = letter.toString(),
-                                fontSize = if (isCurrent) 14.sp else 11.sp,
-                                fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Bold,
-                                color = if (isCurrent) MaterialTheme.colorScheme.primary 
-                                        else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                                modifier = Modifier.padding(vertical = 2.dp)
-                            )
-                        }
+                    alphabet.forEach { letter ->
+                        val isCurrent = currentLetter == letter && showAlphabetPopup
+                        Text(
+                            text = if (letter == '#') "#" else letter.toString(),
+                            fontSize = 10.sp,
+                            fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
+                            color = if (isCurrent) MaterialTheme.colorScheme.primary 
+                                    else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(vertical = 1.dp)
+                        )
                     }
                 }
             }
