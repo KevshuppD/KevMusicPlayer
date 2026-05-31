@@ -1,4 +1,28 @@
 <resources>
     <string name="app_name">Kev Music Player</string>
     <string name="playback_notification_channel_name">Playback Controls</string>
+    <string name="settings_title">Settings</string>
+    <string name="library_categories_title">Library Categories</string>
+    <string name="library_categories_drag_hint">Drag to reorder visible tabs</string>
+    <string name="library_categories_disabled">Disabled</string>
+    <string name="language_title">Language</string>
+    <string name="language_spanish">Spanish</string>
+    <string name="language_english">English</string>
+    <string name="category_songs">Songs</string>
+    <string name="category_albums">Albums</string>
+    <string name="category_artists">Artists</string>
+    <string name="category_genres">Genres</string>
+    <string name="category_folders">Folders</string>
+    <string name="category_playlists">Playlists</string>
+    <string name="category_songs_desc">View all raw audio tracks</string>
+    <string name="category_albums_desc">Group tracks by albums</string>
+    <string name="category_artists_desc">View catalog by artist name</string>
+    <string name="category_genres_desc">Filter tracks by audio genres</string>
+    <string name="category_folders_desc">Browse tracks by system folders</string>
+    <string name="category_playlists_desc">Managed user collections</string>
+    <string name="search_placeholder">Search songs...</string>
+    <string name="close_lyrics">Close lyrics</string>
+    <string name="find_lyrics">Find Lyrics</string>
+    <string name="translate_lyrics">Translate</string>
+    <string name="no_lyrics">No lyrics found for this track</string>
 </resources>

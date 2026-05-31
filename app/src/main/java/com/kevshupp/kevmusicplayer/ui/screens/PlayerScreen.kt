@@ -31,6 +31,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.media3.common.Player
 import coil.compose.SubcomposeAsyncImage
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -38,6 +39,8 @@ import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.activity.compose.BackHandler
+import com.kevshupp.kevmusicplayer.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,13 +83,22 @@ fun PlayerScreen(
     var searchTitle by remember { mutableStateOf("") }
     var searchStatusMessage by remember { mutableStateOf("") }
 
+    BackHandler(enabled = showLyrics) {
+        showLyrics = false
+    }
+
     val currentSongFile = remember(playerState.currentSong?.mediaId, viewModel?.localAudioFiles?.toList()) {
         viewModel?.localAudioFiles?.find { it.id.toString() == playerState.currentSong?.mediaId }
     }
     val lyricsText = currentSongFile?.lyrics
     val lyricLines = remember(lyricsText) { parseLrc(lyricsText) }
+    var translatedLyricLines by remember { mutableStateOf<Map<Long, String>?>(null) }
+    var isTranslating by remember { mutableStateOf(false) }
     
     val context = LocalContext.current
+    val locale = context.resources.configuration.locales[0]
+    val targetLang = locale.language // "es" or "en"
+    
     val currentSongUriString = remember(playerState.currentSong?.mediaId) {
         playerState.currentSong?.mediaId?.let { "content://media/external/audio/media/$it" }
     }
@@ -131,6 +143,42 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(backgroundBrush)
     ) {
+        // Translation Logic
+        val translateLyrics: suspend () -> Unit = {
+            if (lyricLines.isNotEmpty()) {
+                isTranslating = true
+                val results = mutableMapOf<Long, String>()
+                try {
+                    withContext(Dispatchers.IO) {
+                        val client = okhttp3.OkHttpClient()
+                        // Translating in batches or one by one? 
+                        // To keep it simple and free-tier friendly, let's do it individually with a small delay or batching if possible.
+                        // MyMemory allows batching with "|" but it's limited.
+                        lyricLines.forEach { line ->
+                            if (line.text.isNotBlank()) {
+                                val encodedText = java.net.URLEncoder.encode(line.text, "UTF-8")
+                                val url = "https://api.mymemory.translated.net/get?q=$encodedText&langpair=AUTO|$targetLang"
+                                val request = okhttp3.Request.Builder().url(url).build()
+                                client.newCall(request).execute().use { response ->
+                                    if (response.isSuccessful) {
+                                        val body = response.body?.string() ?: ""
+                                        val json = org.json.JSONObject(body)
+                                        val translated = json.getJSONObject("responseData").getString("translatedText")
+                                        results[line.timeMs] = translated
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    translatedLyricLines = results
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    isTranslating = false
+                }
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -173,30 +221,45 @@ fun PlayerScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        onClick = { showQueueSheet = true },
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
-                            contentDescription = "Queue",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
+                    if (showLyrics) {
+                        IconButton(
+                            onClick = { showLyrics = false },
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = stringResource(R.string.close_lyrics),
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    } else {
+                        IconButton(
+                            onClick = { showQueueSheet = true },
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
+                                contentDescription = "Queue",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
 
-                    IconButton(
-                        onClick = { showMoreOptions = true },
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MoreVert,
-                            contentDescription = "Options",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
+                        IconButton(
+                            onClick = { showMoreOptions = true },
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MoreVert,
+                                contentDescription = "Options",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
                     }
                 }
             }
@@ -211,6 +274,11 @@ fun PlayerScreen(
                     ScrollingLyricsView(
                         lyricLines = lyricLines,
                         currentPositionMs = playerState.position,
+                        translatedLines = translatedLyricLines,
+                        isTranslating = isTranslating,
+                        onTranslateClick = {
+                            scope.launch { translateLyrics() }
+                        },
                         onLineClick = { timeMs -> player.seekTo(timeMs) },
                         onEditClick = {
                             editLyricsText = lyricsText ?: ""
@@ -1216,6 +1284,9 @@ suspend fun fetchLyricsFromLrcLib(artist: String, title: String): String? {
 private fun ScrollingLyricsView(
     lyricLines: List<LyricLine>,
     currentPositionMs: Long,
+    translatedLines: Map<Long, String>? = null,
+    isTranslating: Boolean = false,
+    onTranslateClick: () -> Unit = {},
     onLineClick: (Long) -> Unit,
     onEditClick: () -> Unit,
     onSearchOnlineClick: () -> Unit,
@@ -1255,7 +1326,7 @@ private fun ScrollingLyricsView(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "No lyrics found for this track",
+                    text = stringResource(R.string.no_lyrics),
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
@@ -1268,7 +1339,10 @@ private fun ScrollingLyricsView(
                         modifier = Modifier.size(24.dp)
                     )
                 } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Button(
                             onClick = onSearchOnlineClick,
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
@@ -1276,100 +1350,120 @@ private fun ScrollingLyricsView(
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                         ) {
                             Icon(Icons.Rounded.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Search Online", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                        OutlinedButton(
-                            onClick = onEditClick,
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.4f)),
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Add Manually", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.find_lyrics), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
                 }
             }
         } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "LYRICS",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 11.sp,
-                        letterSpacing = 1.sp
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = onSearchOnlineClick,
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            if (isSearchingOnline) {
-                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Rounded.CloudDownload, contentDescription = "Sync from Web", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        IconButton(
-                            onClick = onEditClick,
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(Icons.Rounded.Edit, contentDescription = "Edit Lyrics", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(top = 150.dp, bottom = 300.dp, start = 24.dp, end = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(28.dp)
+            ) {
+                itemsIndexed(lyricLines) { index, line ->
+                    val isActive = index == activeIndex
+                    val translatedText = translatedLines?.get(line.timeMs)
 
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(vertical = 140.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    itemsIndexed(lyricLines) { index, line ->
-                        val isActive = index == activeIndex
-                        
-                        val color by animateColorAsState(
-                            targetValue = if (isActive) Color.White else Color.White.copy(alpha = 0.35f),
-                            label = "lyric_color"
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onLineClick(line.timeMs) }
+                            .graphicsLayer {
+                                val distance = Math.abs(index - activeIndex)
+                                alpha = if (isActive) 1f else (0.4f - (distance * 0.05f)).coerceAtLeast(0.1f)
+                                scaleX = if (isActive) 1.05f else 1f
+                                scaleY = if (isActive) 1.05f else 1f
+                            },
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = line.text,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Bold,
+                            color = if (isActive) MaterialTheme.colorScheme.primary else Color.White,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        val scale by animateFloatAsState(
-                            targetValue = if (isActive) 1.15f else 0.95f,
-                            label = "lyric_scale"
-                        )
-                        val size = if (isActive) 22.sp else 16.sp
-                        val weight = if (isActive) FontWeight.ExtraBold else FontWeight.SemiBold
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onLineClick(line.timeMs) }
-                                .padding(vertical = 12.dp, horizontal = 24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
+                        if (translatedText != null) {
                             Text(
-                                text = line.text,
-                                color = color,
-                                fontWeight = weight,
-                                fontSize = size,
+                                text = translatedText,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                                color = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.5f),
                                 textAlign = TextAlign.Center,
-                                modifier = Modifier.graphicsLayer(
-                                    scaleX = scale,
-                                    scaleY = scale
-                                )
+                                modifier = Modifier.padding(top = 4.dp).fillMaxWidth()
                             )
                         }
                     }
+                }
+            }
+
+            // Buttons Layer (Floating)
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (isTranslating) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = Color.Black,
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                } else {
+                    IconButton(
+                        onClick = onTranslateClick,
+                        colors = IconButtonDefaults.iconButtonColors(
+                            containerColor = if (translatedLines != null) MaterialTheme.colorScheme.primary 
+                                           else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        ),
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Translate,
+                            contentDescription = stringResource(R.string.translate_lyrics),
+                            tint = if (translatedLines != null) Color.Black else Color.White
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onEditClick,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    ),
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Edit,
+                        contentDescription = "Edit Lyrics",
+                        tint = Color.White
+                    )
+                }
+
+                IconButton(
+                    onClick = onSearchOnlineClick,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    ),
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.CloudDownload,
+                        contentDescription = "Search Online",
+                        tint = Color.White
+                    )
                 }
             }
         }

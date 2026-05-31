@@ -42,12 +42,14 @@ import androidx.compose.ui.layout.ContentScale
 import android.util.LruCache
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.activity.compose.BackHandler
 import coil.compose.SubcomposeAsyncImage
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
+import com.kevshupp.kevmusicplayer.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -83,7 +85,7 @@ fun LibraryScreen(
     player: Player?,
     onMiniPlayerClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    enabledTabs: Set<String>,
+    enabledTabs: List<String>,
     sortBy: String,
     viewModel: MediaBrowserViewModel? = null,
     modifier: Modifier = Modifier
@@ -236,7 +238,7 @@ fun LibraryScreen(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text("Search songs...") },
+                        placeholder = { Text(stringResource(R.string.search_placeholder)) },
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Rounded.Search,
@@ -267,7 +269,7 @@ fun LibraryScreen(
                         ),
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(52.dp)
                     )
 
                     IconButton(
@@ -299,7 +301,16 @@ fun LibraryScreen(
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    val tabs = listOf("Songs", "Albums", "Artists", "Genres", "Folders", "Playlists").filter { it in enabledTabs }
+                    val tabLabelMap = mapOf(
+                        "Songs" to stringResource(R.string.category_songs),
+                        "Albums" to stringResource(R.string.category_albums),
+                        "Artists" to stringResource(R.string.category_artists),
+                        "Genres" to stringResource(R.string.category_genres),
+                        "Folders" to stringResource(R.string.category_folders),
+                        "Playlists" to stringResource(R.string.category_playlists)
+                    )
+                    val allTabs = listOf("Songs", "Albums", "Artists", "Genres", "Folders", "Playlists")
+                    val tabs = enabledTabs.filter { it in allTabs }
                     tabs.forEach { tab ->
                         val isSelected = activeTab == tab
                         FilterChip(
@@ -307,7 +318,7 @@ fun LibraryScreen(
                             onClick = { selectedTab = tab },
                             label = {
                                 Text(
-                                    text = tab.uppercase(),
+                                    text = (tabLabelMap[tab] ?: tab).uppercase(),
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 12.sp,
                                     letterSpacing = 0.5.sp
@@ -805,7 +816,10 @@ fun SongListView(
     var currentLetter by remember { mutableStateOf(' ') }
     var dragY by remember { mutableStateOf(0f) }
 
-    Box(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)) {
+        val totalHeight = constraints.maxHeight.toFloat()
+        val constraintsMaxHeight = maxHeight
+        
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -991,7 +1005,7 @@ fun SongListView(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
-                    .width(44.dp) // Wide touch target
+                    .width(44.dp)
                     .pointerInput(alphabet) {
                         detectVerticalDragGestures(
                             onDragStart = { showAlphabetPopup = true },
@@ -999,11 +1013,9 @@ fun SongListView(
                             onDragCancel = { showAlphabetPopup = false },
                             onVerticalDrag = { change, _ ->
                                 val y = change.position.y
-                                val height = this.size.height.toFloat()
-                                dragY = y.coerceIn(0f, height)
+                                dragY = y.coerceIn(0f, totalHeight)
                                 
-                                // Mapping Y position to FULL alphabet for accurate seeking
-                                val totalIndex = ((dragY / height) * alphabet.size).toInt().coerceIn(0, alphabet.size - 1)
+                                val totalIndex = ((dragY / totalHeight) * alphabet.size).toInt().coerceIn(0, alphabet.size - 1)
                                 val letter = alphabet[totalIndex]
                                 
                                 if (currentLetter != letter) {
@@ -1039,32 +1051,34 @@ fun SongListView(
                             CircleShape
                         )
                 )
+            }
 
-                // The letter popup that follows the finger
-                if (showAlphabetPopup) {
-                    val density = LocalDensity.current
-                    Box(
+            // The letter popup that follows the finger
+            if (showAlphabetPopup) {
+                val density = LocalDensity.current
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(end = 60.dp)
+                ) {
+                    Surface(
                         modifier = Modifier
-                            .offset(y = with(density) { 
-                                (dragY - 48.dp.toPx()).toDp().coerceAtLeast(0.dp)
-                            })
-                            .padding(end = 56.dp)
+                            .size(72.dp)
                             .align(Alignment.TopEnd)
+                            .offset(y = with(density) { 
+                                (dragY - 36.dp.toPx()).toDp().coerceIn(0.dp, constraintsMaxHeight - 72.dp)
+                            }),
+                        shape = RoundedCornerShape(topStart = 36.dp, bottomStart = 36.dp, topEnd = 36.dp, bottomEnd = 4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        shadowElevation = 16.dp
                     ) {
-                        Surface(
-                            modifier = Modifier.size(64.dp),
-                            shape = RoundedCornerShape(topStart = 32.dp, bottomStart = 32.dp, topEnd = 32.dp, bottomEnd = 2.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            shadowElevation = 12.dp
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = currentLetter.toString(),
-                                    style = MaterialTheme.typography.headlineLarge,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color.Black
-                                )
-                            }
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = currentLetter.toString(),
+                                style = MaterialTheme.typography.displaySmall,
+                                fontWeight = FontWeight.Black,
+                                color = Color.Black
+                            )
                         }
                     }
                 }

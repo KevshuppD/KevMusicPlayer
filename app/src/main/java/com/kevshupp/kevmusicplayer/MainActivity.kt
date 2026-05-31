@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.app.LocaleManager
+import android.os.LocaleList
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -49,6 +51,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Apply saved language preference before composing UI
+        val languagePrefs = getSharedPreferences("settings_prefs", MODE_PRIVATE)
+        val languageTag = languagePrefs.getString("language", "en") ?: "en"
+        val localeManager = getSystemService(LocaleManager::class.java)
+        localeManager?.applicationLocales = LocaleList.forLanguageTags(languageTag)
 
         // Enforce 120Hz display refresh rate for ultra-smooth fluid navigation (supported devices like Moto G35)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

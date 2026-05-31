@@ -1,0 +1,28 @@
+<resources>
+    <string name="app_name">Kev Music Player</string>
+    <string name="playback_notification_channel_name">Controles de reproducción</string>
+    <string name="settings_title">Configuración</string>
+    <string name="library_categories_title">Categorías de biblioteca</string>
+    <string name="library_categories_drag_hint">Arrastra para reordenar las pestañas visibles</string>
+    <string name="library_categories_disabled">Desactivadas</string>
+    <string name="language_title">Idioma</string>
+    <string name="language_spanish">Español</string>
+    <string name="language_english">Inglés</string>
+    <string name="category_songs">Canciones</string>
+    <string name="category_albums">Álbumes</string>
+    <string name="category_artists">Artistas</string>
+    <string name="category_genres">Géneros</string>
+    <string name="category_folders">Carpetas</string>
+    <string name="category_playlists">Playlists</string>
+    <string name="category_songs_desc">Ver todas las pistas de audio</string>
+    <string name="category_albums_desc">Agrupar pistas por álbumes</string>
+    <string name="category_artists_desc">Ver catálogo por artista</string>
+    <string name="category_genres_desc">Filtrar pistas por género</string>
+    <string name="category_folders_desc">Explorar pistas por carpeta</string>
+    <string name="category_playlists_desc">Colecciones de usuario</string>
+    <string name="search_placeholder">Buscar canciones...</string>
+    <string name="close_lyrics">Cerrar letras</string>
+    <string name="find_lyrics">Buscar letras</string>
+    <string name="translate_lyrics">Traducir</string>
+    <string name="no_lyrics">No se encontraron letras para esta pista</string>
+</resources>

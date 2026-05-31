@@ -27,7 +27,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     private var browserFuture: ListenableFuture<MediaBrowser>? = null
     val browser = mutableStateOf<MediaBrowser?>(null)
     val localAudioFiles = mutableStateListOf<AudioFile>()
-    val enabledTabs = mutableStateOf(setOf("Songs", "Albums", "Artists", "Genres", "Folders", "Playlists"))
+    val enabledTabs = mutableStateOf(listOf("Songs", "Albums", "Artists", "Genres", "Folders", "Playlists"))
     val sortBy = mutableStateOf("Alphabetical")
     
     // Requested global navigation target triggers

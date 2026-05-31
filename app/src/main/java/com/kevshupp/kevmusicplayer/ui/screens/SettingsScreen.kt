@@ -2,12 +2,14 @@ package com.kevshupp.kevmusicplayer.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -16,9 +18,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -27,12 +34,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import android.content.pm.PackageManager
 import android.Manifest
+import android.app.Activity
+import android.app.LocaleManager
+import android.os.LocaleList
+import com.kevshupp.kevmusicplayer.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    enabledTabs: Set<String>,
-    onEnabledTabsChanged: (Set<String>) -> Unit,
+    enabledTabs: List<String>,
+    onEnabledTabsChanged: (List<String>) -> Unit,
     sortBy: String,
     onSortByChanged: (String) -> Unit,
     onRescan: () -> Unit,
@@ -44,6 +55,18 @@ fun SettingsScreen(
     var isScanning by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val localeManager = remember { context.getSystemService(LocaleManager::class.java) }
+    val settingsPrefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
+    var selectedLanguage by remember {
+        mutableStateOf(settingsPrefs.getString("language", "en") ?: "en")
+    }
+
+    fun applyLanguage(languageTag: String) {
+        selectedLanguage = languageTag
+        settingsPrefs.edit().putString("language", languageTag).apply()
+        localeManager?.applicationLocales = LocaleList.forLanguageTags(languageTag)
+        (context as? Activity)?.recreate()
+    }
 
     // Helper functions for dynamic status queries
     fun hasAudioPermission(): Boolean {
@@ -114,7 +137,7 @@ fun SettingsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Settings",
+                        text = stringResource(R.string.settings_title),
                         fontWeight = FontWeight.Black,
                         fontSize = 24.sp,
                         color = Color.White
@@ -416,17 +439,17 @@ fun SettingsScreen(
                 }
             }
 
-            // Visible Navigation Categories Section
+            // Visible Navigation Categories Section (Drag-to-Reorder)
             Column {
                 Text(
-                    text = "LIBRARY CATEGORIES",
+                    text = stringResource(R.string.library_categories_title),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                     letterSpacing = 1.sp,
                     modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
                 )
-                
+
                 Card(
                     shape = RoundedCornerShape(24.dp),
                     colors = CardDefaults.cardColors(
@@ -434,75 +457,246 @@ fun SettingsScreen(
                     ),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                        val categories = listOf(
-                            CategoryItem("Songs", "View all raw audio tracks", Icons.Rounded.MusicNote),
-                            CategoryItem("Albums", "Group tracks by albums", Icons.Rounded.Album),
-                            CategoryItem("Artists", "View catalog by artist name", Icons.Rounded.Person),
-                            CategoryItem("Genres", "Filter tracks by audio genres", Icons.Rounded.Category),
-                            CategoryItem("Folders", "Browse tracks by system folders", Icons.Rounded.Folder)
+                    Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
+                        val allCategories = remember {
+                            listOf(
+                                CategoryItem("Songs", R.string.category_songs, R.string.category_songs_desc, Icons.Rounded.MusicNote),
+                                CategoryItem("Albums", R.string.category_albums, R.string.category_albums_desc, Icons.Rounded.Album),
+                                CategoryItem("Artists", R.string.category_artists, R.string.category_artists_desc, Icons.Rounded.Person),
+                                CategoryItem("Genres", R.string.category_genres, R.string.category_genres_desc, Icons.Rounded.Category),
+                                CategoryItem("Folders", R.string.category_folders, R.string.category_folders_desc, Icons.Rounded.Folder),
+                                CategoryItem("Playlists", R.string.category_playlists, R.string.category_playlists_desc, Icons.AutoMirrored.Rounded.PlaylistPlay)
+                            )
+                        }
+                        val categoryMap = remember(allCategories) { allCategories.associateBy { it.name } }
+                        val enabledOrder = remember { mutableStateListOf<String>() }
+
+                        LaunchedEffect(enabledTabs) {
+                            if (enabledOrder.toList() != enabledTabs) {
+                                enabledOrder.clear()
+                                enabledOrder.addAll(enabledTabs)
+                            }
+                        }
+
+                        val disabledOrder = remember(enabledOrder.toList(), allCategories) {
+                            allCategories.map { it.name }.filter { it !in enabledOrder }
+                        }
+
+                        var draggingIndex by remember { mutableStateOf<Int?>(null) }
+                        var dragOffset by remember { mutableStateOf(0f) }
+                        var itemHeightPx by remember { mutableStateOf(0f) }
+
+                        Text(
+                            text = stringResource(R.string.library_categories_drag_hint),
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp)
                         )
-                        
-                        categories.forEachIndexed { index, cat ->
-                            val isChecked = cat.name in enabledTabs
+
+                        enabledOrder.forEachIndexed { index, name ->
+                            val cat = categoryMap[name] ?: return@forEachIndexed
+                            val isDragging = draggingIndex == index
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable {
-                                        val newTabs = if (isChecked) {
-                                            if (enabledTabs.size > 1) enabledTabs - cat.name else enabledTabs
-                                        } else {
-                                            enabledTabs + cat.name
+                                    .onSizeChanged { size ->
+                                        if (itemHeightPx == 0f) {
+                                            itemHeightPx = size.height.toFloat()
                                         }
-                                        onEnabledTabsChanged(newTabs)
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(
-                                        imageVector = cat.icon,
-                                        contentDescription = null,
-                                        tint = if (isChecked) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.4f),
-                                        modifier = Modifier.size(24.dp)
+                                    .offset { IntOffset(0, if (isDragging) dragOffset.toInt() else 0) }
+                                    .zIndex(if (isDragging) 1f else 0f)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(
+                                        if (isDragging) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                        else Color.Transparent
                                     )
-                                    Spacer(modifier = Modifier.width(16.dp))
-                                    Column {
-                                        Text(
-                                            text = cat.name,
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White
-                                        )
-                                        Text(
-                                            text = cat.desc,
-                                            fontSize = 12.sp,
-                                            color = Color.White.copy(alpha = 0.5f)
+                                    .pointerInput(enabledOrder) {
+                                        detectDragGestures(
+                                            onDragStart = { draggingIndex = index },
+                                            onDragCancel = {
+                                                draggingIndex = null
+                                                dragOffset = 0f
+                                            },
+                                            onDragEnd = {
+                                                draggingIndex = null
+                                                dragOffset = 0f
+                                                onEnabledTabsChanged(enabledOrder.toList())
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                if (draggingIndex != index || itemHeightPx == 0f) return@detectDragGestures
+                                                dragOffset += dragAmount.y
+                                                val offsetIndexes = (dragOffset / itemHeightPx).toInt()
+                                                val targetIndex = (index + offsetIndexes).coerceIn(0, enabledOrder.lastIndex)
+                                                if (targetIndex != index) {
+                                                    val moved = enabledOrder.removeAt(index)
+                                                    enabledOrder.add(targetIndex, moved)
+                                                    draggingIndex = targetIndex
+                                                    dragOffset -= offsetIndexes * itemHeightPx
+                                                    onEnabledTabsChanged(enabledOrder.toList())
+                                                }
+                                            }
                                         )
                                     }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = cat.icon,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = stringResource(cat.labelRes),
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = stringResource(cat.descRes),
+                                        fontSize = 12.sp,
+                                        color = Color.White.copy(alpha = 0.5f)
+                                    )
                                 }
                                 Switch(
-                                    checked = isChecked,
-                                    onCheckedChange = {
-                                        val newTabs = if (it) {
-                                            enabledTabs + cat.name
-                                        } else {
-                                            if (enabledTabs.size > 1) enabledTabs - cat.name else enabledTabs
+                                    checked = true,
+                                    onCheckedChange = { checked ->
+                                        if (!checked && enabledOrder.size > 1) {
+                                            enabledOrder.remove(name)
+                                            onEnabledTabsChanged(enabledOrder.toList())
                                         }
-                                        onEnabledTabsChanged(newTabs)
                                     }
                                 )
                             }
-                            if (index < categories.size - 1) {
+                            HorizontalDivider(
+                                color = Color.White.copy(alpha = 0.08f),
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                        }
+
+                        if (disabledOrder.isNotEmpty()) {
+                            Text(
+                                text = stringResource(R.string.library_categories_disabled),
+                                fontSize = 11.sp,
+                                color = Color.White.copy(alpha = 0.5f),
+                                modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp)
+                            )
+                        }
+
+                        disabledOrder.forEachIndexed { index, name ->
+                            val cat = categoryMap[name] ?: return@forEachIndexed
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = cat.icon,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = 0.4f),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = stringResource(cat.labelRes),
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White.copy(alpha = 0.7f)
+                                    )
+                                    Text(
+                                        text = stringResource(cat.descRes),
+                                        fontSize = 12.sp,
+                                        color = Color.White.copy(alpha = 0.4f)
+                                    )
+                                }
+                                Switch(
+                                    checked = false,
+                                    onCheckedChange = { checked ->
+                                        if (checked) {
+                                            enabledOrder.add(name)
+                                            onEnabledTabsChanged(enabledOrder.toList())
+                                        }
+                                    }
+                                )
+                            }
+                            if (index < disabledOrder.size - 1) {
                                 HorizontalDivider(
                                     color = Color.White.copy(alpha = 0.08f),
                                     modifier = Modifier.padding(horizontal = 16.dp)
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            // Language Settings Section
+            Column {
+                Text(
+                    text = stringResource(R.string.language_title),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
+                )
+
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { applyLanguage("es") }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selectedLanguage == "es",
+                                onClick = { applyLanguage("es") },
+                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = stringResource(R.string.language_spanish),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { applyLanguage("en") }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selectedLanguage == "en",
+                                onClick = { applyLanguage("en") },
+                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = stringResource(R.string.language_english),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
                         }
                     }
                 }
@@ -602,50 +796,45 @@ fun SettingsScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Music Library Maintenance",
-                        fontSize = 16.sp,
+                        text = "LIBRARY MAINTENANCE",
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        letterSpacing = 1.sp
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
                     Text(
-                        text = "If new downloads or transferred MP3 files are missing from the library lists, tap below to execute a deep media store scanning cycle.",
+                        text = "Force refresh your entire audio library and re-scan device storage",
                         fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.6f),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 8.dp)
+                        color = Color.White.copy(alpha = 0.6f)
                     )
+
                     Spacer(modifier = Modifier.height(16.dp))
-                    
+
                     Button(
                         onClick = {
                             scope.launch {
                                 isScanning = true
                                 onRescan()
-                                delay(1200) // Visual feedback delay
+                                delay(3000)
                                 isScanning = false
                             }
                         },
-                        enabled = !isScanning,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = Color.White,
-                            disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                            disabledContentColor = Color.White.copy(alpha = 0.5f)
-                        ),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         modifier = Modifier
-                            .fillMaxWidth(0.9f)
-                            .height(56.dp),
-                        shape = RoundedCornerShape(18.dp)
+                            .fillMaxWidth()
+                            .height(52.dp)
                     ) {
                         if (isScanning) {
                             CircularProgressIndicator(
-                                color = Color.White,
                                 modifier = Modifier.size(20.dp),
+                                color = Color.White,
                                 strokeWidth = 2.dp
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
                                 text = "Scanning Files...",
                                 fontWeight = FontWeight.Bold,
@@ -675,7 +864,8 @@ fun SettingsScreen(
 
 private data class CategoryItem(
     val name: String,
-    val desc: String,
+    val labelRes: Int,
+    val descRes: Int,
     val icon: androidx.compose.ui.graphics.vector.ImageVector
 )
 
