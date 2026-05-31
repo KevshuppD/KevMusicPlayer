@@ -41,6 +41,7 @@ import android.net.Uri
 import androidx.compose.ui.layout.ContentScale
 import android.util.LruCache
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.activity.compose.BackHandler
@@ -802,29 +803,7 @@ fun SongListView(
     
     var showAlphabetPopup by remember { mutableStateOf(false) }
     var currentLetter by remember { mutableStateOf(' ') }
-
-    // Logic to calculate visible portion of the alphabet based on scroll
-    val visibleAlphabetRange = remember(alphabet, listState.firstVisibleItemIndex, songs.size) {
-        if (alphabet == null || songs.isEmpty()) {
-            null
-        } else {
-            val totalLetters = alphabet.size
-            if (totalLetters <= 15) {
-                alphabet 
-            } else {
-                // Find starting letter index based on current scroll position
-                val progress = (listState.firstVisibleItemIndex.toFloat() / songs.size).coerceIn(0f, 1f)
-                val centerIndex = (progress * totalLetters).toInt().coerceIn(0, totalLetters - 1)
-                
-                // Show a window of letters around the current scroll position
-                val windowSize = 12
-                val start = (centerIndex - windowSize / 2).coerceIn(0, (totalLetters - windowSize).coerceAtLeast(0))
-                val end = (start + windowSize).coerceAtMost(totalLetters)
-                
-                alphabet.subList(start, end)
-            }
-        }
-    }
+    var dragY by remember { mutableStateOf(0f) }
 
     Box(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)) {
         LazyColumn(
@@ -1020,10 +999,11 @@ fun SongListView(
                             onDragCancel = { showAlphabetPopup = false },
                             onVerticalDrag = { change, _ ->
                                 val y = change.position.y
-                                val height = this.size.height
+                                val height = this.size.height.toFloat()
+                                dragY = y.coerceIn(0f, height)
                                 
                                 // Mapping Y position to FULL alphabet for accurate seeking
-                                val totalIndex = ((y / height) * alphabet.size).toInt().coerceIn(0, alphabet.size - 1)
+                                val totalIndex = ((dragY / height) * alphabet.size).toInt().coerceIn(0, alphabet.size - 1)
                                 val letter = alphabet[totalIndex]
                                 
                                 if (currentLetter != letter) {
@@ -1046,49 +1026,47 @@ fun SongListView(
                         )
                     }
             ) {
-                // The visible bar inside the touch area
-                Column(
+                // The visible track (like Spotify green line)
+                Box(
                     modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 4.dp, top = 20.dp, bottom = 20.dp)
                         .fillMaxHeight()
-                        .width(28.dp)
-                        .padding(vertical = 12.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    alphabet.forEach { letter ->
-                        val isCurrent = currentLetter == letter && showAlphabetPopup
-                        Text(
-                            text = if (letter == '#') "#" else letter.toString(),
-                            fontSize = 10.sp,
-                            fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
-                            color = if (isCurrent) MaterialTheme.colorScheme.primary 
-                                    else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-                            modifier = Modifier.padding(vertical = 1.dp)
+                        .width(2.dp)
+                        .background(
+                            if (showAlphabetPopup) MaterialTheme.colorScheme.primary 
+                            else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f),
+                            CircleShape
                         )
-                    }
-                }
-            }
-        }
+                )
 
-        // Floating Letter Popup (Internal)
-        AnimatedVisibility(
-            visible = showAlphabetPopup,
-            enter = fadeIn() + scaleIn(),
-            exit = fadeOut() + scaleOut(),
-            modifier = Modifier.align(Alignment.Center)
-        ) {
-            Surface(
-                modifier = Modifier.size(80.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f),
-                shadowElevation = 8.dp
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = currentLetter.toString(),
-                        style = MaterialTheme.typography.displayMedium,
-                        color = Color.White
-                    )
+                // The letter popup that follows the finger
+                if (showAlphabetPopup) {
+                    val density = LocalDensity.current
+                    Box(
+                        modifier = Modifier
+                            .offset(y = with(density) { 
+                                (dragY - 48.dp.toPx()).toDp().coerceAtLeast(0.dp)
+                            })
+                            .padding(end = 56.dp)
+                            .align(Alignment.TopEnd)
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(64.dp),
+                            shape = RoundedCornerShape(topStart = 32.dp, bottomStart = 32.dp, topEnd = 32.dp, bottomEnd = 2.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            shadowElevation = 12.dp
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = currentLetter.toString(),
+                                    style = MaterialTheme.typography.headlineLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.Black
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
