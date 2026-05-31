@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Kev Music Player</string>
+    <string name="playback_notification_channel_name">Playback Controls</string>
+</resources>
