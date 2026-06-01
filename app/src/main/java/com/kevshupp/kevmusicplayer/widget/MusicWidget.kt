@@ -1,0 +1,249 @@
+package com.kevshupp.kevmusicplayer.widget
+
+import android.content.Context
+import android.content.Intent
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.glance.GlanceId
+import androidx.glance.GlanceModifier
+import androidx.glance.Image
+import androidx.glance.ImageProvider
+import androidx.glance.action.clickable
+import androidx.glance.action.actionStartActivity
+import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.provideContent
+import androidx.glance.appwidget.cornerRadius
+import androidx.glance.appwidget.action.ActionCallback
+import androidx.glance.appwidget.action.actionRunCallback
+import androidx.glance.action.ActionParameters
+import androidx.glance.background
+import androidx.glance.layout.Alignment
+import androidx.glance.layout.Box
+import androidx.glance.layout.Column
+import androidx.glance.layout.Row
+import androidx.glance.layout.Spacer
+import androidx.glance.layout.fillMaxSize
+import androidx.glance.layout.height
+import androidx.glance.layout.padding
+import androidx.glance.layout.size
+import androidx.glance.layout.width
+import androidx.glance.layout.ContentScale
+import androidx.glance.text.FontWeight
+import androidx.glance.text.Text
+import androidx.glance.text.TextStyle
+import androidx.glance.unit.ColorProvider
+import androidx.glance.ColorFilter
+import androidx.glance.state.PreferencesGlanceStateDefinition
+import androidx.glance.currentState
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import com.kevshupp.kevmusicplayer.MainActivity
+import com.kevshupp.kevmusicplayer.playback.PlaybackService
+
+class MusicWidget : GlanceAppWidget() {
+    override val stateDefinition = PreferencesGlanceStateDefinition
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        android.util.Log.d("WidgetDebug", "provideGlance called")
+        provideContent {
+            WidgetContent(context)
+        }
+    }
+
+    @Composable
+    private fun WidgetContent(context: Context) {
+        val prefs = currentState<Preferences>()
+        val title = prefs[stringPreferencesKey("title")] ?: ""
+        val artist = prefs[stringPreferencesKey("artist")] ?: ""
+        val isPlaying = prefs[booleanPreferencesKey("isPlaying")] ?: false
+
+        android.util.Log.d("WidgetDebug", "WidgetContent recomposing: title = $title, artist = $artist, isPlaying = $isPlaying")
+
+        val artFile = java.io.File(context.cacheDir, "current_widget_art.png")
+        val bitmap = if (artFile.exists()) {
+            try {
+                android.graphics.BitmapFactory.decodeFile(artFile.absolutePath)
+            } catch (e: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+
+        Box(
+            modifier = GlanceModifier
+                .fillMaxSize()
+                .background(ColorProvider(Color(0xFF161829)))
+                .cornerRadius(16.dp)
+                .padding(12.dp)
+                .clickable(actionStartActivity<MainActivity>()),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                modifier = GlanceModifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Album Cover image / placeholder (Click to launch main app)
+                Box(
+                    modifier = GlanceModifier
+                        .size(52.dp)
+                        .cornerRadius(12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (bitmap != null) {
+                        Image(
+                            provider = ImageProvider(bitmap),
+                            contentDescription = "Cover",
+                            modifier = GlanceModifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        // Vibrant glowing neon center placeholder
+                        Box(
+                            modifier = GlanceModifier
+                                .fillMaxSize()
+                                .background(ColorProvider(Color(0xFF1E1B4B))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = GlanceModifier
+                                    .size(36.dp)
+                                    .background(ColorProvider(Color(0xFF7C4DFF)))
+                                    .cornerRadius(18.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    provider = ImageProvider(android.R.drawable.ic_media_play),
+                                    contentDescription = "Cover Placeholder",
+                                    modifier = GlanceModifier.size(16.dp),
+                                    colorFilter = ColorFilter.tint(ColorProvider(Color.Black))
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = GlanceModifier.width(12.dp))
+
+                // Track details
+                Column(
+                    modifier = GlanceModifier.defaultWeight(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (title.isEmpty()) "Kev Music Player" else title,
+                        style = TextStyle(
+                            color = ColorProvider(Color.White),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        maxLines = 1
+                    )
+                    Spacer(modifier = GlanceModifier.height(2.dp))
+                    Text(
+                        text = if (artist.isEmpty()) "Dispositivo Listo" else artist,
+                        style = TextStyle(
+                            color = ColorProvider(Color(0xFFA9B2C3)),
+                            fontSize = 12.sp
+                        ),
+                        maxLines = 1
+                    )
+                }
+
+                Spacer(modifier = GlanceModifier.width(8.dp))
+
+                // Playback Control Buttons (Right aligned)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Previous Track Button
+                    Box(
+                        modifier = GlanceModifier
+                            .size(36.dp)
+                            .cornerRadius(18.dp)
+                            .background(ColorProvider(Color(0xFF222436)))
+                            .clickable(actionRunCallback<PreviousCallback>()),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            provider = ImageProvider(android.R.drawable.ic_media_previous),
+                            contentDescription = "Previous",
+                            modifier = GlanceModifier.size(18.dp),
+                            colorFilter = ColorFilter.tint(ColorProvider(Color.White))
+                        )
+                    }
+
+                    Spacer(modifier = GlanceModifier.width(8.dp))
+
+                    // Play / Pause Circle Button
+                    Box(
+                        modifier = GlanceModifier
+                            .size(44.dp)
+                            .cornerRadius(22.dp)
+                            .background(ColorProvider(Color(0xFF7C4DFF)))
+                            .clickable(actionRunCallback<PlayPauseCallback>()),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            provider = ImageProvider(
+                                if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+                            ),
+                            contentDescription = "Play/Pause",
+                            modifier = GlanceModifier.size(20.dp),
+                            colorFilter = ColorFilter.tint(ColorProvider(Color.Black))
+                        )
+                    }
+
+                    Spacer(modifier = GlanceModifier.width(8.dp))
+
+                    // Next Track Button
+                    Box(
+                        modifier = GlanceModifier
+                            .size(36.dp)
+                            .cornerRadius(18.dp)
+                            .background(ColorProvider(Color(0xFF222436)))
+                            .clickable(actionRunCallback<NextCallback>()),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            provider = ImageProvider(android.R.drawable.ic_media_next),
+                            contentDescription = "Next",
+                            modifier = GlanceModifier.size(18.dp),
+                            colorFilter = ColorFilter.tint(ColorProvider(Color.White))
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+class PlayPauseCallback : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        val intent = Intent(context, PlaybackService::class.java).apply {
+            action = "com.kevshupp.kevmusicplayer.action.PLAY_PAUSE"
+        }
+        context.startService(intent)
+    }
+}
+
+class NextCallback : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        val intent = Intent(context, PlaybackService::class.java).apply {
+            action = "com.kevshupp.kevmusicplayer.action.NEXT"
+        }
+        context.startService(intent)
+    }
+}
+
+class PreviousCallback : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        val intent = Intent(context, PlaybackService::class.java).apply {
+            action = "com.kevshupp.kevmusicplayer.action.PREVIOUS"
+        }
+        context.startService(intent)
+    }
+}

@@ -432,6 +432,13 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 settingsJson.put("app_theme", settingsPrefs.getString("app_theme", "cyberpunk"))
                 settingsJson.put("refresh_rate", settingsPrefs.getString("refresh_rate", "120"))
                 settingsJson.put("disable_animations", settingsPrefs.getBoolean("disable_animations", false))
+                
+                // Export backup folder setting if present
+                val backupDirUri = settingsPrefs.getString("backup_dir_uri", null)
+                if (backupDirUri != null) {
+                    settingsJson.put("backup_dir_uri", backupDirUri)
+                }
+                
                 json.put("settings", settingsJson)
 
                 // 2. Export playlists
@@ -449,6 +456,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     playlistsJson.put(name, songIdsArray)
                 }
                 json.put("playlists", playlistsJson)
+
+                // Export playlist covers
+                val playlistCoversJson = JSONObject()
+                playlistNames.forEach { name ->
+                    val cover = playlistsPrefs.getString("playlist_cover_$name", null)
+                    if (cover != null) {
+                        playlistCoversJson.put(name, cover)
+                    }
+                }
+                json.put("playlist_covers", playlistCoversJson)
 
                 // 3. Export cached songs (lyrics and translatedLyrics)
                 val cachedSongsArray = JSONArray()
@@ -503,6 +520,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     if (settingsJson.has("app_theme")) edit.putString("app_theme", settingsJson.getString("app_theme"))
                     if (settingsJson.has("refresh_rate")) edit.putString("refresh_rate", settingsJson.getString("refresh_rate"))
                     if (settingsJson.has("disable_animations")) edit.putBoolean("disable_animations", settingsJson.getBoolean("disable_animations"))
+                    if (settingsJson.has("backup_dir_uri")) edit.putString("backup_dir_uri", settingsJson.getString("backup_dir_uri"))
                     edit.apply()
                 }
 
@@ -512,7 +530,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     val playlistsPrefs = context.getSharedPreferences("playlists_prefs", Context.MODE_PRIVATE)
                     val edit = playlistsPrefs.edit()
                     val names = mutableSetOf<String>()
-                    
+
                     playlistsJson.keys().forEach { name ->
                         names.add(name)
                         val songIdsArray = playlistsJson.getJSONArray(name)
@@ -523,6 +541,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         edit.putString("playlist_$name", songIds.joinToString(","))
                     }
                     edit.putStringSet("playlist_names", names)
+
+                    // Restore playlist covers if any
+                    if (json.has("playlist_covers")) {
+                        val coversJson = json.getJSONObject("playlist_covers")
+                        coversJson.keys().forEach { name ->
+                            edit.putString("playlist_cover_$name", coversJson.getString(name))
+                        }
+                    }
+
                     edit.apply()
                 }
 
@@ -534,7 +561,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         val id = songJson.getLong("id")
                         val lyrics = if (songJson.has("lyrics") && !songJson.isNull("lyrics")) songJson.getString("lyrics") else null
                         val translatedLyrics = if (songJson.has("translatedLyrics") && !songJson.isNull("translatedLyrics")) songJson.getString("translatedLyrics") else null
-                        
+
                         audioDao.updateLyrics(id, lyrics)
                         audioDao.updateTranslatedLyrics(id, translatedLyrics)
                     }
@@ -583,9 +610,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     // Playlists system
     val playlists = androidx.compose.runtime.mutableStateMapOf<String, List<AudioFile>>()
+    val playlistCovers = androidx.compose.runtime.mutableStateMapOf<String, String>()
 
     fun loadPlaylists() {
         playlists.clear()
+        playlistCovers.clear()
         val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
         val names = prefs.getStringSet("playlist_names", emptySet()) ?: emptySet()
         names.forEach { name ->
@@ -596,6 +625,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 playlists[name] = songs
             } else {
                 playlists[name] = emptyList()
+            }
+
+            val cover = prefs.getString("playlist_cover_$name", null)
+            if (cover != null) {
+                playlistCovers[name] = cover
             }
         }
     }
@@ -612,13 +646,19 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         playlists[name] = emptyList()
     }
 
+    fun setPlaylistCover(name: String, imageUriStr: String) {
+        val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putString("playlist_cover_$name", imageUriStr).apply()
+        playlistCovers[name] = imageUriStr
+    }
+
     fun addSongToPlaylist(playlistName: String, songId: Long) {
         val currentList = playlists[playlistName]?.toMutableList() ?: mutableListOf()
         if (currentList.any { it.id == songId }) return
         val song = localAudioFiles.find { it.id == songId } ?: return
         currentList.add(song)
         playlists[playlistName] = currentList
-        
+
         val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
         val idsStr = currentList.map { it.id }.joinToString(",")
         prefs.edit()
@@ -630,7 +670,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         val currentList = playlists[playlistName]?.toMutableList() ?: return
         currentList.removeAll { it.id == songId }
         playlists[playlistName] = currentList
-        
+
         val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
         val idsStr = currentList.map { it.id }.joinToString(",")
         prefs.edit()
@@ -642,11 +682,25 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
         val names = (prefs.getStringSet("playlist_names", emptySet()) ?: emptySet()).toMutableSet()
         names.remove(name)
+
+        // Delete local cover file if exists
+        val coverPath = prefs.getString("playlist_cover_$name", null)
+        if (coverPath != null) {
+            try {
+                val file = java.io.File(coverPath)
+                if (file.exists()) file.delete()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
         prefs.edit()
             .putStringSet("playlist_names", names)
             .remove("playlist_$name")
+            .remove("playlist_cover_$name")
             .apply()
         playlists.remove(name)
+        playlistCovers.remove(name)
     }
 
     // Queue system
@@ -803,6 +857,86 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 localAudioFiles.removeAll { it.id == songId }
             } catch (e: Exception) {
                 e.printStackTrace()
+            }
+        }
+    }
+
+    fun updateSongMetadata(
+        context: Context,
+        songId: Long,
+        title: String,
+        artist: String,
+        album: String,
+        genre: String,
+        onSuccess: () -> Unit,
+        onError: (Exception) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // 1. Write metadata tags directly to physical file using jaudiotagger
+                val physicalPath = getPhysicalPath(context, songId)
+                if (!physicalPath.isNullOrBlank()) {
+                    val file = File(physicalPath)
+                    if (file.exists()) {
+                        val audioFile = AudioFileIO.read(file)
+                        val tag = audioFile.tag ?: audioFile.createDefaultTag()
+                        tag.setField(FieldKey.TITLE, title)
+                        tag.setField(FieldKey.ARTIST, artist)
+                        tag.setField(FieldKey.ALBUM, album)
+                        tag.setField(FieldKey.GENRE, genre)
+                        audioFile.tag = tag
+                        AudioFileIO.write(audioFile)
+                    }
+                }
+
+                // 2. Update metadata in Room Database
+                val allEntities = audioDao.getAllAudioFiles()
+                val targetEntity = allEntities.find { it.id == songId }
+                if (targetEntity != null) {
+                    val updatedEntity = targetEntity.copy(
+                        title = title,
+                        artist = artist,
+                        album = album,
+                        genre = genre
+                    )
+                    audioDao.insertAll(listOf(updatedEntity))
+                }
+
+                // 3. Update in-memory localAudioFiles on Main thread to instantly update UI
+                withContext(Dispatchers.Main) {
+                    val index = localAudioFiles.indexOfFirst { it.id == songId }
+                    if (index != -1) {
+                        val currentSong = localAudioFiles[index]
+                        localAudioFiles[index] = currentSong.copy(
+                            title = title,
+                            artist = artist,
+                            album = album,
+                            genre = genre
+                        )
+                    }
+                    
+                    // Update in playlists too
+                    playlists.keys.toList().forEach { playlistName ->
+                        val list = playlists[playlistName] ?: emptyList()
+                        val pIndex = list.indexOfFirst { it.id == songId }
+                        if (pIndex != -1) {
+                            val newList = list.toMutableList()
+                            newList[pIndex] = newList[pIndex].copy(
+                                title = title,
+                                artist = artist,
+                                album = album,
+                                genre = genre
+                            )
+                            playlists[playlistName] = newList
+                        }
+                    }
+                    
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onError(e)
+                }
             }
         }
     }

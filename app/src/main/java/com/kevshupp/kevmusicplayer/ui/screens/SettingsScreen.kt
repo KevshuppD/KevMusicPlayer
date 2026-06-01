@@ -87,6 +87,10 @@ fun SettingsScreen(
         mutableStateOf(settingsPrefs.getString("refresh_rate", "120") ?: "120")
     }
 
+    var backupDirUri by remember {
+        mutableStateOf(settingsPrefs.getString("backup_dir_uri", null))
+    }
+
     var isIgnoringBatteryOptimizations by remember {
         mutableStateOf(run {
             val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
@@ -150,6 +154,63 @@ fun SettingsScreen(
             } catch (e: Exception) {
                 android.widget.Toast.makeText(context, "${getLocalized("Error de archivo:", "File error:")} ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    val selectBackupFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            settingsPrefs.edit().putString("backup_dir_uri", uri.toString()).apply()
+            backupDirUri = uri.toString()
+            android.widget.Toast.makeText(context, getLocalized("Carpeta fija de copia configurada con éxito", "Fixed backup folder configured successfully"), android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun performExportToFolder(folderUriStr: String) {
+        try {
+            val folderUri = Uri.parse(folderUriStr)
+            val dirFile = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri)
+            if (dirFile == null || !dirFile.exists()) {
+                android.widget.Toast.makeText(context, getLocalized("La carpeta seleccionada ya no existe o no tiene permisos. Configúrala de nuevo.", "The selected folder no longer exists or lacks permissions. Configure it again."), android.widget.Toast.LENGTH_LONG).show()
+                return
+            }
+
+            var backupFile = dirFile.findFile("kev_music_player_backup.json")
+            if (backupFile == null) {
+                backupFile = dirFile.createFile("application/json", "kev_music_player_backup.json")
+            }
+
+            val fileUri = backupFile?.uri
+            if (fileUri != null) {
+                val outputStream = context.contentResolver.openOutputStream(fileUri, "rwt")
+                if (outputStream != null) {
+                    viewModel.exportBackup(
+                        context = context,
+                        outputStream = outputStream,
+                        onSuccess = {
+                            android.widget.Toast.makeText(context, getLocalized("Copia de seguridad guardada y sobrescrita con éxito en la carpeta fija", "Backup saved and overwritten successfully in the fixed folder"), android.widget.Toast.LENGTH_LONG).show()
+                        },
+                        onError = { error ->
+                            android.widget.Toast.makeText(context, "${getLocalized("Error al crear copia:", "Failed to create backup:")} ${error.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    )
+                } else {
+                    android.widget.Toast.makeText(context, getLocalized("No se pudo abrir el archivo para escribir", "Could not open file for writing"), android.widget.Toast.LENGTH_LONG).show()
+                }
+            } else {
+                android.widget.Toast.makeText(context, getLocalized("No se pudo crear el archivo de copia", "Could not create backup file"), android.widget.Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            android.widget.Toast.makeText(context, "${getLocalized("Error de carpeta:", "Folder error:")} ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1250,6 +1311,17 @@ fun SettingsScreen(
                 )
             }
 
+            val folderName = remember(backupDirUri) {
+                if (backupDirUri != null) {
+                    try {
+                        val dirFile = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, Uri.parse(backupDirUri))
+                        dirFile?.name ?: getLocalized("Carpeta seleccionada", "Selected Folder")
+                    } catch (e: Exception) {
+                        getLocalized("Carpeta seleccionada", "Selected Folder")
+                    }
+                } else null
+            }
+
             // Copias de Seguridad (Backup & Restore Section)
             Column {
                 Text(
@@ -1275,13 +1347,55 @@ fun SettingsScreen(
                     ) {
                         Text(
                             text = getLocalized(
-                                "Resguarda tus listas de reproducción, preferencias de visualización y letras traducidas a un archivo local, o restáuralas cuando quieras.",
-                                "Safeguard your custom playlists, visual settings, and translated lyrics to a local file, or restore them anytime."
+                                "Resguarda tus listas de reproducción, preferencias de visualización y letras traducidas a un archivo local en una carpeta fija de manera persistente.",
+                                "Safeguard your custom playlists, visual settings, and translated lyrics to a local file in a fixed folder persistently."
                             ),
                             fontSize = 12.sp,
                             color = Color.White.copy(alpha = 0.7f),
                             textAlign = TextAlign.Center
                         )
+
+                        // Folder status indicator
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                selectBackupFolderLauncher.launch(null)
+                            }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.FolderSpecial,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = getLocalized("Carpeta de Destino Fija", "Fixed Target Folder"),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = folderName ?: getLocalized("Toca para configurar una carpeta...", "Tap to configure a folder..."),
+                                        fontSize = 11.sp,
+                                        color = if (folderName != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.5f)
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Rounded.Edit,
+                                    contentDescription = "Edit",
+                                    tint = Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1290,8 +1404,12 @@ fun SettingsScreen(
                             // 1. Export Backup Button
                             Button(
                                 onClick = {
-                                    val fileName = "kev_music_player_backup_${System.currentTimeMillis() / 1000}.json"
-                                    createDocumentLauncher.launch(fileName)
+                                    val currentDirUri = backupDirUri
+                                    if (currentDirUri != null) {
+                                        performExportToFolder(currentDirUri)
+                                    } else {
+                                        selectBackupFolderLauncher.launch(null)
+                                    }
                                 },
                                 shape = RoundedCornerShape(16.dp),
                                 colors = ButtonDefaults.buttonColors(
@@ -1316,31 +1434,91 @@ fun SettingsScreen(
                             }
 
                             // 2. Import Restore Button
-                            OutlinedButton(
-                                onClick = {
-                                    openDocumentLauncher.launch(arrayOf("application/json"))
-                                },
-                                shape = RoundedCornerShape(16.dp),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Restore,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = getLocalized("Restaurar", "Restore"),
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                            var showRestoreOptions by remember { mutableStateOf(false) }
+                            Box(modifier = Modifier.weight(1f)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        if (backupDirUri != null) {
+                                            showRestoreOptions = true
+                                        } else {
+                                            openDocumentLauncher.launch(arrayOf("application/json"))
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(16.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.primary
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Restore,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = getLocalized("Restaurar", "Restore"),
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+
+                                DropdownMenu(
+                                    expanded = showRestoreOptions,
+                                    onDismissRequest = { showRestoreOptions = false },
+                                    containerColor = Color(0xFF1E213A)
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(getLocalized("Restaurar desde carpeta fija", "Restore from fixed folder"), color = Color.White) },
+                                        onClick = {
+                                            showRestoreOptions = false
+                                            val currentDirUri = backupDirUri
+                                            if (currentDirUri != null) {
+                                                try {
+                                                    val dirFile = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, Uri.parse(currentDirUri))
+                                                    val backupFile = dirFile?.findFile("kev_music_player_backup.json")
+                                                    if (backupFile != null && backupFile.exists()) {
+                                                        val inputStream = context.contentResolver.openInputStream(backupFile.uri)
+                                                        if (inputStream != null) {
+                                                            viewModel.importBackup(
+                                                                context = context,
+                                                                inputStream = inputStream,
+                                                                onSuccess = {
+                                                                    android.widget.Toast.makeText(context, getLocalized("Copia de seguridad restaurada con éxito", "Backup restored successfully"), android.widget.Toast.LENGTH_LONG).show()
+                                                                    (context as? Activity)?.recreate()
+                                                                },
+                                                                onError = { error ->
+                                                                    android.widget.Toast.makeText(context, "${getLocalized("Error al restaurar:", "Failed to restore:")} ${error.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                                                                }
+                                                            )
+                                                        }
+                                                    } else {
+                                                        android.widget.Toast.makeText(context, getLocalized("No se encontró el archivo de copia 'kev_music_player_backup.json' en la carpeta.", "No 'kev_music_player_backup.json' backup file found in folder."), android.widget.Toast.LENGTH_LONG).show()
+                                                    }
+                                                } catch (e: Exception) {
+                                                    android.widget.Toast.makeText(context, "${getLocalized("Error de lectura:", "Read error:")} ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                                                }
+                                            }
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Rounded.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(getLocalized("Seleccionar archivo...", "Select file..."), color = Color.White) },
+                                        onClick = {
+                                            showRestoreOptions = false
+                                            openDocumentLauncher.launch(arrayOf("application/json"))
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Rounded.FileOpen, contentDescription = null, tint = Color.White.copy(alpha = 0.6f))
+                                        }
+                                    )
+                                }
                             }
                         }
                     }

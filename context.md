@@ -32,6 +32,15 @@ A highly optimized, production-grade music player application for Android built 
 - **Lyrics Display & LRC Synchronization**: Large scrolling lyrics pane with LRCLIB API integration, interactive time-seeking, manual lyric editing, and online lyrics search dialogs.
 - **System-Wide "Manage All Files" Deletions**: Implemented robust full storage management settings intents to securely perform physical deletes of local tracks on Android 11+ (API 30+).
 - **Library Multi-Select Mode**: Support for batch actions (Queue, Playlist, and Deletion) with highlighted borders, custom checkboxes, and a premium glassmorphic bottom bar.
+- **Fixed Overwrite-Capable Backup System**: Updated backup features in settings to export settings, playlists, covers, and lyrics to a single fixed file `kev_music_player_backup.json` inside a user-defined directory using the Android Storage Access Framework (`ActivityResultContracts.OpenDocumentTree`) and persistent Uri permissions.
+- **Playlist Enhancements**:
+  - **Custom Covers**: Added capability to pick and set custom images as playlist cover arts using `ActivityResultContracts.GetContent`. The picked image is copied locally to `filesDir` for reliability, registered in the viewModel's `playlistCovers` map, and rendered beautifully in both the detail header and grid items with custom vertical gradient overlays.
+  - **Shuffle Button**: Dedicated button in the playlist view header to instantly start a shuffled queue of the playlist songs.
+  - **Dynamic Sorting**: Custom dropdown selector in the playlist view header to sort songs by Date added, Title (Name), or Artist.
+  - **Search & Filter inside Dialog**: A search bar inside the "Add songs to playlist" dialog with real-time filtering for songs, albums, artists, and genres, making playlist creation incredibly smooth.
+- **Deep Obsidian Theme Legibility**: Resolved accessibility bugs in the Deep Obsidian theme by applying dynamic theme colors (`onPrimary` instead of hardcoded white/black) to selected chips in the main screen.
+- **Tag Editor (Metadata Tags)**: Integrated `jaudiotagger` library to write song tags (Title, Artist, Album, Genre) directly into physical local files (MP3, FLAC, M4A). The app automatically syncs changes to the Room database, memory lists, and active UI in real-time. It features an online search metadata tool querying the LRCLIB API to autofill tags dynamically.
+- **Home Screen Glance Widgets**: Designed and implemented premium home screen widgets using `androidx.glance` library. The widget displays the actual album cover image extracted dynamically via `MediaMetadataRetriever`, along with the playing track title, artist, and state (play/pause), allowing controls (play/pause, next, previous) directly from the screen. State updates are instantly pushed reactively via Glance's native `PreferencesGlanceStateDefinition` and `updateAppWidgetState` on every single ExoPlayer event from the background service.
 
 ## 4. Key Features
 - **Traducción Automática de Letras**: Los usuarios pueden traducir instantáneamente cualquier letra al idioma de la aplicación mediante un botón dedicado en la pantalla del reproductor.
@@ -41,11 +50,14 @@ A highly optimized, production-grade music player application for Android built 
 - **Navegación Fluida con Quick-Scroll**: Barra lateral de desplazamiento con burbuja verde (estilo Spotify) que indica la letra actual para una navegación ultrarrápida en bibliotecas grandes.
 - **Local SQLite Caching (Room)**: Eliminates the blank screen problem on startup by caching scanned tracks locally. Background scans sync silently and update the database without startup delays.
 - **Browse by Folders**: Extracts directory structures from MediaStore to automatically organize the library into a grid of system folders displaying tracks grouped by parent directories.
-- **Playlists System (CRUD)**: Persists user-defined lists using SharedPreferences (`playlists_prefs`). Includes a stunning `PlaylistGridView` with dynamic gradient cards.
+- **Playlists System (CRUD)**: Persists user-defined lists using SharedPreferences (`playlists_prefs`). Includes a stunning `PlaylistGridView` with dynamic gradient cards, supporting custom local cover image overlays.
 - **Dynamic Playback Queue**: Features controls for Play Next, Add to Queue, dynamic index highlights, direct track skipping, individual track removal, and a full queue clear option.
-- **Sleek Shuffle Button**: A compact, premium `IconButton` positioned right next to the search query bar in the library header.
+- **Sleek Shuffle Button**: A compact, premium `IconButton` positioned right next to the search query bar in the library header, as well as a dedicated shuffle button in the playlist detail view.
+- **Backup & Restore System**: Fixed folder backup system that targets a user-chosen directory with persistent read/write storage access, saving a single self-contained JSON backup file that is automatically overwritten on subsequent exports.
 - **Physical Song Deletion**: Enhanced deletion module that resolves the data path on storage to physically delete files from the device via `java.io.File.delete()`, alongside `ContentResolver` database purging.
 - **Advanced Playback Interface**: Features an expressive deep gradient screen containing track info, seek progress, physical details (bitrate/format), synchronized lyrics, and a quick-access queue drawer.
+- **Interactive Metadata Tag Editor**: Easily edit metadata tags for individual songs from context menus or long-press, featuring a premium dialog with text input fields and an integrated online metadata search helper.
+- **Premium Glance Widgets**: A highly responsive home screen widget with custom dark theme integration, dynamic album cover extraction, and real-time native state syncing using DataStore Preferences.
 
 ## 5. Technical Stack
 - **API de Traducción**: MyMemory API (via HTTP/JSON)
@@ -60,10 +72,15 @@ A highly optimized, production-grade music player application for Android built 
 - **Image Loading**: Coil (Efficient asynchronous Album Art loading)
 - **Async Concurrency**: Kotlin Coroutines & Flow (Safe off-main-thread I/O)
 - **Build System**: Gradle Kotlin DSL with KSP (Kotlin Symbol Processing)
+- **Widget Toolkit**: AndroidX Glance (`androidx.glance:glance-appwidget` and `androidx.glance:glance-material3`)
+- **Tag Editing Library**: net.jthink:jaudiotagger (Local audio metadata reading/writing)
 
 ## 6. Project Structure Highlights
 - `com.kevshupp.kevmusicplayer.MainActivity.kt`: Main entry point. Dynamically applies 60Hz/120Hz refresh rates, intercepts setting modifications to update refresh modes, and handles edge-to-edge content.
 - `com.kevshupp.kevmusicplayer.playback.PlaybackService.kt`: Extends `MediaLibraryService` to run a robust background player with persistent system media controllers.
+- `com.kevshupp.kevmusicplayer.widget/`:
+    - `MusicWidget.kt`: Implements the Glance AppWidget custom UI, reactive state binding and service controller intents.
+    - `MusicWidgetReceiver.kt`: Handles Android widget lifecycle updates and system broadcasts.
 - `com.kevshupp.kevmusicplayer.ui.screens/`:
     - `LibraryScreen.kt`: The main portal featuring reactive tab filters, Search query filters, sub-view detail navigators, FolderGridView, PlaylistGridView, and SongListView incorporating contextual menus, multi-selection state machines, category-based adding to playlists, and search-aligned shuffle buttons.
     - `SettingsScreen.kt`: Full-screen professional settings UI with dynamic theme selections, 60Hz/120Hz performance controls, zero-animation switches, a custom GitHub-connected update checker, and a legal credits panel.
