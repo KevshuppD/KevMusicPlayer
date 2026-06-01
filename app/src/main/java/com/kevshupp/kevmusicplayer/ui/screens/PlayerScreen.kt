@@ -40,6 +40,8 @@ import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.activity.compose.BackHandler
 import com.kevshupp.kevmusicplayer.R
 
@@ -78,11 +80,13 @@ fun PlayerScreen(
     var editLyricsText by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     var isSearchingOnline by remember { mutableStateOf(false) }
+    var isAutoSearchingLyrics by remember { mutableStateOf(false) }
 
     var showSearchLyricsDialog by remember { mutableStateOf(false) }
     var searchArtist by remember { mutableStateOf("") }
     var searchTitle by remember { mutableStateOf("") }
     var searchStatusMessage by remember { mutableStateOf("") }
+    var searchLyricsResults by remember { mutableStateOf<List<LrcLibSearchResult>>(emptyList()) }
 
     BackHandler(enabled = showLyrics) {
         showLyrics = false
@@ -105,6 +109,27 @@ fun PlayerScreen(
             null
         }
         showTranslation = true
+    }
+
+    LaunchedEffect(playerState.currentSong?.mediaId) {
+        val songId = playerState.currentSong?.mediaId
+        if (songId != null && currentSongFile != null) {
+            val hasLyrics = !currentSongFile.lyrics.isNullOrBlank()
+            if (!hasLyrics) {
+                isAutoSearchingLyrics = true
+                kotlinx.coroutines.delay(600)
+                try {
+                    val fetched = fetchLyricsFromLrcLib(currentSongFile.artist, currentSongFile.title)
+                    if (!fetched.isNullOrEmpty()) {
+                        viewModel?.updateSongLyrics(currentSongFile.id, fetched)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    isAutoSearchingLyrics = false
+                }
+            }
+        }
     }
     
     val context = LocalContext.current
@@ -155,7 +180,6 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(backgroundBrush)
     ) {
-        // Translation Logic
         val translateLyrics: suspend () -> Unit = {
             val getLocalized: (String, String) -> String = { es, en ->
                 if (targetLang == "es") es else en
@@ -179,7 +203,7 @@ fun PlayerScreen(
                         
                         android.util.Log.d("KevTranslation", "Starting translation from $sourceLang to $targetLang. Sample: ${fullLyricsSample.take(50)}")
                         
-                        // Chunking into batches of at most 450 characters or 10 lines to stay safe within MyMemory limits
+                        // Chunking into batches of at most 450 characters or 10 lines to stay safe
                         val batches = mutableListOf<List<LyricLine>>()
                         var currentBatch = mutableListOf<LyricLine>()
                         var currentBatchLength = 0
@@ -191,7 +215,7 @@ fun PlayerScreen(
                                 currentBatchLength = 0
                             }
                             currentBatch.add(line)
-                            currentBatchLength += line.text.length + 3 // +3 for " | " separator
+                            currentBatchLength += line.text.length + 3
                         }
                         if (currentBatch.isNotEmpty()) {
                             batches.add(currentBatch)
@@ -199,87 +223,146 @@ fun PlayerScreen(
                         
                         android.util.Log.d("KevTranslation", "Prepared ${batches.size} batches for translation.")
                         
-                        var hitRateLimit = false
-                        
-                        for (batchIdx in batches.indices) {
-                            if (hitRateLimit) break
+                        // 1. Try Google Translate first! (Unlimited, completely free, robust)
+                        var googleTranslateSuccess = false
+                        try {
+                            android.util.Log.d("KevTranslation", "Attempting translation via Google Translate API...")
+                            val resultsTemp = mutableMapOf<Long, String>()
                             
-                            val batch = batches[batchIdx]
-                            // Join using " | " to preserve structural line divisions across translations!
-                            val joinedText = batch.joinToString(" | ") { it.text }
-                            val encodedText = java.net.URLEncoder.encode(joinedText, "UTF-8")
-                            
-                            // Passing the developer email parameter 'de' increases the free limit from 1,000 to 10,000 words/day and lifts the IP-based rate block!
-                            val url = "https://api.mymemory.translated.net/get?q=$encodedText&langpair=$sourceLang|$targetLang&de=kevshupp.musicplayer@gmail.com"
-                            val request = okhttp3.Request.Builder().url(url).build()
-                            
-                            android.util.Log.d("KevTranslation", "Requesting Batch $batchIdx: URL = $url")
-                            var success = false
-                            try {
+                            for (batchIdx in batches.indices) {
+                                val batch = batches[batchIdx]
+                                val joinedText = batch.joinToString(" | ") { it.text }
+                                val encodedText = java.net.URLEncoder.encode(joinedText, "UTF-8")
+                                val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetLang&dt=t&q=$encodedText"
+                                val request = okhttp3.Request.Builder().url(url).build()
+                                
                                 client.newCall(request).execute().use { response ->
-                                    android.util.Log.d("KevTranslation", "Batch $batchIdx response status: ${response.code}")
-                                    if (response.code == 429) {
-                                        hitRateLimit = true
-                                    }
-                                    
                                     if (response.isSuccessful) {
                                         val body = response.body?.string() ?: ""
-                                        android.util.Log.d("KevTranslation", "Batch $batchIdx response body: $body")
-                                        val json = org.json.JSONObject(body)
-                                        val status = json.optInt("responseStatus", 200)
-                                        if (status == 200) {
-                                            val translatedText = json.getJSONObject("responseData").getString("translatedText")
-                                            // Split using "|" to recover lines accurately
-                                            val translatedLines = translatedText.split("|")
-                                            android.util.Log.d("KevTranslation", "Batch $batchIdx translated lines count: ${translatedLines.size}, expected: ${batch.size}")
-                                            if (translatedLines.size == batch.size) {
-                                                batch.forEachIndexed { index, line ->
-                                                    results[line.timeMs] = translatedLines[index].trim()
-                                                }
-                                                success = true
+                                        val jsonArray = org.json.JSONArray(body)
+                                        val segments = jsonArray.getJSONArray(0)
+                                        val sb = java.lang.StringBuilder()
+                                        for (i in 0 until segments.length()) {
+                                            val segment = segments.getJSONArray(i)
+                                            sb.append(segment.getString(0))
+                                        }
+                                        val translatedText = sb.toString()
+                                        val translatedLines = translatedText.split("|")
+                                        if (translatedLines.size == batch.size) {
+                                            batch.forEachIndexed { index, line ->
+                                                resultsTemp[line.timeMs] = translatedLines[index].trim()
                                             }
-                                        } else if (status == 429) {
-                                            hitRateLimit = true
+                                        } else {
+                                            // Fallback: translate line-by-line via Google Translate
+                                            for (lineIdx in batch.indices) {
+                                                val line = batch[lineIdx]
+                                                val encLine = java.net.URLEncoder.encode(line.text, "UTF-8")
+                                                val lUrl = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetLang&dt=t&q=$encLine"
+                                                val lRequest = okhttp3.Request.Builder().url(lUrl).build()
+                                                client.newCall(lRequest).execute().use { lResp ->
+                                                    if (lResp.isSuccessful) {
+                                                        val lBody = lResp.body?.string() ?: ""
+                                                        val lArr = org.json.JSONArray(lBody)
+                                                        val lSegs = lArr.getJSONArray(0)
+                                                        val lSb = java.lang.StringBuilder()
+                                                        for (j in 0 until lSegs.length()) {
+                                                            lSb.append(lSegs.getJSONArray(j).getString(0))
+                                                        }
+                                                        resultsTemp[line.timeMs] = lSb.toString().trim()
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            } catch (e: Exception) {
-                                android.util.Log.e("KevTranslation", "Batch $batchIdx failed with exception: ${e.message}")
-                                e.printStackTrace()
                             }
                             
-                            // Fallback to individual lines ONLY if it's a structural mismatch (NOT a 429 rate limit!)
-                            if (!success && !hitRateLimit) {
-                                android.util.Log.w("KevTranslation", "Batch $batchIdx size mismatch. Falling back to individual line translations...")
-                                for (lineIdx in batch.indices) {
-                                    if (hitRateLimit) break
-                                    val line = batch[lineIdx]
-                                    val encodedLine = java.net.URLEncoder.encode(line.text, "UTF-8")
-                                    val fallbackUrl = "https://api.mymemory.translated.net/get?q=$encodedLine&langpair=$sourceLang|$targetLang&de=kevshupp.musicplayer@gmail.com"
-                                    val fallbackRequest = okhttp3.Request.Builder().url(fallbackUrl).build()
-                                    try {
-                                        client.newCall(fallbackRequest).execute().use { resp ->
-                                            if (resp.code == 429) {
+                            val nonBlankCount = linesToTranslate.size
+                            val translatedCount = resultsTemp.keys.size
+                            android.util.Log.d("KevTranslation", "Google Translate fetched: $translatedCount/$nonBlankCount")
+                            if (translatedCount >= nonBlankCount * 0.8) {
+                                results.putAll(resultsTemp)
+                                googleTranslateSuccess = true
+                                android.util.Log.d("KevTranslation", "Google Translate successful! Skipping MyMemory fallback.")
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("KevTranslation", "Google Translate failed/timed out: ${e.message}")
+                            e.printStackTrace()
+                        }
+                        
+                        // 2. Fall back to MyMemory ONLY if Google Translate failed!
+                        if (!googleTranslateSuccess) {
+                            android.util.Log.w("KevTranslation", "Google Translate failed. Falling back to MyMemory API...")
+                            var hitRateLimit = false
+                            
+                            for (batchIdx in batches.indices) {
+                                if (hitRateLimit) break
+                                
+                                val batch = batches[batchIdx]
+                                val joinedText = batch.joinToString(" | ") { it.text }
+                                val encodedText = java.net.URLEncoder.encode(joinedText, "UTF-8")
+                                val url = "https://api.mymemory.translated.net/get?q=$encodedText&langpair=$sourceLang|$targetLang&de=kevshupp.musicplayer@gmail.com"
+                                val request = okhttp3.Request.Builder().url(url).build()
+                                
+                                android.util.Log.d("KevTranslation", "Requesting Batch $batchIdx from MyMemory: URL = $url")
+                                var success = false
+                                try {
+                                    client.newCall(request).execute().use { response ->
+                                        if (response.code == 429) {
+                                            hitRateLimit = true
+                                        }
+                                        
+                                        if (response.isSuccessful) {
+                                            val body = response.body?.string() ?: ""
+                                            val json = org.json.JSONObject(body)
+                                            val status = json.optInt("responseStatus", 200)
+                                            if (status == 200) {
+                                                val translatedText = json.getJSONObject("responseData").getString("translatedText")
+                                                val translatedLines = translatedText.split("|")
+                                                if (translatedLines.size == batch.size) {
+                                                    batch.forEachIndexed { index, line ->
+                                                        results[line.timeMs] = translatedLines[index].trim()
+                                                    }
+                                                    success = true
+                                                }
+                                            } else if (status == 429) {
                                                 hitRateLimit = true
                                             }
-                                            if (resp.isSuccessful) {
-                                                val b = resp.body?.string() ?: ""
-                                                val json = org.json.JSONObject(b)
-                                                val translated = json.getJSONObject("responseData").getString("translatedText")
-                                                results[line.timeMs] = translated.trim()
-                                                android.util.Log.d("KevTranslation", "Fallback line $lineIdx success: ${line.text} -> $translated")
-                                            }
                                         }
-                                    } catch (e: Exception) {
-                                        android.util.Log.e("KevTranslation", "Fallback line $lineIdx failed: ${e.message}")
-                                        e.printStackTrace()
+                                    }
+                                } catch (e: Exception) {
+                                    android.util.Log.e("KevTranslation", "MyMemory Batch $batchIdx failed: ${e.message}")
+                                }
+                                
+                                if (!success && !hitRateLimit) {
+                                    for (lineIdx in batch.indices) {
+                                        if (hitRateLimit) break
+                                        val line = batch[lineIdx]
+                                        val encodedLine = java.net.URLEncoder.encode(line.text, "UTF-8")
+                                        val fallbackUrl = "https://api.mymemory.translated.net/get?q=$encodedLine&langpair=$sourceLang|$targetLang&de=kevshupp.musicplayer@gmail.com"
+                                        val fallbackRequest = okhttp3.Request.Builder().url(fallbackUrl).build()
+                                        try {
+                                            client.newCall(fallbackRequest).execute().use { resp ->
+                                                if (resp.code == 429) {
+                                                    hitRateLimit = true
+                                                }
+                                                if (resp.isSuccessful) {
+                                                    val b = resp.body?.string() ?: ""
+                                                    val json = org.json.JSONObject(b)
+                                                    val translated = json.getJSONObject("responseData").getString("translatedText")
+                                                    results[line.timeMs] = translated.trim()
+                                                }
+                                            }
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        }
                                     }
                                 }
                             }
-                        }
-                        
-                        if (hitRateLimit) {
-                            throw Exception("rate_limit_429")
+                            
+                            if (hitRateLimit) {
+                                throw Exception("rate_limit_429")
+                            }
                         }
                     }
                     translatedLyricLines = results
@@ -438,10 +521,17 @@ fun PlayerScreen(
                                 searchArtist = currentSongFile.artist
                                 searchTitle = currentSongFile.title
                                 searchStatusMessage = ""
+                                searchLyricsResults = emptyList()
                                 showSearchLyricsDialog = true
                             }
                         },
-                        isSearchingOnline = isSearchingOnline,
+                        isSearchingOnline = isSearchingOnline || isAutoSearchingLyrics,
+                        isInstrumental = currentSongFile?.lyrics == "[[Instrumental]]",
+                        onMarkInstrumentalClick = {
+                            if (currentSongFile != null) {
+                                viewModel?.updateSongLyrics(currentSongFile.id, "[[Instrumental]]")
+                            }
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1170,6 +1260,9 @@ fun PlayerScreen(
         }
 
         if (showSearchLyricsDialog && currentSongFile != null) {
+            val getLocalized = { es: String, en: String ->
+                if (targetLang == "es") es else en
+            }
             AlertDialog(
                 onDismissRequest = { 
                     if (!isSearchingOnline) showSearchLyricsDialog = false 
@@ -1178,20 +1271,20 @@ fun PlayerScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.CloudSync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Search Lyrics Online", fontWeight = FontWeight.Bold)
+                        Text(getLocalized("Buscar Letras en Línea", "Search Lyrics Online"), fontWeight = FontWeight.Bold)
                     }
                 },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            text = "Correct the artist or title below to query online synchronized LRC lyrics databases:",
+                            text = getLocalized("Corrige el artista o título para buscar coincidencias alternativas:", "Correct the artist or title below to search alternative matches:"),
                             fontSize = 13.sp,
                             color = Color.White.copy(alpha = 0.7f)
                         )
                         OutlinedTextField(
                             value = searchArtist,
                             onValueChange = { searchArtist = it },
-                            label = { Text("Artist", color = Color.White.copy(alpha = 0.5f)) },
+                            label = { Text(getLocalized("Artista", "Artist"), color = Color.White.copy(alpha = 0.5f)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -1205,7 +1298,7 @@ fun PlayerScreen(
                         OutlinedTextField(
                             value = searchTitle,
                             onValueChange = { searchTitle = it },
-                            label = { Text("Song Title", color = Color.White.copy(alpha = 0.5f)) },
+                            label = { Text(getLocalized("Título de Canción", "Song Title"), color = Color.White.copy(alpha = 0.5f)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -1216,50 +1309,128 @@ fun PlayerScreen(
                                 cursorColor = MaterialTheme.colorScheme.primary
                             )
                         )
+                        
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    searchStatusMessage = getLocalized("Buscando en la base de datos...", "Searching LRCLIB database...")
+                                    isSearchingOnline = true
+                                    val results = searchLyricsOptionsFromLrcLib(searchArtist, searchTitle)
+                                    searchLyricsResults = results
+                                    if (results.isNotEmpty()) {
+                                        searchStatusMessage = getLocalized("Se encontraron ${results.size} resultados.", "Found ${results.size} results.")
+                                    } else {
+                                        searchStatusMessage = getLocalized("No se encontraron letras. Intenta refinar la búsqueda.", "No lyrics found. Try refining the query!")
+                                    }
+                                    isSearchingOnline = false
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !isSearchingOnline
+                        ) {
+                            if (isSearchingOnline) {
+                                CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Text(getLocalized("Buscar Coincidencias", "Search Matches"), fontWeight = FontWeight.Bold)
+                            }
+                        }
+
                         if (searchStatusMessage.isNotEmpty()) {
                             Text(
                                 text = searchStatusMessage,
-                                color = if (searchStatusMessage.contains("Success")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                color = if (searchLyricsResults.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp
                             )
                         }
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                searchStatusMessage = "Searching LRCLIB database..."
-                                isSearchingOnline = true
-                                val fetched = fetchLyricsFromLrcLib(searchArtist, searchTitle)
-                                if (!fetched.isNullOrEmpty()) {
-                                    viewModel?.updateSongLyrics(currentSongFile.id, fetched)
-                                    searchStatusMessage = "Success! Lyrics synchronized."
-                                    kotlinx.coroutines.delay(1000)
-                                    showSearchLyricsDialog = false
-                                } else {
-                                    searchStatusMessage = "No lyrics found. Try refining the query!"
+
+                        if (searchLyricsResults.isNotEmpty()) {
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+                            Text(
+                                text = getLocalized("SELECCIONA UNA LETRA:", "SELECT LYRICS TO APPLY:"),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                letterSpacing = 1.sp
+                            )
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 200.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(searchLyricsResults) { result ->
+                                    val isSynced = result.syncedLyrics != null
+                                    Card(
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = Color.White.copy(alpha = 0.05f)
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                val lyricsToApply = result.syncedLyrics ?: result.plainLyrics
+                                                if (!lyricsToApply.isNullOrEmpty()) {
+                                                    viewModel?.updateSongLyrics(currentSongFile.id, lyricsToApply)
+                                                    showSearchLyricsDialog = false
+                                                    searchLyricsResults = emptyList()
+                                                    searchStatusMessage = ""
+                                                }
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = result.trackName,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    fontSize = 13.sp
+                                                )
+                                                Text(
+                                                    text = "${result.artistName} • ${result.albumName}",
+                                                    color = Color.White.copy(alpha = 0.5f),
+                                                    fontSize = 11.sp
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(
+                                                        if (isSynced) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                        else MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                                                    )
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (isSynced) getLocalized("Sincro", "Synced") else getLocalized("Texto", "Plain"),
+                                                    color = if (isSynced) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                                isSearchingOnline = false
                             }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        enabled = !isSearchingOnline
-                    ) {
-                        if (isSearchingOnline) {
-                            CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        } else {
-                            Text("Search", fontWeight = FontWeight.Bold)
                         }
                     }
                 },
+                confirmButton = {},
                 dismissButton = {
                     TextButton(
-                        onClick = { showSearchLyricsDialog = false },
+                        onClick = { 
+                            showSearchLyricsDialog = false 
+                            searchLyricsResults = emptyList()
+                            searchStatusMessage = ""
+                        },
                         enabled = !isSearchingOnline
                     ) {
-                        Text("Cancel", color = Color.White.copy(alpha = 0.6f))
+                        Text(getLocalized("Cancelar", "Cancel"), color = Color.White.copy(alpha = 0.6f))
                     }
                 },
                 containerColor = Color(0xFF161829),
@@ -1422,6 +1593,65 @@ fun parseLrc(lrcText: String?): List<LyricLine> {
     return lines.sortedBy { it.timeMs }
 }
 
+@kotlinx.serialization.Serializable
+data class LrcLibSearchResult(
+    val id: Long,
+    val trackName: String,
+    val artistName: String,
+    val albumName: String,
+    val durationSeconds: Int,
+    val syncedLyrics: String?,
+    val plainLyrics: String?
+)
+
+suspend fun searchLyricsOptionsFromLrcLib(artist: String, title: String): List<LrcLibSearchResult> {
+    return withContext(Dispatchers.IO) {
+        val client = okhttp3.OkHttpClient()
+        val query = java.net.URLEncoder.encode("$artist $title", "UTF-8")
+        val request = okhttp3.Request.Builder()
+            .url("https://lrclib.net/api/search?q=$query")
+            .build()
+        val list = mutableListOf<LrcLibSearchResult>()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: return@withContext emptyList()
+                    val jsonArray = org.json.JSONArray(body)
+                    for (i in 0 until jsonArray.length()) {
+                        val obj = jsonArray.getJSONObject(i)
+                        val id = obj.optLong("id", 0L)
+                        val trackName = obj.optString("trackName", "")
+                        val artistName = obj.optString("artistName", "")
+                        val albumName = obj.optString("albumName", "")
+                        val duration = obj.optInt("duration", 0)
+                        
+                        var synced = obj.optString("syncedLyrics", "")
+                        if (synced.isEmpty() || synced == "null") synced = ""
+                        
+                        var plain = obj.optString("plainLyrics", "")
+                        if (plain.isEmpty() || plain == "null") plain = ""
+                        
+                        list.add(
+                            LrcLibSearchResult(
+                                id = id,
+                                trackName = trackName,
+                                artistName = artistName,
+                                albumName = albumName,
+                                durationSeconds = duration,
+                                syncedLyrics = if (synced.isNotEmpty()) synced else null,
+                                plainLyrics = if (plain.isNotEmpty()) plain else null
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        list
+    }
+}
+
 suspend fun fetchLyricsFromLrcLib(artist: String, title: String): String? {
     return withContext(Dispatchers.IO) {
         val client = okhttp3.OkHttpClient()
@@ -1468,9 +1698,16 @@ private fun ScrollingLyricsView(
     onEditClick: () -> Unit,
     onSearchOnlineClick: () -> Unit,
     isSearchingOnline: Boolean,
+    isInstrumental: Boolean = false,
+    onMarkInstrumentalClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberLazyListState()
+    val listState = remember(songTitle + songArtist) { LazyListState() }
+    val context = LocalContext.current
+    val systemLang = remember { context.resources.configuration.locales[0].language }
+    val getLocalized = { es: String, en: String ->
+        if (systemLang == "es") es else en
+    }
     
     val activeIndex = remember(lyricLines, currentPositionMs) {
         lyricLines.indexOfLast { currentPositionMs >= it.timeMs }.coerceAtLeast(0)
@@ -1500,30 +1737,69 @@ private fun ScrollingLyricsView(
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier.padding(24.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.InterpreterMode,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(54.dp)
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = stringResource(R.string.no_lyrics),
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(24.dp))
                 if (isSearchingOnline) {
                     CircularProgressIndicator(
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(36.dp)
                     )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = getLocalized("Cargando letras...", "Loading lyrics..."),
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                } else if (isInstrumental) {
+                    Icon(
+                        imageVector = Icons.Rounded.MusicNote,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = getLocalized("Pista Instrumental", "Instrumental Track"),
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = getLocalized("Esta canción ha sido marcada como instrumental (sin letra).", "This song has been marked as instrumental (no lyrics)."),
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(
+                        onClick = onSearchOnlineClick,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(getLocalized("Buscar Letras de nuevo", "Search Lyrics Again"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
                 } else {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Icon(
+                        imageVector = Icons.Rounded.InterpreterMode,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(54.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = stringResource(R.string.no_lyrics),
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Button(
                             onClick = onSearchOnlineClick,
@@ -1534,6 +1810,18 @@ private fun ScrollingLyricsView(
                             Icon(Icons.Rounded.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(stringResource(R.string.find_lyrics), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = onMarkInstrumentalClick,
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(getLocalized("Marcar como Instrumental", "Mark as Instrumental"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
                 }
