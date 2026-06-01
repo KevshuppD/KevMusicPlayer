@@ -14,5 +14,6 @@ data class AudioFileEntity(
     val uriString: String,
     val folderPath: String,
     val folderName: String,
-    val lyrics: String? = null
+    val lyrics: String? = null,
+    val translatedLyrics: String? = null
 )

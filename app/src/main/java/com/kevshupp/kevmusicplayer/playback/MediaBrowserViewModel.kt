@@ -22,12 +22,29 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import com.kevshupp.kevmusicplayer.ui.screens.fetchLyricsFromLrcLib
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
+import java.io.File
+import org.json.JSONObject
+import org.json.JSONArray
+import java.io.InputStream
+import java.io.OutputStream
+import android.content.Context
+
 
 class MediaBrowserViewModel(application: Application) : AndroidViewModel(application) {
     private var browserFuture: ListenableFuture<MediaBrowser>? = null
     val browser = mutableStateOf<MediaBrowser?>(null)
     val localAudioFiles = mutableStateListOf<AudioFile>()
-    val enabledTabs = mutableStateOf(listOf("Songs", "Albums", "Artists", "Genres", "Folders", "Playlists"))
+    val enabledTabs = mutableStateOf(run {
+        val prefs = application.getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+        val saved = prefs.getString("enabled_tabs", null)
+        if (!saved.isNullOrBlank()) {
+            saved.split(",")
+        } else {
+            listOf("Songs", "Albums", "Artists", "Genres", "Folders", "Playlists")
+        }
+    })
     val sortBy = mutableStateOf("Alphabetical")
     
     // Requested global navigation target triggers
@@ -55,7 +72,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         uriString = entity.uriString,
                         folderPath = entity.folderPath,
                         folderName = entity.folderName,
-                        lyrics = entity.lyrics
+                        lyrics = entity.lyrics,
+                        translatedLyrics = entity.translatedLyrics
                     )
                 }
                 if (cachedFiles.isNotEmpty()) {
@@ -279,7 +297,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         uriString = file.uriString,
                         folderPath = file.folderPath,
                         folderName = file.folderName,
-                        lyrics = existing?.lyrics ?: file.lyrics
+                        lyrics = existing?.lyrics ?: file.lyrics,
+                        translatedLyrics = existing?.translatedLyrics
                     )
                 }
                 
@@ -296,7 +315,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 // 4. Update compose list with restored lyrics
                 localAudioFiles.clear()
                 localAudioFiles.addAll(scannedFiles.map { file ->
-                    file.copy(lyrics = existingEntities[file.id]?.lyrics)
+                    file.copy(
+                        lyrics = existingEntities[file.id]?.lyrics,
+                        translatedLyrics = existingEntities[file.id]?.translatedLyrics
+                    )
                 })
                 loadPlaylists()
             } catch (e: Exception) {
@@ -345,12 +367,218 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 if (index != -1) {
                     val file = localAudioFiles[index]
                     localAudioFiles[index] = file.copy(lyrics = newLyrics)
+                    
+                    // Physically write lyrics inside the song metadata and LRC file next to it!
+                    if (!newLyrics.isNullOrBlank()) {
+                        withContext(Dispatchers.IO) {
+                            saveLyricsPhysical(getApplication(), id, file.title, file.folderPath, newLyrics)
+                        }
+                    }
                 }
                 loadPlaylists() // Sync playlists cache
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
+    }
+
+    fun deleteSongTranslatedLyrics(id: Long) {
+        viewModelScope.launch {
+            try {
+                audioDao.updateTranslatedLyrics(id, null)
+                val index = localAudioFiles.indexOfFirst { it.id == id }
+                if (index != -1) {
+                    val file = localAudioFiles[index]
+                    localAudioFiles[index] = file.copy(translatedLyrics = null)
+                }
+                loadPlaylists() // Sync playlists cache
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun updateSongTranslatedLyrics(id: Long, newTranslatedLyrics: String?) {
+        viewModelScope.launch {
+            try {
+                audioDao.updateTranslatedLyrics(id, newTranslatedLyrics)
+                val index = localAudioFiles.indexOfFirst { it.id == id }
+                if (index != -1) {
+                    val file = localAudioFiles[index]
+                    localAudioFiles[index] = file.copy(translatedLyrics = newTranslatedLyrics)
+                }
+                loadPlaylists() // Sync playlists cache
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun exportBackup(
+        context: Context,
+        outputStream: OutputStream,
+        onSuccess: () -> Unit,
+        onError: (Exception) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val json = JSONObject()
+                json.put("backup_version", 1)
+
+                // 1. Export settings
+                val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+                val settingsJson = JSONObject()
+                settingsJson.put("language", settingsPrefs.getString("language", "en"))
+                settingsJson.put("app_theme", settingsPrefs.getString("app_theme", "cyberpunk"))
+                settingsJson.put("refresh_rate", settingsPrefs.getString("refresh_rate", "120"))
+                settingsJson.put("disable_animations", settingsPrefs.getBoolean("disable_animations", false))
+                json.put("settings", settingsJson)
+
+                // 2. Export playlists
+                val playlistsPrefs = context.getSharedPreferences("playlists_prefs", Context.MODE_PRIVATE)
+                val playlistsJson = JSONObject()
+                val playlistNames = playlistsPrefs.getStringSet("playlist_names", emptySet()) ?: emptySet()
+                playlistNames.forEach { name ->
+                    val songsStr = playlistsPrefs.getString("playlist_$name", "") ?: ""
+                    val songIdsArray = JSONArray()
+                    if (songsStr.isNotBlank()) {
+                        songsStr.split(",").forEach { idStr ->
+                            idStr.toLongOrNull()?.let { songIdsArray.put(it) }
+                        }
+                    }
+                    playlistsJson.put(name, songIdsArray)
+                }
+                json.put("playlists", playlistsJson)
+
+                // 3. Export cached songs (lyrics and translatedLyrics)
+                val cachedSongsArray = JSONArray()
+                val allEntities = audioDao.getAllAudioFiles()
+                allEntities.forEach { entity ->
+                    if (!entity.lyrics.isNullOrBlank() || !entity.translatedLyrics.isNullOrBlank()) {
+                        val songJson = JSONObject()
+                        songJson.put("id", entity.id)
+                        songJson.put("lyrics", entity.lyrics)
+                        songJson.put("translatedLyrics", entity.translatedLyrics)
+                        cachedSongsArray.put(songJson)
+                    }
+                }
+                json.put("cached_songs", cachedSongsArray)
+
+                // Write to stream
+                outputStream.use { stream ->
+                    stream.write(json.toString(4).toByteArray(Charsets.UTF_8))
+                }
+
+                withContext(Dispatchers.Main) {
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    onError(e)
+                }
+            }
+        }
+    }
+
+    fun importBackup(
+        context: Context,
+        inputStream: InputStream,
+        onSuccess: () -> Unit,
+        onError: (Exception) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val jsonStr = inputStream.use { stream ->
+                    stream.bufferedReader().use { it.readText() }
+                }
+                val json = JSONObject(jsonStr)
+
+                // 1. Restore settings
+                if (json.has("settings")) {
+                    val settingsJson = json.getJSONObject("settings")
+                    val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+                    val edit = settingsPrefs.edit()
+                    if (settingsJson.has("language")) edit.putString("language", settingsJson.getString("language"))
+                    if (settingsJson.has("app_theme")) edit.putString("app_theme", settingsJson.getString("app_theme"))
+                    if (settingsJson.has("refresh_rate")) edit.putString("refresh_rate", settingsJson.getString("refresh_rate"))
+                    if (settingsJson.has("disable_animations")) edit.putBoolean("disable_animations", settingsJson.getBoolean("disable_animations"))
+                    edit.apply()
+                }
+
+                // 2. Restore playlists
+                if (json.has("playlists")) {
+                    val playlistsJson = json.getJSONObject("playlists")
+                    val playlistsPrefs = context.getSharedPreferences("playlists_prefs", Context.MODE_PRIVATE)
+                    val edit = playlistsPrefs.edit()
+                    val names = mutableSetOf<String>()
+                    
+                    playlistsJson.keys().forEach { name ->
+                        names.add(name)
+                        val songIdsArray = playlistsJson.getJSONArray(name)
+                        val songIds = mutableListOf<String>()
+                        for (i in 0 until songIdsArray.length()) {
+                            songIds.add(songIdsArray.getLong(i).toString())
+                        }
+                        edit.putString("playlist_$name", songIds.joinToString(","))
+                    }
+                    edit.putStringSet("playlist_names", names)
+                    edit.apply()
+                }
+
+                // 3. Restore cached songs (lyrics and translatedLyrics)
+                if (json.has("cached_songs")) {
+                    val cachedSongsArray = json.getJSONArray("cached_songs")
+                    for (i in 0 until cachedSongsArray.length()) {
+                        val songJson = cachedSongsArray.getJSONObject(i)
+                        val id = songJson.getLong("id")
+                        val lyrics = if (songJson.has("lyrics") && !songJson.isNull("lyrics")) songJson.getString("lyrics") else null
+                        val translatedLyrics = if (songJson.has("translatedLyrics") && !songJson.isNull("translatedLyrics")) songJson.getString("translatedLyrics") else null
+                        
+                        audioDao.updateLyrics(id, lyrics)
+                        audioDao.updateTranslatedLyrics(id, translatedLyrics)
+                    }
+                }
+
+                // Reload localAudioFiles from database to sync current in-memory lists instantly!
+                val allEntities = audioDao.getAllAudioFiles()
+                val updatedFiles = allEntities.map { entity ->
+                    AudioFile(
+                        id = entity.id,
+                        title = entity.title,
+                        artist = entity.artist,
+                        album = entity.album,
+                        genre = entity.genre,
+                        duration = entity.duration,
+                        uriString = entity.uriString,
+                        folderPath = entity.folderPath,
+                        folderName = entity.folderName,
+                        lyrics = entity.lyrics,
+                        translatedLyrics = entity.translatedLyrics
+                    )
+                }
+
+                withContext(Dispatchers.Main) {
+                    localAudioFiles.clear()
+                    localAudioFiles.addAll(updatedFiles)
+                    loadPlaylists() // Reload playlists state instantly!
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    onError(e)
+                }
+            }
+        }
+    }
+
+    fun updateEnabledTabs(tabs: List<String>) {
+        enabledTabs.value = tabs
+        val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString("enabled_tabs", tabs.joinToString(","))
+            .apply()
     }
 
     // Playlists system
@@ -583,5 +811,48 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         super.onCleared()
         browserFuture?.let { MediaBrowser.releaseFuture(it) }
         browser.value = null
+    }
+}
+
+fun getPhysicalPath(context: android.content.Context, songId: Long): String? {
+    val uri = android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+    val projection = arrayOf(android.provider.MediaStore.Audio.Media.DATA)
+    val selection = "${android.provider.MediaStore.Audio.Media._ID} = ?"
+    val selectionArgs = arrayOf(songId.toString())
+    
+    return try {
+        context.contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getString(0)
+            } else null
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
+
+fun saveLyricsPhysical(context: android.content.Context, songId: Long, songTitle: String, folderPath: String, lyrics: String) {
+    // 1. Save to .lrc file next to the song
+    try {
+        val cleanTitle = songTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val lrcFile = File(folderPath, "$cleanTitle.lrc")
+        lrcFile.writeText(lyrics)
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    // 2. Save directly inside the song metadata using jaudiotagger
+    try {
+        val physicalPath = getPhysicalPath(context, songId)
+        if (!physicalPath.isNullOrBlank()) {
+            val audioFile = AudioFileIO.read(File(physicalPath))
+            val tag = audioFile.tag ?: audioFile.createDefaultTag()
+            tag.setField(FieldKey.LYRICS, lyrics)
+            audioFile.tag = tag
+            AudioFileIO.write(audioFile)
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
     }
 }

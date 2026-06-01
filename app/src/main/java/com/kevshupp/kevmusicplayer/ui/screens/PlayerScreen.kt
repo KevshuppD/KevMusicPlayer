@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -94,6 +95,17 @@ fun PlayerScreen(
     val lyricLines = remember(lyricsText) { parseLrc(lyricsText) }
     var translatedLyricLines by remember { mutableStateOf<Map<Long, String>?>(null) }
     var isTranslating by remember { mutableStateOf(false) }
+    var showTranslation by remember { mutableStateOf(true) }
+
+    LaunchedEffect(currentSongFile?.id, currentSongFile?.translatedLyrics) {
+        val cached = currentSongFile?.translatedLyrics
+        translatedLyricLines = if (!cached.isNullOrBlank()) {
+            deserializeTranslations(cached)
+        } else {
+            null
+        }
+        showTranslation = true
+    }
     
     val context = LocalContext.current
     val locale = context.resources.configuration.locales[0]
@@ -145,34 +157,156 @@ fun PlayerScreen(
     ) {
         // Translation Logic
         val translateLyrics: suspend () -> Unit = {
+            val getLocalized: (String, String) -> String = { es, en ->
+                if (targetLang == "es") es else en
+            }
             if (lyricLines.isNotEmpty()) {
                 isTranslating = true
                 val results = mutableMapOf<Long, String>()
                 try {
                     withContext(Dispatchers.IO) {
                         val client = okhttp3.OkHttpClient()
-                        // Translating in batches or one by one? 
-                        // To keep it simple and free-tier friendly, let's do it individually with a small delay or batching if possible.
-                        // MyMemory allows batching with "|" but it's limited.
-                        lyricLines.forEach { line ->
-                            if (line.text.isNotBlank()) {
-                                val encodedText = java.net.URLEncoder.encode(line.text, "UTF-8")
-                                val url = "https://api.mymemory.translated.net/get?q=$encodedText&langpair=AUTO|$targetLang"
-                                val request = okhttp3.Request.Builder().url(url).build()
+                        val linesToTranslate = lyricLines.filter { it.text.isNotBlank() }
+                        
+                        // Detect source language based on all non-blank lyric lines combined!
+                        val fullLyricsSample = linesToTranslate.joinToString("\n") { it.text }
+                        val detectedSource = detectLanguage(fullLyricsSample)
+                        val sourceLang = if (detectedSource == targetLang) {
+                            if (targetLang == "es") "en" else "es"
+                        } else {
+                            detectedSource
+                        }
+                        
+                        android.util.Log.d("KevTranslation", "Starting translation from $sourceLang to $targetLang. Sample: ${fullLyricsSample.take(50)}")
+                        
+                        // Chunking into batches of at most 450 characters or 10 lines to stay safe within MyMemory limits
+                        val batches = mutableListOf<List<LyricLine>>()
+                        var currentBatch = mutableListOf<LyricLine>()
+                        var currentBatchLength = 0
+                        
+                        linesToTranslate.forEach { line ->
+                            if (currentBatchLength + line.text.length > 450 || currentBatch.size >= 10) {
+                                batches.add(currentBatch)
+                                currentBatch = mutableListOf()
+                                currentBatchLength = 0
+                            }
+                            currentBatch.add(line)
+                            currentBatchLength += line.text.length + 3 // +3 for " | " separator
+                        }
+                        if (currentBatch.isNotEmpty()) {
+                            batches.add(currentBatch)
+                        }
+                        
+                        android.util.Log.d("KevTranslation", "Prepared ${batches.size} batches for translation.")
+                        
+                        var hitRateLimit = false
+                        
+                        for (batchIdx in batches.indices) {
+                            if (hitRateLimit) break
+                            
+                            val batch = batches[batchIdx]
+                            // Join using " | " to preserve structural line divisions across translations!
+                            val joinedText = batch.joinToString(" | ") { it.text }
+                            val encodedText = java.net.URLEncoder.encode(joinedText, "UTF-8")
+                            
+                            // Passing the developer email parameter 'de' increases the free limit from 1,000 to 10,000 words/day and lifts the IP-based rate block!
+                            val url = "https://api.mymemory.translated.net/get?q=$encodedText&langpair=$sourceLang|$targetLang&de=kevshupp.musicplayer@gmail.com"
+                            val request = okhttp3.Request.Builder().url(url).build()
+                            
+                            android.util.Log.d("KevTranslation", "Requesting Batch $batchIdx: URL = $url")
+                            var success = false
+                            try {
                                 client.newCall(request).execute().use { response ->
+                                    android.util.Log.d("KevTranslation", "Batch $batchIdx response status: ${response.code}")
+                                    if (response.code == 429) {
+                                        hitRateLimit = true
+                                    }
+                                    
                                     if (response.isSuccessful) {
                                         val body = response.body?.string() ?: ""
+                                        android.util.Log.d("KevTranslation", "Batch $batchIdx response body: $body")
                                         val json = org.json.JSONObject(body)
-                                        val translated = json.getJSONObject("responseData").getString("translatedText")
-                                        results[line.timeMs] = translated
+                                        val status = json.optInt("responseStatus", 200)
+                                        if (status == 200) {
+                                            val translatedText = json.getJSONObject("responseData").getString("translatedText")
+                                            // Split using "|" to recover lines accurately
+                                            val translatedLines = translatedText.split("|")
+                                            android.util.Log.d("KevTranslation", "Batch $batchIdx translated lines count: ${translatedLines.size}, expected: ${batch.size}")
+                                            if (translatedLines.size == batch.size) {
+                                                batch.forEachIndexed { index, line ->
+                                                    results[line.timeMs] = translatedLines[index].trim()
+                                                }
+                                                success = true
+                                            }
+                                        } else if (status == 429) {
+                                            hitRateLimit = true
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("KevTranslation", "Batch $batchIdx failed with exception: ${e.message}")
+                                e.printStackTrace()
+                            }
+                            
+                            // Fallback to individual lines ONLY if it's a structural mismatch (NOT a 429 rate limit!)
+                            if (!success && !hitRateLimit) {
+                                android.util.Log.w("KevTranslation", "Batch $batchIdx size mismatch. Falling back to individual line translations...")
+                                for (lineIdx in batch.indices) {
+                                    if (hitRateLimit) break
+                                    val line = batch[lineIdx]
+                                    val encodedLine = java.net.URLEncoder.encode(line.text, "UTF-8")
+                                    val fallbackUrl = "https://api.mymemory.translated.net/get?q=$encodedLine&langpair=$sourceLang|$targetLang&de=kevshupp.musicplayer@gmail.com"
+                                    val fallbackRequest = okhttp3.Request.Builder().url(fallbackUrl).build()
+                                    try {
+                                        client.newCall(fallbackRequest).execute().use { resp ->
+                                            if (resp.code == 429) {
+                                                hitRateLimit = true
+                                            }
+                                            if (resp.isSuccessful) {
+                                                val b = resp.body?.string() ?: ""
+                                                val json = org.json.JSONObject(b)
+                                                val translated = json.getJSONObject("responseData").getString("translatedText")
+                                                results[line.timeMs] = translated.trim()
+                                                android.util.Log.d("KevTranslation", "Fallback line $lineIdx success: ${line.text} -> $translated")
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        android.util.Log.e("KevTranslation", "Fallback line $lineIdx failed: ${e.message}")
+                                        e.printStackTrace()
                                     }
                                 }
                             }
                         }
+                        
+                        if (hitRateLimit) {
+                            throw Exception("rate_limit_429")
+                        }
                     }
                     translatedLyricLines = results
+                    android.util.Log.d("KevTranslation", "Translation completed successfully. Total translated lines stored: ${results.size}")
+                    // Persist to database cache!
+                    if (currentSongFile != null && viewModel != null && results.isNotEmpty()) {
+                        val serialized = serializeTranslations(results)
+                        viewModel.updateSongTranslatedLyrics(currentSongFile.id, serialized)
+                        android.util.Log.d("KevTranslation", "Translations cached to local DB for song ID: ${currentSongFile.id}")
+                    }
                 } catch (e: Exception) {
+                    android.util.Log.e("KevTranslation", "Outer try-catch failure: ${e.message}")
                     e.printStackTrace()
+                    withContext(Dispatchers.Main) {
+                        val msg = if (e.message == "rate_limit_429") {
+                            getLocalized(
+                                "Límite de traducción excedido (429). Por favor, intenta de nuevo más tarde.",
+                                "Translation limit exceeded (429). Please try again later."
+                            )
+                        } else {
+                            getLocalized(
+                                "Error de red: verifica tu conexión / Network error",
+                                "Network error: check your connection"
+                            )
+                        }
+                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                    }
                 } finally {
                     isTranslating = false
                 }
@@ -274,10 +408,25 @@ fun PlayerScreen(
                     ScrollingLyricsView(
                         lyricLines = lyricLines,
                         currentPositionMs = playerState.position,
-                        translatedLines = translatedLyricLines,
+                        songTitle = title,
+                        songArtist = artist,
+                        translatedLines = if (showTranslation) translatedLyricLines else null,
                         isTranslating = isTranslating,
                         onTranslateClick = {
-                            scope.launch { translateLyrics() }
+                            if (translatedLyricLines != null) {
+                                showTranslation = !showTranslation
+                            } else {
+                                scope.launch {
+                                    translateLyrics()
+                                    showTranslation = true
+                                }
+                            }
+                        },
+                        onTranslateLongClick = {
+                            scope.launch {
+                                translateLyrics()
+                                showTranslation = true
+                            }
                         },
                         onLineClick = { timeMs -> player.seekTo(timeMs) },
                         onEditClick = {
@@ -809,6 +958,31 @@ fun PlayerScreen(
                         Spacer(modifier = Modifier.width(16.dp))
                         Text("Delete Track", color = MaterialTheme.colorScheme.error, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     }
+
+                    // Gorgeous premium Option: Delete Translation (only shown if translation exists)
+                    if (translatedLyricLines != null) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    if (currentSongFile != null && viewModel != null) {
+                                        viewModel.deleteSongTranslatedLyrics(currentSongFile.id)
+                                    }
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Translate,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Eliminar traducción", color = MaterialTheme.colorScheme.error, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
                     
                     Spacer(modifier = Modifier.height(16.dp))
                 }
@@ -1284,9 +1458,12 @@ suspend fun fetchLyricsFromLrcLib(artist: String, title: String): String? {
 private fun ScrollingLyricsView(
     lyricLines: List<LyricLine>,
     currentPositionMs: Long,
+    songTitle: String = "",
+    songArtist: String = "",
     translatedLines: Map<Long, String>? = null,
     isTranslating: Boolean = false,
     onTranslateClick: () -> Unit = {},
+    onTranslateLongClick: () -> Unit = {},
     onLineClick: (Long) -> Unit,
     onEditClick: () -> Unit,
     onSearchOnlineClick: () -> Unit,
@@ -1299,9 +1476,14 @@ private fun ScrollingLyricsView(
         lyricLines.indexOfLast { currentPositionMs >= it.timeMs }.coerceAtLeast(0)
     }
 
+    val disableAnimations = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
     LaunchedEffect(activeIndex) {
         if (lyricLines.isNotEmpty() && activeIndex >= 0) {
-            listState.animateScrollToItem(activeIndex)
+            if (disableAnimations) {
+                listState.scrollToItem(activeIndex)
+            } else {
+                listState.animateScrollToItem(activeIndex)
+            }
         }
     }
 
@@ -1422,18 +1604,25 @@ private fun ScrollingLyricsView(
                         )
                     }
                 } else {
-                    IconButton(
-                        onClick = onTranslateClick,
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = if (translatedLines != null) MaterialTheme.colorScheme.primary 
-                                           else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                        ),
-                        modifier = Modifier.size(44.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (translatedLines != null) MaterialTheme.colorScheme.primary 
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                            )
+                            .combinedClickable(
+                                onClick = onTranslateClick,
+                                onLongClick = onTranslateLongClick
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Translate,
                             contentDescription = stringResource(R.string.translate_lyrics),
-                            tint = if (translatedLines != null) Color.Black else Color.White
+                            tint = if (translatedLines != null) Color.Black else Color.White,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
@@ -1467,5 +1656,108 @@ private fun ScrollingLyricsView(
                 }
             }
         }
+
+        // Song Title and Artist Header overlay (drawn on top of everything inside the Box)
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Black.copy(alpha = 0.9f),
+                            Color.Black.copy(alpha = 0.7f),
+                            Color.Transparent
+                        )
+                    )
+                )
+                .padding(horizontal = 24.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = songTitle,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = songArtist,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+fun serializeTranslations(map: Map<Long, String>): String {
+    val json = org.json.JSONObject()
+    map.forEach { (timeMs, text) ->
+        json.put(timeMs.toString(), text)
+    }
+    return json.toString()
+}
+
+fun deserializeTranslations(jsonStr: String?): Map<Long, String>? {
+    if (jsonStr.isNullOrBlank()) return null
+    return try {
+        val json = org.json.JSONObject(jsonStr)
+        val map = mutableMapOf<Long, String>()
+        json.keys().forEach { key ->
+            val timeMs = key.toLong()
+            val text = json.getString(key)
+            map[timeMs] = text
+        }
+        map
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
+
+fun detectLanguage(text: String): String {
+    // 1. Instant check for Korean Hangul characters
+    if (text.contains(Regex("[\\uAC00-\\uD7A3\\u1100-\\u11FF\\u3130-\\u318F]"))) {
+        return "ko"
+    }
+    // 2. Instant check for Japanese characters (Hiragana and Katakana)
+    if (text.contains(Regex("[\\u3040-\\u309F\\u30A0-\\u30FF]"))) {
+        return "ja"
+    }
+
+    val words = text.lowercase(java.util.Locale.ROOT)
+        .split(Regex("[^a-záéíóúüñâêîôûàèìòùçãõ]"))
+        .filter { it.isNotBlank() }
+    
+    val esWords = setOf("el", "la", "los", "las", "un", "una", "y", "en", "que", "de", "con", "por", "para", "como", "me", "te", "se", "lo", "mi", "tu")
+    val enWords = setOf("the", "and", "of", "to", "a", "in", "is", "you", "that", "it", "he", "was", "for", "on", "are", "as", "with", "his", "they", "i", "your", "my", "me")
+    val frWords = setOf("le", "la", "les", "et", "en", "un", "une", "des", "que", "qui", "dans", "pour", "par", "avec", "je", "tu", "il", "elle", "nous", "vous", "ils", "elles", "est", "sont")
+    val ptWords = setOf("o", "a", "os", "as", "e", "em", "um", "uma", "que", "com", "por", "para", "como", "eu", "tu", "ele", "ela", "nós", "vós", "eles", "elas", "é", "são")
+    
+    var esScore = 0
+    var enScore = 0
+    var frScore = 0
+    var ptScore = 0
+    
+    words.forEach { word ->
+        if (esWords.contains(word)) esScore++
+        if (enWords.contains(word)) enScore++
+        if (frWords.contains(word)) frScore++
+        if (ptWords.contains(word)) ptScore++
+    }
+    
+    val max = maxOf(esScore, enScore, frScore, ptScore)
+    return when {
+        max == 0 -> "en" // Default to english if no words match
+        max == esScore -> "es"
+        max == enScore -> "en"
+        max == frScore -> "fr"
+        max == ptScore -> "pt"
+        else -> "en"
     }
 }

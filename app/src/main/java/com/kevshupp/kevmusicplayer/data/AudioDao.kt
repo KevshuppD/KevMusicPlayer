@@ -28,4 +28,7 @@ interface AudioDao {
 
     @Query("UPDATE audio_files SET lyrics = :lyrics WHERE id = :id")
     suspend fun updateLyrics(id: Long, lyrics: String?)
+
+    @Query("UPDATE audio_files SET translatedLyrics = :translatedLyrics WHERE id = :id")
+    suspend fun updateTranslatedLyrics(id: Long, translatedLyrics: String?)
 }

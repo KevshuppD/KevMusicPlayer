@@ -33,6 +33,7 @@ class PlaybackService : MediaLibraryService() {
                 true // handle audio focus
             )
             .setHandleAudioBecomingNoisy(true) // pause when headphones unplugged
+            .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
 
         val callback = object : MediaLibrarySession.Callback {

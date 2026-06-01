@@ -14,7 +14,8 @@ data class AudioFile(
     val uriString: String,
     val folderPath: String = "Internal Storage",
     val folderName: String = "Root",
-    val lyrics: String? = null
+    val lyrics: String? = null,
+    val translatedLyrics: String? = null
 ) {
     val uri: Uri get() = Uri.parse(uriString)
 }

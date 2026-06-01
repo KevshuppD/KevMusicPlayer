@@ -48,17 +48,36 @@ import com.kevshupp.kevmusicplayer.ui.theme.KevMusicPlayerTheme
 import kotlinx.serialization.Serializable
 
 class MainActivity : ComponentActivity() {
+    private val refreshRateListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
+        if (key == "refresh_rate") {
+            runOnUiThread {
+                applyRefreshRate(prefs.getString("refresh_rate", "120") ?: "120")
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
         // Apply saved language preference before composing UI
-        val languagePrefs = getSharedPreferences("settings_prefs", MODE_PRIVATE)
-        val languageTag = languagePrefs.getString("language", "en") ?: "en"
+        val settingsPrefs = getSharedPreferences("settings_prefs", MODE_PRIVATE)
+        val languageTag = settingsPrefs.getString("language", "en") ?: "en"
         val localeManager = getSystemService(LocaleManager::class.java)
         localeManager?.applicationLocales = LocaleList.forLanguageTags(languageTag)
 
-        // Enforce 120Hz display refresh rate for ultra-smooth fluid navigation (supported devices like Moto G35)
+        // Apply initial refresh rate
+        applyRefreshRate(settingsPrefs.getString("refresh_rate", "120") ?: "120")
+        settingsPrefs.registerOnSharedPreferenceChangeListener(refreshRateListener)
+
+        setContent {
+            KevMusicPlayerTheme {
+                AppNavigation()
+            }
+        }
+    }
+
+    private fun applyRefreshRate(rate: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 val window = this.window
@@ -66,9 +85,13 @@ class MainActivity : ComponentActivity() {
                 val display = this.display
                 if (display != null) {
                     val supportedModes = display.supportedModes
-                    val highestRefreshRateMode = supportedModes.maxByOrNull { it.refreshRate }
-                    if (highestRefreshRateMode != null) {
-                        params.preferredDisplayModeId = highestRefreshRateMode.modeId
+                    val targetMode = if (rate == "60") {
+                        supportedModes.minByOrNull { Math.abs(it.refreshRate - 60f) }
+                    } else {
+                        supportedModes.maxByOrNull { it.refreshRate }
+                    }
+                    if (targetMode != null) {
+                        params.preferredDisplayModeId = targetMode.modeId
                         window.attributes = params
                     }
                 }
@@ -76,12 +99,12 @@ class MainActivity : ComponentActivity() {
                 e.printStackTrace()
             }
         }
+    }
 
-        setContent {
-            KevMusicPlayerTheme {
-                AppNavigation()
-            }
-        }
+    override fun onDestroy() {
+        super.onDestroy()
+        val settingsPrefs = getSharedPreferences("settings_prefs", MODE_PRIVATE)
+        settingsPrefs.unregisterOnSharedPreferenceChangeListener(refreshRateListener)
     }
 }
 
@@ -170,7 +193,7 @@ fun AppNavigation() {
             entry<Screen.Settings> {
                 SettingsScreen(
                     enabledTabs = viewModel.enabledTabs.value,
-                    onEnabledTabsChanged = { viewModel.enabledTabs.value = it },
+                    onEnabledTabsChanged = { viewModel.updateEnabledTabs(it) },
                     sortBy = viewModel.sortBy.value,
                     onSortByChanged = { viewModel.sortBy.value = it },
                     onRescan = { viewModel.scanFiles(isManual = true) },
@@ -218,13 +241,52 @@ fun PermissionRequestScreen(onPermissionsGranted: () -> Unit) {
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        permissionsGranted = checkInitialPermissions(context)
-        if (permissionsGranted) {
-            onPermissionsGranted()
+        val standardGranted = checkStandardPermissions(context)
+        if (standardGranted) {
+            val manageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.os.Environment.isExternalStorageManager()
+            } else {
+                true
+            }
+            if (manageGranted) {
+                permissionsGranted = true
+                onPermissionsGranted()
+            } else {
+                // If standard granted but manage is not, launch the Manage All Files settings screen immediately!
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                            data = android.net.Uri.parse("package:${context.packageName}")
+                        }
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                        context.startActivity(intent)
+                    }
+                }
+            }
         }
     }
 
-    LaunchedEffect(permissionsGranted) {
+    // Modern Lifecycle observer to automatically re-check permissions when returning to the app
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                val granted = checkInitialPermissions(context)
+                permissionsGranted = granted
+                if (granted) {
+                    onPermissionsGranted()
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(Unit) {
         val standardGranted = checkStandardPermissions(context)
         if (!standardGranted) {
             val permissions = mutableListOf<String>()
@@ -236,18 +298,26 @@ fun PermissionRequestScreen(onPermissionsGranted: () -> Unit) {
             }
             launcher.launch(permissions.toTypedArray())
         } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !android.os.Environment.isExternalStorageManager()) {
-                try {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                        data = android.net.Uri.parse("package:${context.packageName}")
-                    }
-                    context.startActivity(intent)
-                } catch (e: Exception) {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                    context.startActivity(intent)
-                }
+            val manageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.os.Environment.isExternalStorageManager()
             } else {
+                true
+            }
+            if (manageGranted) {
+                permissionsGranted = true
                 onPermissionsGranted()
+            } else {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                            data = android.net.Uri.parse("package:${context.packageName}")
+                        }
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                        context.startActivity(intent)
+                    }
+                }
             }
         }
     }
@@ -266,8 +336,16 @@ fun PermissionRequestScreen(onPermissionsGranted: () -> Unit) {
                 true
             }
             if (isStandard && !isManage) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text(text = "Se requiere acceso a todos los archivos para poder borrar canciones.", color = MaterialTheme.colorScheme.onBackground)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally, 
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "Se requiere acceso a todos los archivos para poder leer y borrar canciones.", 
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
                     Button(onClick = {
                         try {
                             val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
@@ -283,9 +361,14 @@ fun PermissionRequestScreen(onPermissionsGranted: () -> Unit) {
                     }
                 }
             } else if (permissionsGranted) {
-                Text(text = "Cargando Biblioteca...")
+                Text(text = "Cargando Biblioteca...", color = MaterialTheme.colorScheme.onBackground)
             } else {
-                Text(text = "Por favor, concede permisos de almacenamiento para acceder a tu música.")
+                Text(
+                    text = "Por favor, concede permisos de almacenamiento para acceder a tu música.", 
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.padding(24.dp)
+                )
             }
         }
     }

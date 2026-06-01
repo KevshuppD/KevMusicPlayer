@@ -91,6 +91,11 @@ fun LibraryScreen(
     modifier: Modifier = Modifier
 ) {
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    val context = LocalContext.current
+    val systemLang = remember { context.resources.configuration.locales[0].language }
+    val getLocalized = { es: String, en: String ->
+        if (systemLang == "es") es else en
+    }
     var selectedTab by rememberSaveable { mutableStateOf("Songs") }
     var currentSubView by remember { mutableStateOf<SubView?>(null) }
 
@@ -349,7 +354,7 @@ fun LibraryScreen(
                             .weight(1f),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(text = "No music files found.", style = MaterialTheme.typography.bodyLarge)
+                        Text(text = getLocalized("No se encontraron archivos de música.", "No music files found."), style = MaterialTheme.typography.bodyLarge)
                     }
                 } else {
                     Box(
@@ -357,10 +362,15 @@ fun LibraryScreen(
                             .fillMaxWidth()
                             .weight(1f)
                     ) {
+                        val disableAnimations = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
                         AnimatedContent(
                             targetState = activeTab,
                             transitionSpec = {
-                                fadeIn() togetherWith fadeOut()
+                                if (disableAnimations) {
+                                    ContentTransform(EnterTransition.None, ExitTransition.None)
+                                } else {
+                                    fadeIn() togetherWith fadeOut()
+                                }
                             },
                             label = "library_tab_transition"
                         ) { tab ->
@@ -583,10 +593,11 @@ fun LibraryScreen(
 
         // Floating glassmorphic multi-select bar
         val context = LocalContext.current
+        val disableAnims = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
         AnimatedVisibility(
             visible = isMultiSelectMode,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            enter = if (disableAnims) EnterTransition.None else (slideInVertically(initialOffsetY = { it }) + fadeIn()),
+            exit = if (disableAnims) ExitTransition.None else (slideOutVertically(targetOffsetY = { it }) + fadeOut()),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = if (player?.currentMediaItem != null) 100.dp else 24.dp)
@@ -680,12 +691,12 @@ fun LibraryScreen(
                         tint = MaterialTheme.colorScheme.error
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Delete Track?", fontWeight = FontWeight.Bold)
+                    Text(getLocalized("¿Eliminar canción?", "Delete Track?"), fontWeight = FontWeight.Bold)
                 }
             },
             text = {
                 Column {
-                    Text("Are you sure you want to permanently delete this track from your device?", color = Color.White.copy(alpha = 0.8f))
+                    Text(getLocalized("¿Estás seguro de que deseas eliminar permanentemente esta canción de tu dispositivo?", "Are you sure you want to permanently delete this track from your device?"), color = Color.White.copy(alpha = 0.8f))
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(songToDelete!!.title, fontWeight = FontWeight.Bold, color = Color.White)
                     Text(songToDelete!!.artist, fontSize = 13.sp, color = Color.White.copy(alpha = 0.6f))
@@ -700,12 +711,12 @@ fun LibraryScreen(
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("Delete", fontWeight = FontWeight.Bold)
+                    Text(getLocalized("Eliminar", "Delete"), fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { songToDelete = null }) {
-                    Text("Cancel", color = Color.White.copy(alpha = 0.6f))
+                    Text(getLocalized("Cancelar", "Cancel"), color = Color.White.copy(alpha = 0.6f))
                 }
             },
             containerColor = Color(0xFF161829),
