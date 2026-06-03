@@ -101,6 +101,8 @@ fun LibraryScreen(
     var songToDelete by remember { mutableStateOf<AudioFile?>(null) }
     var songForPlaylist by remember { mutableStateOf<AudioFile?>(null) }
     var songForTagEditing by remember { mutableStateOf<AudioFile?>(null) }
+    var songForOptionsSheet by remember { mutableStateOf<AudioFile?>(null) }
+    var playlistContextForOptionsSheet by remember { mutableStateOf<String?>(null) }
     var playlistSortBy by remember { mutableStateOf("Date") }
 
     if (viewModel != null) {
@@ -366,7 +368,10 @@ fun LibraryScreen(
                                 "Songs" -> {
                                     SongListView(
                                         songs = filteredFiles,
-                                        onSongClick = { song -> onFileClick(song, filteredFiles) },
+                                        onSongClick = { song ->
+                                            songForOptionsSheet = song
+                                            playlistContextForOptionsSheet = null
+                                        },
                                         onEditTagsClick = { songForTagEditing = it },
                                         onSongLongClick = { song ->
                                             if (!isMultiSelectMode) {
@@ -395,6 +400,14 @@ fun LibraryScreen(
                                             } else {
                                                 selectedSongs.add(song)
                                             }
+                                        },
+                                        onSelectionChanged = { newSelection ->
+                                            selectedSongs.clear()
+                                            selectedSongs.addAll(newSelection)
+                                            isMultiSelectMode = newSelection.isNotEmpty()
+                                        },
+                                        onPlayDirectly = { song ->
+                                            onFileClick(song, filteredFiles)
                                         }
                                     )
                                 }
@@ -530,6 +543,40 @@ fun LibraryScreen(
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                        } else if (subView is SubView.AlbumDetail) {
+                            val firstSong = subSongs.firstOrNull()
+                            val artBytes = rememberAlbumArt(firstSong?.uriString)
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(getGradientForString(subView.albumName)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                coil.compose.SubcomposeAsyncImage(
+                                    model = artBytes,
+                                    contentDescription = "Album Cover",
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                    loading = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.MusicNote,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.8f),
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    },
+                                    error = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.MusicNote,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.8f),
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                         }
@@ -678,7 +725,10 @@ fun LibraryScreen(
                     // Songs listing under the sub-view
                     SongListView(
                         songs = subSongs,
-                        onSongClick = { song -> onFileClick(song, subSongs) },
+                        onSongClick = { song ->
+                            songForOptionsSheet = song
+                            playlistContextForOptionsSheet = if (subView is SubView.PlaylistDetail) subView.playlistName else null
+                        },
                         onEditTagsClick = { songForTagEditing = it },
                         onSongLongClick = { song ->
                             if (!isMultiSelectMode) {
@@ -709,6 +759,14 @@ fun LibraryScreen(
                             } else {
                                 selectedSongs.add(song)
                             }
+                        },
+                        onSelectionChanged = { newSelection ->
+                            selectedSongs.clear()
+                            selectedSongs.addAll(newSelection)
+                            isMultiSelectMode = newSelection.isNotEmpty()
+                        },
+                        onPlayDirectly = { song ->
+                            onFileClick(song, subSongs)
                         }
                     )
                 }
@@ -930,6 +988,46 @@ fun LibraryScreen(
             song = songForTagEditing!!,
             viewModel = viewModel,
             onDismiss = { songForTagEditing = null }
+        )
+    }
+
+
+    if (songForOptionsSheet != null) {
+        SongOptionsBottomSheet(
+            song = songForOptionsSheet!!,
+            playlistContextName = playlistContextForOptionsSheet,
+            onDismissRequest = { songForOptionsSheet = null },
+            onPlayNextClick = {
+                val s = songForOptionsSheet!!
+                songForOptionsSheet = null
+                viewModel?.playNext(s)
+            },
+            onAddToQueueClick = {
+                val s = songForOptionsSheet!!
+                songForOptionsSheet = null
+                viewModel?.addToQueue(s)
+            },
+            onAddToPlaylistClick = {
+                val s = songForOptionsSheet!!
+                songForOptionsSheet = null
+                songForPlaylist = s
+            },
+            onRemoveFromPlaylistClick = {
+                val s = songForOptionsSheet!!
+                val ctx = playlistContextForOptionsSheet!!
+                songForOptionsSheet = null
+                viewModel?.removeSongFromPlaylist(ctx, s.id)
+            },
+            onEditMetadataClick = {
+                val s = songForOptionsSheet!!
+                songForOptionsSheet = null
+                songForTagEditing = s
+            },
+            onDeleteClick = {
+                val s = songForOptionsSheet!!
+                songForOptionsSheet = null
+                songToDelete = s
+            }
         )
     }
 

@@ -140,7 +140,8 @@ fun PlayerScreen(
     val targetLang = locale.language // "es" or "en"
     
     val currentSongUriString = remember(playerState.currentSong?.mediaId) {
-        playerState.currentSong?.mediaId?.let { "content://media/external/audio/media/$it" }
+        val mediaId = playerState.currentSong?.mediaId
+        if (mediaId != null) "content://media/external/audio/media/$mediaId" else null
     }
     val fileInfo by produceState(initialValue = Pair("MP3", "320 kbps"), key1 = playerState.currentSong?.mediaId) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -397,6 +398,22 @@ fun PlayerScreen(
             }
         }
 
+        val settingsPrefs = remember(context) { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
+        val autoTranslateEnabled = remember(settingsPrefs) { settingsPrefs.getBoolean("auto_translate", false) }
+
+        LaunchedEffect(currentSongFile?.id, lyricLines, autoTranslateEnabled) {
+            val cached = currentSongFile?.translatedLyrics
+            if (cached.isNullOrBlank() && lyricLines.isNotEmpty() && autoTranslateEnabled && !isTranslating) {
+                val sample = lyricLines.filter { it.text.isNotBlank() }.joinToString("\n") { it.text }
+                if (sample.isNotBlank()) {
+                    val detected = detectLanguage(sample)
+                    if (detected != targetLang) {
+                        translateLyrics()
+                    }
+                }
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -557,7 +574,7 @@ fun PlayerScreen(
                 ) {
                     val currentSongId = playerState.currentSong?.mediaId
                     val currentSongUriString = remember(currentSongId) {
-                        currentSongId?.let { "content://media/external/audio/media/$it" }
+                        if (currentSongId != null) "content://media/external/audio/media/$currentSongId" else null
                     }
                     Box(
                         modifier = Modifier
@@ -773,8 +790,20 @@ fun PlayerScreen(
                 }
 
                 // Previous Button
+                val context = androidx.compose.ui.platform.LocalContext.current
                 IconButton(
-                    onClick = { player.seekToPrevious() },
+                    onClick = {
+                        val crossfadeSeconds = context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
+                        val controller = player as? androidx.media3.session.MediaController
+                        if (controller != null && crossfadeSeconds > 0) {
+                            controller.sendCustomCommand(
+                                androidx.media3.session.SessionCommand("ACTION_SKIP_PREV", android.os.Bundle.EMPTY),
+                                android.os.Bundle.EMPTY
+                            )
+                        } else {
+                            player.seekToPrevious()
+                        }
+                    },
                     modifier = Modifier.size(54.dp)
                 ) {
                     Icon(
@@ -813,7 +842,18 @@ fun PlayerScreen(
 
                 // Next Button
                 IconButton(
-                    onClick = { player.seekToNext() },
+                    onClick = {
+                        val crossfadeSeconds = context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
+                        val controller = player as? androidx.media3.session.MediaController
+                        if (controller != null && crossfadeSeconds > 0) {
+                            controller.sendCustomCommand(
+                                androidx.media3.session.SessionCommand("ACTION_SKIP_NEXT", android.os.Bundle.EMPTY),
+                                android.os.Bundle.EMPTY
+                            )
+                        } else {
+                            player.seekToNext()
+                        }
+                    },
                     modifier = Modifier.size(54.dp)
                 ) {
                     Icon(
@@ -875,7 +915,8 @@ fun PlayerScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         val currentSongUriString = remember(playerState.currentSong?.mediaId) {
-                            playerState.currentSong?.mediaId?.let { "content://media/external/audio/media/$it" }
+                            val mediaId = playerState.currentSong?.mediaId
+                            if (mediaId != null) "content://media/external/audio/media/$mediaId" else null
                         }
                         val artBytes = rememberAlbumArt(currentSongUriString)
                         Box(
@@ -926,7 +967,8 @@ fun PlayerScreen(
                     
                     val context = LocalContext.current
                     val currentSongUriString = remember(playerState.currentSong?.mediaId) {
-                        playerState.currentSong?.mediaId?.let { "content://media/external/audio/media/$it" }
+                        val mediaId = playerState.currentSong?.mediaId
+                        if (mediaId != null) "content://media/external/audio/media/$mediaId" else null
                     }
 
 
@@ -1488,7 +1530,8 @@ fun PlayerScreen(
         // Technical Audio Info Dialog
         if (showFileInfoDialog) {
             val currentSongUriString = remember(playerState.currentSong?.mediaId) {
-                playerState.currentSong?.mediaId?.let { "content://media/external/audio/media/$it" }
+                val mediaId = playerState.currentSong?.mediaId
+                if (mediaId != null) "content://media/external/audio/media/$mediaId" else null
             }
             AlertDialog(
                 onDismissRequest = { showFileInfoDialog = false },

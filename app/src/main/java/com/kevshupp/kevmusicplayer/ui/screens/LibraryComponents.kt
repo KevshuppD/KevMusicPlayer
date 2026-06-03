@@ -11,6 +11,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,6 +41,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -51,9 +56,11 @@ import coil.compose.SubcomposeAsyncImage
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 import com.kevshupp.kevmusicplayer.R
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.graphicsLayer
 // Beautiful vibrant gradients for placeholders
 private val GradientPairs = listOf(
     listOf(Color(0xFFFF3366), Color(0xFF7C4DFF)),
@@ -85,10 +92,14 @@ fun SongListView(
     onRemoveFromPlaylistClick: (AudioFile) -> Unit = {},
     selectedSongs: Set<AudioFile> = emptySet(),
     isMultiSelectMode: Boolean = false,
-    onSongSelectToggle: ((AudioFile) -> Unit)? = null
+    onSongSelectToggle: ((AudioFile) -> Unit)? = null,
+    onSelectionChanged: ((Set<AudioFile>) -> Unit)? = null,
+    onPlayDirectly: ((AudioFile) -> Unit)? = null
 ) {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    
+
     
     // Fast scroll logic: Numbers -> #, A-Z -> letter, Everything else -> ?
     val alphabet = remember(songs) { 
@@ -133,24 +144,183 @@ fun SongListView(
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(songs) { song ->
+            itemsIndexed(songs) { index, song ->
                 val isSelected = selectedSongs.contains(song)
+                
+                val currentSong by rememberUpdatedState(song)
+                val currentIndex by rememberUpdatedState(index)
+                val currentSongsList by rememberUpdatedState(songs)
+                val currentSelectedSongsSet by rememberUpdatedState(selectedSongs)
+                val currentIsMultiSelectModeVal by rememberUpdatedState(isMultiSelectMode)
+                
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
-                        .combinedClickable(
-                            onClick = {
-                                if (isMultiSelectMode) {
-                                    onSongSelectToggle?.invoke(song)
-                                } else {
-                                    onSongClick(song)
+                        .pointerInput(song) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                var hasDragged = false
+                                var longPressTriggered = false
+                                val longPressTimeout = 500L
+                                val startTime = System.currentTimeMillis()
+                                val touchSlop = viewConfiguration.touchSlop
+                                
+                                var currentY = down.position.y
+                                var targetIndex = currentIndex
+                                
+                                val startSelection = currentSelectedSongsSet.toSet()
+                                val startSelecting = !startSelection.contains(currentSong)
+                                
+                                var isDraggingActive = true
+                                var dragViewportY: Float? = null
+                                var scrollJob: Job? = null
+                                
+                                fun updateSelectionAtY(viewportY: Float) {
+                                    val pressedItemInfo = listState.layoutInfo.visibleItemsInfo.find { it.index == currentIndex }
+                                    if (pressedItemInfo != null) {
+                                        val hoverItem = listState.layoutInfo.visibleItemsInfo.find { itemInfo ->
+                                            viewportY.toInt() in itemInfo.offset..(itemInfo.offset + itemInfo.size)
+                                        }
+                                        val sList = currentSongsList
+                                        if (hoverItem != null && hoverItem.index in sList.indices) {
+                                            val hoverIndex = hoverItem.index
+                                            if (hoverIndex != targetIndex) {
+                                                if (!hasDragged) {
+                                                    hasDragged = true
+                                                    if (!currentIsMultiSelectModeVal) {
+                                                        onSongLongClick(currentSong)
+                                                    }
+                                                }
+                                                targetIndex = hoverIndex
+                                                
+                                                val start = minOf(currentIndex, hoverIndex)
+                                                val end = maxOf(currentIndex, hoverIndex)
+                                                val rangeSongs = sList.subList(start, end + 1)
+                                                
+                                                val newSelection = startSelection.toMutableSet()
+                                                if (startSelecting) {
+                                                    newSelection.addAll(rangeSongs)
+                                                } else {
+                                                    newSelection.removeAll(rangeSongs)
+                                                }
+                                                onSelectionChanged?.invoke(newSelection)
+                                            }
+                                        }
+                                    }
                                 }
-                            },
-                            onLongClick = {
-                                onSongLongClick(song)
+                                
+                                fun startScrollIfNeeded() {
+                                    if (scrollJob == null) {
+                                        scrollJob = coroutineScope.launch {
+                                            while (isDraggingActive) {
+                                                val y = dragViewportY
+                                                if (y != null) {
+                                                    val viewportHeight = listState.layoutInfo.viewportSize.height
+                                                    val threshold = 120f
+                                                    var scrollAmount = 0f
+                                                    
+                                                    if (y < threshold) {
+                                                        val factor = (threshold - y) / threshold
+                                                        scrollAmount = -18f * factor.coerceIn(0.2f, 1.0f)
+                                                    } else if (y > viewportHeight - threshold) {
+                                                        val factor = (y - (viewportHeight - threshold)) / threshold
+                                                        scrollAmount = 18f * factor.coerceIn(0.2f, 1.0f)
+                                                    }
+                                                    
+                                                    if (scrollAmount != 0f) {
+                                                        listState.scrollBy(scrollAmount)
+                                                        updateSelectionAtY(y)
+                                                    }
+                                                }
+                                                delay(16)
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                try {
+                                    while (true) {
+                                        val elapsed = System.currentTimeMillis() - startTime
+                                        val remaining = longPressTimeout - elapsed
+                                        
+                                        val event = if (remaining > 0 && !longPressTriggered) {
+                                            withTimeoutOrNull(remaining) {
+                                                awaitPointerEvent(PointerEventPass.Main)
+                                            }
+                                        } else {
+                                            awaitPointerEvent(PointerEventPass.Main)
+                                        }
+                                        
+                                        if (event == null) {
+                                            // Timeout reached! Long press triggers now.
+                                            longPressTriggered = true
+                                            continue
+                                        }
+                                        
+                                        val changes = event.changes
+                                        val anyPressed = changes.any { it.pressed }
+                                        
+                                        if (!anyPressed) {
+                                            // Released!
+                                            if (elapsed < longPressTimeout) {
+                                                // Tap!
+                                                if (currentIsMultiSelectModeVal) {
+                                                    onSongSelectToggle?.invoke(currentSong)
+                                                } else {
+                                                    onPlayDirectly?.invoke(currentSong)
+                                                }
+                                            } else {
+                                                // Long press release without drag
+                                                if (!hasDragged && !currentIsMultiSelectModeVal) {
+                                                    onSongClick(currentSong)
+                                                }
+                                            }
+                                            break
+                                        } else {
+                                            // Still holding
+                                            val change = changes.firstOrNull()
+                                            if (change != null) {
+                                                currentY = change.position.y
+                                                val dragDistance = Math.abs(currentY - down.position.y)
+                                                
+                                                // If they scroll/drag too much before long press, cancel and let parent handle scrolling
+                                                if (!longPressTriggered && dragDistance > touchSlop) {
+                                                    break
+                                                }
+                                                
+                                                if (elapsed >= longPressTimeout && !longPressTriggered) {
+                                                    longPressTriggered = true
+                                                }
+                                                
+                                                if (longPressTriggered) {
+                                                    change.consume()
+                                                    val pressedItemInfo = listState.layoutInfo.visibleItemsInfo.find { it.index == currentIndex }
+                                                    if (pressedItemInfo != null) {
+                                                        val viewportY = pressedItemInfo.offset + currentY
+                                                        dragViewportY = viewportY
+                                                        
+                                                        // Drag threshold check to enter selection mode
+                                                        if (!hasDragged && (dragDistance > touchSlop || targetIndex != currentIndex)) {
+                                                            hasDragged = true
+                                                            if (!currentIsMultiSelectModeVal) {
+                                                                onSongLongClick(currentSong)
+                                                            }
+                                                        }
+                                                        
+                                                        updateSelectionAtY(viewportY)
+                                                        startScrollIfNeeded()
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } finally {
+                                    isDraggingActive = false
+                                    scrollJob?.cancel()
+                                }
                             }
-                        )
+                        }
                         .background(
                             if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
@@ -162,16 +332,14 @@ fun SongListView(
                         .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Multi-select Indicator
                     if (isMultiSelectMode) {
                         Icon(
                             imageVector = if (isSelected) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
                             contentDescription = "Selection",
-                            tint = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.4f),
+                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
                             modifier = Modifier.padding(end = 12.dp).size(24.dp)
                         )
                     }
-
                     // Sleek Gradient Song Icon
                     Box(
                         modifier = Modifier
@@ -211,7 +379,7 @@ fun SongListView(
                         Text(
                             text = song.title,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontSize = 15.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -219,88 +387,25 @@ fun SongListView(
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "${song.artist} • ${song.album}",
-                            color = Color.White.copy(alpha = 0.5f),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-
-                    // Metadata tag editor & context actions trigger
-                    var expanded by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton(
-                            onClick = { expanded = true },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.MoreVert,
-                                contentDescription = "More options",
-                                tint = Color.White.copy(alpha = 0.6f)
-                            )
-                        }
-
-                        DropdownMenu(
-                            expanded = expanded,
-                            onDismissRequest = { expanded = false },
-                            containerColor = Color(0xFF1E213A)
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Play Next", color = Color.White) },
-                                onClick = {
-                                    expanded = false
-                                    onPlayNextClick(song)
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.QueuePlayNext, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Add to Queue", color = Color.White) },
-                                onClick = {
-                                    expanded = false
-                                    onAddToQueueClick(song)
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.AddToPhotos, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Add to Playlist", color = Color.White) },
-                                onClick = {
-                                    expanded = false
-                                    onAddToPlaylistClick(song)
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
-                            )
-                            if (playlistContextName != null) {
-                                DropdownMenuItem(
-                                    text = { Text("Remove from Playlist", color = MaterialTheme.colorScheme.error) },
-                                    onClick = {
-                                        expanded = false
-                                        onRemoveFromPlaylistClick(song)
-                                    },
-                                    leadingIcon = { Icon(Icons.Rounded.PlaylistRemove, contentDescription = null, tint = MaterialTheme.colorScheme.error) }
-                                )
-                            }
-                            DropdownMenuItem(
-                                text = { Text("Edit Metadata", color = Color.White) },
-                                onClick = {
-                                    expanded = false
-                                    onEditTagsClick(song)
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.EditNote, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
-                            )
-                        }
-                    }
-                }
             }
         }
-
+    }
         // Fast Scroll Alphabet Overlay Scrollbar
         if (alphabet != null) {
             val density = LocalDensity.current
+            val alphabetAlpha by animateFloatAsState(targetValue = if (showAlphabetPopup) 1f else 0f, label = "alphabet_alpha")
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
                     .width(28.dp)
+                    .graphicsLayer { alpha = alphabetAlpha }
                     .padding(vertical = 16.dp)
                     .background(Color.Black.copy(alpha = 0.15f), RoundedCornerShape(14.dp))
                     .pointerInput(alphabet, totalHeight) {
@@ -909,18 +1014,18 @@ fun PlaylistGridView(
     if (showCreateDialog) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
-            title = { Text("Nueva lista de reproducción", color = Color.White, fontWeight = FontWeight.Bold) },
+            title = { Text("Nueva lista de reproducción", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = newPlaylistName,
                     onValueChange = { newPlaylistName = it },
-                    label = { Text("Nombre de la lista", color = Color.White.copy(alpha = 0.5f)) },
+                    label = { Text("Nombre de la lista", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)) },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
+                        unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
                         cursorColor = MaterialTheme.colorScheme.primary
                     )
                 )
@@ -936,18 +1041,17 @@ fun PlaylistGridView(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Text("Crear", color = Color.Black, fontWeight = FontWeight.Bold)
+                    Text("Crear", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateDialog = false }) {
-                    Text("Cancelar", color = Color.White.copy(alpha = 0.6f))
+                    Text("Cancelar", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 }
             },
-            containerColor = Color(0xFF161829)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     }
-
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         contentPadding = PaddingValues(16.dp),
@@ -1077,11 +1181,10 @@ fun PlaylistGridView(
                     }
                 }
 
-                // Dropdown menu overlay
                 DropdownMenu(
                     expanded = expandedMenu,
                     onDismissRequest = { expandedMenu = false },
-                    containerColor = Color(0xFF1E213A)
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
                 ) {
                     DropdownMenuItem(
                         text = { Text("Eliminar Lista", color = MaterialTheme.colorScheme.error) },
@@ -1099,6 +1202,162 @@ fun PlaylistGridView(
                     )
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SongOptionsBottomSheet(
+    song: AudioFile,
+    playlistContextName: String? = null,
+    onDismissRequest: () -> Unit,
+    onPlayNextClick: () -> Unit,
+    onAddToQueueClick: () -> Unit,
+    onAddToPlaylistClick: () -> Unit,
+    onRemoveFromPlaylistClick: (() -> Unit)? = null,
+    onEditMetadataClick: () -> Unit,
+    onDeleteClick: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismissRequest,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        dragHandle = { BottomSheetDefaults.DragHandle(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)) }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Header: Song info
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(getGradientForString(song.title)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val artBytes = rememberAlbumArt(song.uriString)
+                    SubcomposeAsyncImage(
+                        model = artBytes,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                        error = {
+                            Icon(
+                                imageVector = Icons.Rounded.MusicNote,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = song.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = song.artist,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OptionItem(
+                    icon = Icons.Rounded.QueuePlayNext,
+                    text = "Reproducir a continuación",
+                    onClick = onPlayNextClick
+                )
+                OptionItem(
+                    icon = Icons.Rounded.AddToPhotos,
+                    text = "Agregar a la cola",
+                    onClick = onAddToQueueClick
+                )
+                OptionItem(
+                    icon = Icons.Rounded.PlaylistAdd,
+                    text = "Agregar a playlist",
+                    onClick = onAddToPlaylistClick
+                )
+                if (playlistContextName != null && onRemoveFromPlaylistClick != null) {
+                    OptionItem(
+                        icon = Icons.Rounded.PlaylistRemove,
+                        text = "Eliminar de la playlist",
+                        iconColor = MaterialTheme.colorScheme.error,
+                        textColor = MaterialTheme.colorScheme.error,
+                        onClick = onRemoveFromPlaylistClick
+                    )
+                }
+                OptionItem(
+                    icon = Icons.Rounded.EditNote,
+                    text = "Editar metadatos",
+                    onClick = onEditMetadataClick
+                )
+                OptionItem(
+                    icon = Icons.Rounded.Delete,
+                    text = "Eliminar del dispositivo",
+                    iconColor = MaterialTheme.colorScheme.error,
+                    textColor = MaterialTheme.colorScheme.error,
+                    onClick = onDeleteClick
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OptionItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String,
+    iconColor: Color = MaterialTheme.colorScheme.primary,
+    textColor: Color = Color.Unspecified,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        color = Color.Transparent,
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp, horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(imageVector = icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp))
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(
+                text = text, 
+                color = if (textColor == Color.Unspecified) MaterialTheme.colorScheme.onSurface else textColor, 
+                fontSize = 15.sp, 
+                fontWeight = FontWeight.Medium
+            )
         }
     }
 }

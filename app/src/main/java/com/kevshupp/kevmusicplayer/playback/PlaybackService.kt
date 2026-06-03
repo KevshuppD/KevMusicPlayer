@@ -25,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
+@Suppress("DEPRECATION")
 class PlaybackService : MediaLibraryService() {
     private var mediaLibrarySession: MediaLibrarySession? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main)
@@ -59,6 +60,10 @@ class PlaybackService : MediaLibraryService() {
         serviceScope.launch {
             restorePlaybackState(player)
         }
+
+        startFadeCheckLoop(player)
+        val eqPrefs = getSharedPreferences("equalizer_prefs", android.content.Context.MODE_PRIVATE)
+        eqPrefs.registerOnSharedPreferenceChangeListener(eqPrefsListener)
 
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -102,6 +107,12 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
+
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                if (audioSessionId != 0) {
+                    setupAudioEffects(audioSessionId)
+                }
+            }
         })
 
         val callback = object : MediaLibrarySession.Callback {
@@ -139,6 +150,28 @@ class PlaybackService : MediaLibraryService() {
                         .build()
                 }.toMutableList()
                 return Futures.immediateFuture(updatedItems)
+            }
+
+            override fun onCustomCommand(
+                session: MediaSession,
+                controller: MediaSession.ControllerInfo,
+                customCommand: androidx.media3.session.SessionCommand,
+                args: android.os.Bundle
+            ): ListenableFuture<androidx.media3.session.SessionResult> {
+                val player = session.player as? ExoPlayer
+                if (player != null) {
+                    when (customCommand.customAction) {
+                        "ACTION_SKIP_NEXT" -> {
+                            performManualSkip(player, next = true)
+                            return Futures.immediateFuture(androidx.media3.session.SessionResult(androidx.media3.session.SessionResult.RESULT_SUCCESS))
+                        }
+                        "ACTION_SKIP_PREV" -> {
+                            performManualSkip(player, next = false)
+                            return Futures.immediateFuture(androidx.media3.session.SessionResult(androidx.media3.session.SessionResult.RESULT_SUCCESS))
+                        }
+                    }
+                }
+                return Futures.immediateFuture(androidx.media3.session.SessionResult(androidx.media3.session.SessionResult.RESULT_ERROR_NOT_SUPPORTED))
             }
         }
 
@@ -180,8 +213,37 @@ class PlaybackService : MediaLibraryService() {
                         retriever.setDataSource(this@PlaybackService, Uri.parse(uriString))
                         val picture = retriever.embeddedPicture
                         if (picture != null) {
-                            artFile.writeBytes(picture)
-                            success = true
+                            val opts = android.graphics.BitmapFactory.Options().apply {
+                                inJustDecodeBounds = true
+                            }
+                            android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, opts)
+                            
+                            val targetSize = 200
+                            var sampleSize = 1
+                            val largestDim = maxOf(opts.outWidth, opts.outHeight)
+                            if (largestDim > targetSize) {
+                                sampleSize = Math.round(largestDim.toFloat() / targetSize)
+                            }
+                            
+                            val decodeOpts = android.graphics.BitmapFactory.Options().apply {
+                                inSampleSize = sampleSize
+                            }
+                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, decodeOpts)
+                            if (bitmap != null) {
+                                val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, targetSize, targetSize, true)
+                                val tmpFile = java.io.File(cacheDir, "current_widget_art_tmp.png")
+                                java.io.FileOutputStream(tmpFile).use { out ->
+                                    scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
+                                }
+                                if (tmpFile.exists()) {
+                                    tmpFile.renameTo(artFile)
+                                }
+                                if (scaledBitmap != bitmap) {
+                                    bitmap.recycle()
+                                }
+                                scaledBitmap.recycle()
+                                success = true
+                            }
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
@@ -354,28 +416,40 @@ class PlaybackService : MediaLibraryService() {
                         }
                     }
                     "com.kevshupp.kevmusicplayer.action.NEXT" -> {
-                        if (player.mediaItemCount > 0) {
-                            if (player.hasNextMediaItem()) {
-                                player.seekToNextMediaItem()
-                            }
+                        val crossfadeSeconds = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
+                        val p = player as? ExoPlayer
+                        if (p != null && crossfadeSeconds > 0) {
+                            performManualSkip(p, next = true)
                         } else {
-                            skipToNextWhenRestored = true
-                            playWhenRestored = true
-                            serviceScope.launch {
-                                restorePlaybackState(player)
+                            if (player.mediaItemCount > 0) {
+                                if (player.hasNextMediaItem()) {
+                                    player.seekToNextMediaItem()
+                                }
+                            } else {
+                                skipToNextWhenRestored = true
+                                playWhenRestored = true
+                                serviceScope.launch {
+                                    restorePlaybackState(player)
+                                }
                             }
                         }
                     }
                     "com.kevshupp.kevmusicplayer.action.PREVIOUS" -> {
-                        if (player.mediaItemCount > 0) {
-                            if (player.hasPreviousMediaItem()) {
-                                player.seekToPreviousMediaItem()
-                            }
+                        val crossfadeSeconds = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
+                        val p = player as? ExoPlayer
+                        if (p != null && crossfadeSeconds > 0) {
+                            performManualSkip(p, next = false)
                         } else {
-                            skipToPrevWhenRestored = true
-                            playWhenRestored = true
-                            serviceScope.launch {
-                                restorePlaybackState(player)
+                            if (player.mediaItemCount > 0) {
+                                if (player.hasPreviousMediaItem()) {
+                                    player.seekToPreviousMediaItem()
+                                }
+                            } else {
+                                skipToPrevWhenRestored = true
+                                playWhenRestored = true
+                                serviceScope.launch {
+                                    restorePlaybackState(player)
+                                }
                             }
                         }
                     }
@@ -405,11 +479,176 @@ class PlaybackService : MediaLibraryService() {
                 wakeLock?.release()
             }
         } catch (e: Exception) {}
+        val eqPrefs = getSharedPreferences("equalizer_prefs", android.content.Context.MODE_PRIVATE)
+        eqPrefs.unregisterOnSharedPreferenceChangeListener(eqPrefsListener)
+
+        equalizer?.release()
+        bassBoost?.release()
+        virtualizer?.release()
+        fadeJob?.cancel()
+        fadeInJob?.cancel()
+
         mediaLibrarySession?.run {
             player.release()
             release()
         }
         mediaLibrarySession = null
         super.onDestroy()
+    }
+
+    private var equalizer: android.media.audiofx.Equalizer? = null
+    private var bassBoost: android.media.audiofx.BassBoost? = null
+    private var virtualizer: android.media.audiofx.Virtualizer? = null
+
+    private val eqPrefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        val player = mediaLibrarySession?.player as? ExoPlayer
+        val audioSessionId = player?.audioSessionId ?: 0
+        if (audioSessionId != 0) {
+            setupAudioEffects(audioSessionId)
+        }
+    }
+
+    private fun setupAudioEffects(audioSessionId: Int) {
+        try {
+            val prefs = getSharedPreferences("equalizer_prefs", android.content.Context.MODE_PRIVATE)
+            
+            // Equalizer
+            val eqEnabled = prefs.getBoolean("eq_enabled", false)
+            if (equalizer == null) {
+                equalizer = android.media.audiofx.Equalizer(0, audioSessionId)
+            }
+            equalizer?.enabled = eqEnabled
+            
+            val eq = equalizer
+            if (eq != null && eqEnabled) {
+                val bandsStr = prefs.getString("eq_bands", null) ?: "0,0,0,0,0"
+                val bands = bandsStr.split(",").mapNotNull { it.toIntOrNull() }
+                val numBands = eq.numberOfBands.toInt()
+                for (i in 0 until minOf(numBands, bands.size)) {
+                    try {
+                        val level = bands[i].coerceIn(eq.bandLevelRange[0].toInt(), eq.bandLevelRange[1].toInt())
+                        eq.setBandLevel(i.toShort(), level.toShort())
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            }
+
+            // Bass Boost
+            val bbEnabled = prefs.getBoolean("bb_enabled", false)
+            val bbStrength = prefs.getInt("bb_strength", 0).toShort()
+            if (bassBoost == null) {
+                bassBoost = android.media.audiofx.BassBoost(0, audioSessionId)
+            }
+            bassBoost?.enabled = bbEnabled
+            if (bbEnabled) {
+                bassBoost?.setStrength(bbStrength)
+            }
+
+            // Virtualizer
+            val virtEnabled = prefs.getBoolean("virt_enabled", false)
+            val virtStrength = prefs.getInt("virt_strength", 0).toShort()
+            if (virtualizer == null) {
+                virtualizer = android.media.audiofx.Virtualizer(0, audioSessionId)
+            }
+            virtualizer?.enabled = virtEnabled
+            if (virtEnabled) {
+                virtualizer?.setStrength(virtStrength)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private var fadeJob: kotlinx.coroutines.Job? = null
+    private var isFadingIn = false
+    private var fadeInJob: kotlinx.coroutines.Job? = null
+    private var manualSkipJob: kotlinx.coroutines.Job? = null
+
+    private fun startFadeCheckLoop(player: ExoPlayer) {
+        fadeJob?.cancel()
+        fadeJob = serviceScope.launch {
+            val playbackPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+            while (true) {
+                kotlinx.coroutines.delay(150)
+                if (!player.isPlaying || isFadingIn) continue
+                
+                val crossfadeSeconds = playbackPrefs.getInt("crossfade_duration", 0)
+                if (crossfadeSeconds <= 0) {
+                    if (player.volume != 1f && !isFadingIn) {
+                        player.volume = 1f
+                    }
+                    continue
+                }
+                
+                val duration = player.duration
+                val position = player.currentPosition
+                if (duration > 0) {
+                    val remainingMs = duration - position
+                    val crossfadeMs = crossfadeSeconds * 1000L
+                    
+                    if (remainingMs <= crossfadeMs) {
+                        val progress = remainingMs.toFloat() / crossfadeMs
+                        player.volume = progress.coerceIn(0f, 1f)
+                        
+                        if (remainingMs <= 200L && player.hasNextMediaItem()) {
+                            player.seekToNextMediaItem()
+                            fadeNewTrackIn(player, crossfadeMs)
+                        }
+                    } else {
+                        if (player.volume < 1f && !isFadingIn) {
+                            player.volume = 1f
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun fadeNewTrackIn(player: ExoPlayer, crossfadeMs: Long) {
+        fadeInJob?.cancel()
+        isFadingIn = true
+        fadeInJob = serviceScope.launch {
+            player.volume = 0f
+            val steps = 20
+            val delayMs = (crossfadeMs / steps).coerceAtLeast(10L)
+            for (i in 1..steps) {
+                kotlinx.coroutines.delay(delayMs)
+                if (!player.isPlaying) break
+                player.volume = i.toFloat() / steps
+            }
+            player.volume = 1f
+            isFadingIn = false
+        }
+    }
+
+    private fun performManualSkip(player: ExoPlayer, next: Boolean) {
+        fadeInJob?.cancel()
+        manualSkipJob?.cancel()
+        manualSkipJob = serviceScope.launch {
+            val fadeOutSteps = 10
+            val originalVolume = player.volume
+            for (i in fadeOutSteps downTo 0) {
+                player.volume = (i.toFloat() / fadeOutSteps) * originalVolume
+                kotlinx.coroutines.delay(30)
+            }
+            
+            if (next) {
+                if (player.hasNextMediaItem()) {
+                    player.seekToNextMediaItem()
+                }
+            } else {
+                if (player.hasPreviousMediaItem()) {
+                    player.seekToPreviousMediaItem()
+                }
+            }
+            
+            player.volume = 0f
+            for (i in 1..fadeOutSteps) {
+                kotlinx.coroutines.delay(30)
+                player.volume = (i.toFloat() / fadeOutSteps)
+            }
+            player.volume = 1f
+        }
     }
 }

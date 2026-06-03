@@ -95,6 +95,7 @@ class MusicWidget : GlanceAppWidget() {
                 Box(
                     modifier = GlanceModifier
                         .size(52.dp)
+                        .background(ColorProvider(Color(0xFF1E1B4B)))
                         .cornerRadius(12.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -102,31 +103,24 @@ class MusicWidget : GlanceAppWidget() {
                         Image(
                             provider = ImageProvider(bitmap),
                             contentDescription = "Cover",
-                            modifier = GlanceModifier.fillMaxSize(),
+                            modifier = GlanceModifier.fillMaxSize().cornerRadius(12.dp),
                             contentScale = ContentScale.Crop
                         )
                     } else {
                         // Vibrant glowing neon center placeholder
                         Box(
                             modifier = GlanceModifier
-                                .fillMaxSize()
-                                .background(ColorProvider(Color(0xFF1E1B4B))),
+                                .size(36.dp)
+                                .background(ColorProvider(Color(0xFF7C4DFF)))
+                                .cornerRadius(18.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Box(
-                                modifier = GlanceModifier
-                                    .size(36.dp)
-                                    .background(ColorProvider(Color(0xFF7C4DFF)))
-                                    .cornerRadius(18.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    provider = ImageProvider(android.R.drawable.ic_media_play),
-                                    contentDescription = "Cover Placeholder",
-                                    modifier = GlanceModifier.size(16.dp),
-                                    colorFilter = ColorFilter.tint(ColorProvider(Color.Black))
-                                )
-                            }
+                            Image(
+                                provider = ImageProvider(android.R.drawable.ic_media_play),
+                                contentDescription = "Cover Placeholder",
+                                modifier = GlanceModifier.size(16.dp),
+                                colorFilter = ColorFilter.tint(ColorProvider(Color.Black))
+                            )
                         }
                     }
                 }

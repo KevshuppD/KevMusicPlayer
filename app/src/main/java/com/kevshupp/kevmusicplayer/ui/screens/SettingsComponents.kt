@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -29,6 +30,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.atan2
+import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.key
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -97,7 +103,8 @@ fun GeneralSettingsSection(
                     Triple("cyberpunk", getLocalized("Cyberpunk Púrpura", "Cyberpunk Purple"), getLocalized("Vibrante tono púrpura y rosa neón", "Vibrant purple and neon pink style")),
                     Triple("petrol", getLocalized("Azul Petróleo", "Petrol Blue"), getLocalized("Sofisticado azul petróleo y cian minimalista", "Sophisticated petrol blue and clean cyan")),
                     Triple("turquoise", getLocalized("Turquesa", "Turquoise"), getLocalized("Estilo turquesa y verde menta refrescante", "Refreshing turquoise and mint green style")),
-                    Triple("obsidian", getLocalized("Obsidiana Oscuro", "Deep Obsidian"), getLocalized("Fondo negro puro de alto contraste (AMOLED)", "Pure black background with high contrast (AMOLED)"))
+                    Triple("obsidian", getLocalized("Obsidiana Oscuro", "Deep Obsidian"), getLocalized("Fondo negro puro de alto contraste (AMOLED)", "Pure black background with high contrast (AMOLED)")),
+                    Triple("monochrome", getLocalized("Blanco y Negro", "Monochrome"), getLocalized("Elegante diseño minimalista en escala de grises", "Elegant minimalist grayscale design"))
                 )
 
                 themes.forEachIndexed { index, (tag, name, desc) ->
@@ -128,12 +135,12 @@ fun GeneralSettingsSection(
                                 text = name,
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = desc,
                                 fontSize = 12.sp,
-                                color = Color.White.copy(alpha = 0.5f)
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                             )
                         }
 
@@ -147,6 +154,7 @@ fun GeneralSettingsSection(
                                         "petrol" -> Brush.horizontalGradient(listOf(Color(0xFF0A1E24), Color(0xFF00E5FF)))
                                         "obsidian" -> Brush.horizontalGradient(listOf(Color(0xFF0E0E0E), Color(0xFFFFFFFF)))
                                         "turquoise" -> Brush.horizontalGradient(listOf(Color(0xFF071F1B), Color(0xFF00F5D4)))
+                                        "monochrome" -> Brush.horizontalGradient(listOf(Color(0xFF000000), Color(0xFFFFFFFF)))
                                         else -> Brush.horizontalGradient(listOf(Color(0xFF121422), Color(0xFFFF4081)))
                                     }
                                 )
@@ -155,7 +163,7 @@ fun GeneralSettingsSection(
 
                     if (index < themes.lastIndex) {
                         HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.08f),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
                             modifier = Modifier.padding(horizontal = 16.dp)
                         )
                     }
@@ -364,7 +372,7 @@ fun SystemSettingsSection(
                             text = getLocalized("Tasa de Refresco", "Refresh Rate"),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = getLocalized(
@@ -372,7 +380,7 @@ fun SystemSettingsSection(
                                 "Enforce high rate (120Hz) for fluid scrolling or 60Hz to save battery"
                             ),
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.5f)
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                         )
                     }
 
@@ -398,14 +406,14 @@ fun SystemSettingsSection(
                                     text = "$rate Hz",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isSelected) Color.Black else Color.White
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
                     }
                 }
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
 
                 // 2. Disable Animations Mode Toggle
                 Row(
@@ -434,7 +442,7 @@ fun SystemSettingsSection(
                             text = getLocalized("Modo sin Animaciones", "Disable Animations Mode"),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = getLocalized(
@@ -442,7 +450,7 @@ fun SystemSettingsSection(
                                 "Disable transitions and visual effects for absolute speed and efficiency"
                             ),
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.5f)
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                         )
                     }
 
@@ -451,6 +459,57 @@ fun SystemSettingsSection(
                         onCheckedChange = { checked ->
                             onDisableAnimationsChanged(checked)
                             settingsPrefs.edit().putBoolean("disable_animations", checked).apply()
+                        }
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+
+                // 3. Automatic Translation Toggle
+                var autoTranslate by remember { mutableStateOf(settingsPrefs.getBoolean("auto_translate", false)) }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Translate,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(14.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Traducción Automática", "Auto Translation"),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Traduce automáticamente las letras si están en un idioma diferente",
+                                "Automatically translate lyrics if they are in a different language"
+                            ),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+
+                    Switch(
+                        checked = autoTranslate,
+                        onCheckedChange = { checked ->
+                            autoTranslate = checked
+                            settingsPrefs.edit().putBoolean("auto_translate", checked).apply()
                         }
                     )
                 }
@@ -895,7 +954,6 @@ fun LibrarySettingsSection(
                                                         enabledOrder.add(targetIndex, name)
                                                         draggingIndex = targetIndex
                                                         dragOffset -= offsetIndexes * itemHeightPx
-                                                        onEnabledTabsChanged(enabledOrder.toList())
                                                     }
                                                 }
                                             }
@@ -1917,5 +1975,546 @@ fun AboutSettingsSection(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun AudioSettingsSection(
+    context: android.content.Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    getLocalized: (String, String) -> String
+) {
+    val eqPrefs = remember { context.getSharedPreferences("equalizer_prefs", android.content.Context.MODE_PRIVATE) }
+    val settingsPrefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
+
+    var eqEnabled by remember { mutableStateOf(eqPrefs.getBoolean("eq_enabled", false)) }
+    var bbEnabled by remember { mutableStateOf(eqPrefs.getBoolean("bb_enabled", false)) }
+    var bbStrength by remember { mutableStateOf(eqPrefs.getInt("bb_strength", 0)) }
+    var virtEnabled by remember { mutableStateOf(eqPrefs.getBoolean("virt_enabled", false)) }
+    var virtStrength by remember { mutableStateOf(eqPrefs.getInt("virt_strength", 0)) }
+
+    val eqBands = remember {
+        val bandsStr = eqPrefs.getString("eq_bands", "0,0,0,0,0") ?: "0,0,0,0,0"
+        val initialList = bandsStr.split(",").map { it.toInt() / 100f }
+        val list = mutableStateListOf<Float>()
+        for (i in 0 until 5) {
+            list.add(initialList.getOrNull(i) ?: 0f)
+        }
+        list
+    }
+
+    var selectedPreset by remember { mutableStateOf(eqPrefs.getString("eq_preset", "Flat") ?: "Flat") }
+
+    val presets = remember {
+        listOf(
+            Triple("Flat", getLocalized("Plano", "Flat"), listOf(0f, 0f, 0f, 0f, 0f)),
+            Triple("Classical", getLocalized("Clásica", "Classical"), listOf(4f, 3f, -2f, 3f, 4f)),
+            Triple("Dance", getLocalized("Dance", "Dance"), listOf(5f, 4f, 1f, 3f, 0f)),
+            Triple("Heavy Metal", getLocalized("Heavy Metal", "Heavy Metal"), listOf(4f, 2f, -1f, 3f, 1f)),
+            Triple("Hip Hop", getLocalized("Hip Hop", "Hip Hop"), listOf(5f, 3f, 0f, 1f, 3f)),
+            Triple("Jazz", getLocalized("Jazz", "Jazz"), listOf(4f, 2f, -3f, 2f, 4f)),
+            Triple("Pop", getLocalized("Pop", "Pop"), listOf(-1f, 1f, 3f, 2f, -1f)),
+            Triple("Rock", getLocalized("Rock", "Rock"), listOf(5f, 3f, -2f, 4f, 5f)),
+            Triple("Bass", getLocalized("Graves", "Bass"), listOf(6f, 4f, 0f, 0f, 0f)),
+            Triple("Vocal", getLocalized("Voz", "Vocal"), listOf(-2f, -1f, 3f, 4f, 1f))
+        )
+    }
+
+    var crossfade by remember { mutableStateOf(settingsPrefs.getInt("crossfade_duration", 0)) }
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        // 1. Crossfade & Gapless Card
+        Text(
+            text = getLocalized("REPRODUCCIÓN ININTERRUMPIDA", "SEAMLESS PLAYBACK"),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(start = 8.dp)
+        )
+        
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.ShuffleOn,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Transición Cruzada (Crossfade)", "Crossfade Transition"),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = if (crossfade > 0) {
+                                getLocalized("Fundido de $crossfade segundos entre canciones", "Fades $crossfade seconds between tracks")
+                            } else {
+                                getLocalized("Desactivado (cambio abrupto)", "Disabled (abrupt track change)")
+                            },
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Slider(
+                    value = crossfade.toFloat(),
+                    onValueChange = {
+                        crossfade = it.toInt()
+                        settingsPrefs.edit().putInt("crossfade_duration", crossfade).apply()
+                    },
+                    valueRange = 0f..10f,
+                    steps = 9,
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = Color.White.copy(alpha = 0.1f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        // 2. Equalizer 5 Bands Card
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+        ) {
+            Text(
+                text = getLocalized("ECUALIZADOR GRÁFICO (5 BANDAS)", "GRAPHIC EQUALIZER (5 BANDS)"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp
+            )
+            Switch(
+                checked = eqEnabled,
+                onCheckedChange = {
+                    eqEnabled = it
+                    eqPrefs.edit().putBoolean("eq_enabled", it).apply()
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = MaterialTheme.colorScheme.primary
+                )
+            )
+        }
+
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Equalizer Presets Row
+                androidx.compose.foundation.lazy.LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp)
+                ) {
+                    items(presets.size) { index ->
+                        val (tag, name, values) = presets[index]
+                        val isPresetSelected = selectedPreset == tag
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isPresetSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                )
+                                .clickable(enabled = eqEnabled) {
+                                    selectedPreset = tag
+                                    eqPrefs.edit().putString("eq_preset", tag).apply()
+                                    // Update bands
+                                    for (i in 0 until 5) {
+                                        eqBands[i] = values[i]
+                                    }
+                                    val bandsStr = eqBands.map { (it * 100).toInt() }.joinToString(",")
+                                    eqPrefs.edit().putString("eq_bands", bandsStr).apply()
+                                }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = name,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isPresetSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                    // Custom option if selected manually
+                    if (selectedPreset == "Custom") {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.85f))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = getLocalized("Personalizado", "Custom"),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    val bandLabels = listOf("60 Hz", "230 Hz", "910 Hz", "4 kHz", "14 kHz")
+                    eqBands.forEachIndexed { idx, dbValue ->
+                        VerticalFader(
+                            value = dbValue,
+                            onValueChange = { newValue ->
+                                eqBands[idx] = newValue
+                                selectedPreset = "Custom"
+                                eqPrefs.edit().putString("eq_preset", "Custom").apply()
+                                val bandsStr = eqBands.map { (it * 100).toInt() }.joinToString(",")
+                                eqPrefs.edit().putString("eq_bands", bandsStr).apply()
+                            },
+                            label = bandLabels.getOrNull(idx) ?: "${idx + 1}",
+                            enabled = eqEnabled,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. Audio Enhancements Card
+        Text(
+            text = getLocalized("MEJORAS DE AUDIO", "AUDIO ENHANCEMENTS"),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(start = 8.dp)
+        )
+
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(20.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = getLocalized("Graves", "Bass Boost"),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = bbEnabled,
+                            onCheckedChange = {
+                                bbEnabled = it
+                                eqPrefs.edit().putBoolean("bb_enabled", it).apply()
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.scale(0.8f)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    CircularSlider(
+                        value = bbStrength / 1000f,
+                        onValueChange = {
+                            bbStrength = (it * 1000).toInt()
+                            eqPrefs.edit().putInt("bb_strength", bbStrength).apply()
+                        },
+                        enabled = bbEnabled,
+                        label = getLocalized("Intensidad", "Strength"),
+                        modifier = Modifier.size(90.dp)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .height(120.dp)
+                        .width(1.dp)
+                        .background(Color.White.copy(alpha = 0.08f))
+                )
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = getLocalized("Virtual 3D", "3D Virtualizer"),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = virtEnabled,
+                            onCheckedChange = {
+                                virtEnabled = it
+                                eqPrefs.edit().putBoolean("virt_enabled", it).apply()
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.scale(0.8f)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    CircularSlider(
+                        value = virtStrength / 1000f,
+                        onValueChange = {
+                            virtStrength = (it * 1000).toInt()
+                            eqPrefs.edit().putInt("virt_strength", virtStrength).apply()
+                        },
+                        enabled = virtEnabled,
+                        label = getLocalized("Espacial", "Spacial"),
+                        modifier = Modifier.size(90.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CircularSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    label: String = "",
+    valueSuffix: String = "%"
+) {
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        var width by remember { mutableStateOf(0) }
+        var height by remember { mutableStateOf(0) }
+        
+        val activeColor = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+        val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+        val handleColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+        val textColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+        val labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+        
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged {
+                    width = it.width
+                    height = it.height
+                }
+                .pointerInput(enabled) {
+                    if (!enabled) return@pointerInput
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        val cx = width / 2f
+                        val cy = height / 2f
+                        val touchX = change.position.x
+                        val touchY = change.position.y
+                        
+                        var angle = Math.toDegrees(atan2(touchY - cy, touchX - cx).toDouble()).toFloat()
+                        if (angle < 0) {
+                            angle += 360f
+                        }
+                        
+                        var relativeAngle = angle - 135f
+                        if (relativeAngle < 0) {
+                            relativeAngle += 360f
+                        }
+                        
+                        val newValue = when {
+                            relativeAngle <= 270f -> relativeAngle / 270f
+                            relativeAngle < 315f -> 1f
+                            else -> 0f
+                        }
+                        onValueChange(newValue)
+                    }
+                }
+        ) {
+            val radius = minOf(this.size.width, this.size.height) / 2f - 8.dp.toPx()
+            val center = androidx.compose.ui.geometry.Offset(this.size.width / 2f, this.size.height / 2f)
+            
+            drawArc(
+                color = trackColor,
+                startAngle = 135f,
+                sweepAngle = 270f,
+                useCenter = false,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 8.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            )
+            
+            drawArc(
+                color = activeColor,
+                startAngle = 135f,
+                sweepAngle = 270f * value,
+                useCenter = false,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 8.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            )
+            
+            val handleAngle = (135f + 270f * value) * (PI / 180f)
+            val handleX = center.x + radius * cos(handleAngle).toFloat()
+            val handleY = center.y + radius * sin(handleAngle).toFloat()
+            
+            drawCircle(
+                color = handleColor,
+                radius = 8.dp.toPx(),
+                center = androidx.compose.ui.geometry.Offset(handleX, handleY)
+            )
+        }
+        
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "${(value * 100).toInt()}$valueSuffix",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Black,
+                color = textColor
+            )
+            if (label.isNotEmpty()) {
+                Text(
+                    text = label,
+                    fontSize = 10.sp,
+                    color = labelColor,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun VerticalFader(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+    ) {
+        val textColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+        val activeColor = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+        val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+        val handleColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+        val labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+
+        Text(
+            text = "${if (value > 0) "+" else ""}${value.toInt()}dB",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = textColor
+        )
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        var height by remember { mutableStateOf(0) }
+        
+        Box(
+            modifier = Modifier
+                .width(24.dp)
+                .height(150.dp)
+                .onSizeChanged { height = it.height }
+                .pointerInput(enabled) {
+                    if (!enabled) return@pointerInput
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        val touchY = change.position.y
+                        val progress = 1f - (touchY / height).coerceIn(0f, 1f)
+                        val newValue = -15f + progress * 30f
+                        onValueChange(newValue)
+                    }
+                },
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val cx = this.size.width / 2f
+                drawLine(
+                    color = trackColor,
+                    start = androidx.compose.ui.geometry.Offset(cx, 0f),
+                    end = androidx.compose.ui.geometry.Offset(cx, this.size.height),
+                    strokeWidth = 6.dp.toPx(),
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round
+                )
+                
+                val zeroY = this.size.height / 2f
+                val progress = (value + 15f) / 30f
+                val handleY = this.size.height * (1f - progress)
+                
+                drawLine(
+                    color = activeColor,
+                    start = androidx.compose.ui.geometry.Offset(cx, zeroY),
+                    end = androidx.compose.ui.geometry.Offset(cx, handleY),
+                    strokeWidth = 6.dp.toPx(),
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round
+                )
+                
+                drawCircle(
+                    color = handleColor,
+                    radius = 8.dp.toPx(),
+                    center = androidx.compose.ui.geometry.Offset(cx, handleY)
+                )
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            color = labelColor,
+            fontWeight = FontWeight.Bold
+        )
     }
 }

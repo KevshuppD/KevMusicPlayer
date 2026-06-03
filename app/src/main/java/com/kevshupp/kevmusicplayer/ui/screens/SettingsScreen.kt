@@ -124,6 +124,7 @@ fun SettingsScreen(
     val categories = remember(selectedLanguage) {
         listOf(
             Triple("general", getLocalized("General", "General"), Icons.Rounded.Settings),
+            Triple("audio", getLocalized("Audio", "Audio"), Icons.Rounded.Equalizer),
             Triple("system", getLocalized("Sistema", "System"), Icons.Rounded.Tune),
             Triple("library", getLocalized("Biblioteca", "Library"), Icons.Rounded.LibraryMusic),
             Triple("about", getLocalized("Acerca de", "About"), Icons.Rounded.Info)
@@ -405,6 +406,13 @@ fun SettingsScreen(
                             onSortByChanged = onSortByChanged,
                             getLocalized = getLocalized,
                             settingsPrefs = settingsPrefs
+                        )
+                    }
+                    "audio" -> {
+                        AudioSettingsSection(
+                            context = context,
+                            scope = scope,
+                            getLocalized = getLocalized
                         )
                     }
                     "system" -> {

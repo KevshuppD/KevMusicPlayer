@@ -55,6 +55,21 @@ private val ObsidianColorScheme = darkColorScheme(
     onSurfaceVariant = Color(0xFFFFFFFF)
 )
 
+private val MonochromeColorScheme = lightColorScheme(
+    primary = Color(0xFF000000),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFE5E5E5),
+    onPrimaryContainer = Color(0xFF000000),
+    secondary = Color(0xFF555555),
+    onSecondary = Color(0xFFFFFFFF),
+    background = Color(0xFFFFFFFF),
+    onBackground = Color(0xFF000000),
+    surface = Color(0xFFF6F6F6),
+    onSurface = Color(0xFF000000),
+    surfaceVariant = Color(0xFFEEEEEE),
+    onSurfaceVariant = Color(0xFF000000)
+)
+
 private val TurquoiseColorScheme = darkColorScheme(
     primary = Color(0xFF00F5D4),
     onPrimary = Color(0xFF003830),
@@ -126,6 +141,7 @@ fun KevMusicPlayerTheme(
         "petrol" -> PetrolColorScheme
         "obsidian" -> ObsidianColorScheme
         "turquoise" -> TurquoiseColorScheme
+        "monochrome" -> MonochromeColorScheme
         else -> DarkColorScheme
     }
 
@@ -133,10 +149,10 @@ fun KevMusicPlayerTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
+            val darkTheme = currentTheme != "monochrome"
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
         }
     }
-
     CompositionLocalProvider(
         LocalDisableAnimations provides currentDisableAnimations
     ) {
