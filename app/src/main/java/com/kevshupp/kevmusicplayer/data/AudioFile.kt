@@ -1,11 +1,14 @@
 package com.kevshupp.kevmusicplayer.data
 
 import android.net.Uri
+import androidx.room.Entity
+import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
 
 @Serializable
+@Entity(tableName = "audio_files")
 data class AudioFile(
-    val id: Long,
+    @PrimaryKey val id: Long,
     val title: String,
     val artist: String,
     val album: String,

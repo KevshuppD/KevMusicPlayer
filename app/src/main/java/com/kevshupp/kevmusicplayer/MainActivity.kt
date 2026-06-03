@@ -46,6 +46,9 @@ import com.kevshupp.kevmusicplayer.ui.screens.PlayerScreen
 import com.kevshupp.kevmusicplayer.ui.screens.SettingsScreen
 import com.kevshupp.kevmusicplayer.ui.theme.KevMusicPlayerTheme
 import kotlinx.serialization.Serializable
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.togetherWith
 
 class MainActivity : ComponentActivity() {
     private val refreshRateListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
@@ -139,9 +142,27 @@ fun AppNavigation() {
         }
     }
 
+    val disableAnimations = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
+
     NavDisplay(
         backStack = backStack,
         sceneStrategy = listDetailStrategy,
+        transitionSpec = {
+            if (disableAnimations) {
+                EnterTransition.None togetherWith ExitTransition.None
+            } else {
+                androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(300)) togetherWith 
+                        androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300))
+            }
+        },
+        popTransitionSpec = {
+            if (disableAnimations) {
+                EnterTransition.None togetherWith ExitTransition.None
+            } else {
+                androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(300)) togetherWith 
+                        androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300))
+            }
+        },
         onBack = { 
             if (backStack.size > 1) {
                 backStack.removeAt(backStack.size - 1)

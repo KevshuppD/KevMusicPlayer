@@ -16,12 +16,11 @@ import androidx.media3.session.SessionToken
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.data.AudioScanner
 import com.kevshupp.kevmusicplayer.data.AppDatabase
-import com.kevshupp.kevmusicplayer.data.AudioFileEntity
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
-import com.kevshupp.kevmusicplayer.ui.screens.fetchLyricsFromLrcLib
+import com.kevshupp.kevmusicplayer.data.LyricsRepository
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import java.io.File
@@ -116,6 +115,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     ) {
                         savePlaybackState()
                     }
+                    override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                        savePlaybackState()
+                    }
                 })
 
                 restorePlaybackState()
@@ -128,6 +130,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     fun savePlaybackState() {
         val b = browser.value ?: return
+        val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("last_shuffle_enabled", b.shuffleModeEnabled).apply()
+
         val currentItem = b.currentMediaItem ?: return
         val id = currentItem.mediaId.toLongOrNull() ?: return
         val position = b.currentPosition
@@ -141,7 +146,6 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }
         val mediaIdsString = mediaIds.joinToString(",")
 
-        val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
         prefs.edit()
             .putLong("last_song_id", id)
             .putLong("last_position", position)
@@ -155,6 +159,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         if (b.currentMediaItem != null) return
 
         val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+        val lastShuffleEnabled = prefs.getBoolean("last_shuffle_enabled", false)
+        b.shuffleModeEnabled = lastShuffleEnabled
+
         val lastSongId = prefs.getLong("last_song_id", -1L)
         val lastPosition = prefs.getLong("last_position", 0L)
         val lastActiveIndex = prefs.getInt("last_active_index", 0)
@@ -254,7 +261,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
                 val song = localAudioFiles.find { it.id == id } ?: return@launch
                 if (song.lyrics.isNullOrBlank()) {
-                    val fetched = fetchLyricsFromLrcLib(song.artist, song.title)
+                    val fetched = LyricsRepository.fetchLyricsFromLrcLib(song.artist, song.title)
                     if (!fetched.isNullOrEmpty()) {
                         updateSongLyrics(id, fetched)
                     }
@@ -275,8 +282,24 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     // Scan failed (exception or permissions). Do NOT touch the cache!
                     return@launch
                 }
+
+                // Exclude folders filtering
+                val prefs = getApplication<android.app.Application>().getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+                val excludedJson = prefs.getString("excluded_folders", "[]") ?: "[]"
+                val excludedFolders = try {
+                    val jsonArray = org.json.JSONArray(excludedJson)
+                    (0 until jsonArray.length()).map { jsonArray.getString(it) }
+                } catch (e: Exception) {
+                    emptyList<String>()
+                }
+
+                val filteredScanned = scannedFiles.filter { file ->
+                    excludedFolders.none { excluded ->
+                        file.folderPath.equals(excluded, ignoreCase = true) || file.folderPath.startsWith(excluded + "/", ignoreCase = true)
+                    }
+                }
                 
-                if (scannedFiles.isEmpty() && !isManual) {
+                if (filteredScanned.isEmpty() && !isManual) {
                     // Automatic scan returned empty. This is a false negative due to startup delays,
                     // content provider load lag, or transient lifecycle issues.
                     // Keep the cache intact and display the saved songs so the user is never met with an empty screen!
@@ -285,26 +308,17 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 
                 // 2. Map scanned files to database entities, preserving custom edited lyrics
                 val existingEntities = audioDao.getAllAudioFiles().associateBy { it.id }
-                val entities = scannedFiles.map { file ->
+                val entities = filteredScanned.map { file ->
                     val existing = existingEntities[file.id]
-                    AudioFileEntity(
-                        id = file.id,
-                        title = file.title,
-                        artist = file.artist,
-                        album = file.album,
-                        genre = file.genre,
-                        duration = file.duration,
-                        uriString = file.uriString,
-                        folderPath = file.folderPath,
-                        folderName = file.folderName,
+                    file.copy(
                         lyrics = existing?.lyrics ?: file.lyrics,
-                        translatedLyrics = existing?.translatedLyrics
+                        translatedLyrics = existing?.translatedLyrics ?: file.translatedLyrics
                     )
                 }
                 
                 // 3. Write to Room database (single transaction cache sync)
                 // Clean up old files that were deleted from device storage
-                val scannedIds = scannedFiles.map { it.id }
+                val scannedIds = filteredScanned.map { it.id }
                 if (scannedIds.isNotEmpty()) {
                     audioDao.keepOnlyIds(scannedIds)
                     audioDao.insertAll(entities)
@@ -314,7 +328,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 
                 // 4. Update compose list with restored lyrics
                 localAudioFiles.clear()
-                localAudioFiles.addAll(scannedFiles.map { file ->
+                localAudioFiles.addAll(filteredScanned.map { file ->
                     file.copy(
                         lyrics = existingEntities[file.id]?.lyrics,
                         translatedLyrics = existingEntities[file.id]?.translatedLyrics
@@ -941,6 +955,182 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun renameSongFilesToMetadata(
+        context: Context,
+        onProgress: (current: Int, total: Int, currentName: String) -> Unit,
+        onComplete: (successCount: Int, errorCount: Int) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val songsToRename = localAudioFiles.toList()
+            val total = songsToRename.size
+            var successCount = 0
+            var errorCount = 0
+
+            songsToRename.forEachIndexed { index, song ->
+                try {
+                    val cleanArtist = song.artist.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+                    val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+
+                    // Only rename if artist and title are not empty/Unknown placeholders
+                    val isArtistValid = cleanArtist.isNotEmpty() && !cleanArtist.equals("Unknown Artist", ignoreCase = true)
+                    val isTitleValid = cleanTitle.isNotEmpty() && !cleanTitle.equals("Unknown Title", ignoreCase = true)
+
+                    if (isArtistValid && isTitleValid) {
+                        val physicalPath = getPhysicalPath(context, song.id, song.uriString)
+                        if (!physicalPath.isNullOrBlank()) {
+                            val oldFile = File(physicalPath)
+                            if (oldFile.exists()) {
+                                // Extract track number if available in tags
+                                var trackPrefix = ""
+                                try {
+                                    val audioFile = AudioFileIO.read(oldFile)
+                                    val tag = audioFile.tag
+                                    val rawTrack = tag?.getFirst(FieldKey.TRACK)?.trim() ?: ""
+                                    if (rawTrack.isNotEmpty()) {
+                                        val firstPart = rawTrack.split("/")[0].trim()
+                                        if (firstPart.toIntOrNull() != null) {
+                                            trackPrefix = "$firstPart. "
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+
+                                val extension = oldFile.extension.let { if (it.isNotEmpty()) ".$it" else "" }
+                                val newFileName = "$trackPrefix$cleanArtist - $cleanTitle$extension"
+                                val newFile = File(oldFile.parentFile, newFileName)
+
+                                if (oldFile.absolutePath != newFile.absolutePath) {
+                                    withContext(Dispatchers.Main) {
+                                        onProgress(index + 1, total, song.title)
+                                    }
+
+                                    var renameCompleted = false
+
+                                    // 1. Try updating MediaStore DISPLAY_NAME directly (modern Android way)
+                                    try {
+                                        val uri = Uri.parse(song.uriString)
+                                        val values = android.content.ContentValues().apply {
+                                            put(android.provider.MediaStore.Audio.Media.DISPLAY_NAME, newFileName)
+                                        }
+                                        val rows = context.contentResolver.update(uri, values, null, null)
+                                        if (rows > 0) {
+                                            renameCompleted = true
+                                        }
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
+
+                                    // 2. Fallback to physical Java file renaming
+                                    if (!renameCompleted) {
+                                        try {
+                                            val renamed = oldFile.renameTo(newFile)
+                                            if (renamed) {
+                                                renameCompleted = true
+                                                // Sync MediaStore with the physical change
+                                                val values = android.content.ContentValues().apply {
+                                                    put(android.provider.MediaStore.Audio.Media.DATA, newFile.absolutePath)
+                                                    put(android.provider.MediaStore.Audio.Media.DISPLAY_NAME, newFileName)
+                                                }
+                                                val uri = Uri.parse(song.uriString)
+                                                context.contentResolver.update(uri, values, null, null)
+                                            }
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        }
+                                    }
+
+                                    if (renameCompleted) {
+                                        // Trigger system media scanner for both old and new paths
+                                        android.media.MediaScannerConnection.scanFile(
+                                            context,
+                                            arrayOf(oldFile.absolutePath, newFile.absolutePath),
+                                            null
+                                        ) { _, _ -> }
+
+                                        successCount++
+                                    } else {
+                                        errorCount++
+                                    }
+                                } else {
+                                    // Already named correctly
+                                    successCount++
+                                }
+                            } else {
+                                errorCount++
+                            }
+                        } else {
+                            errorCount++
+                        }
+                    } else {
+                        // Skip renaming but count as processed
+                        successCount++
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    errorCount++
+                }
+            }
+
+            // Sync app databases & state
+            scanFiles(isManual = true)
+
+            withContext(Dispatchers.Main) {
+                onComplete(successCount, errorCount)
+            }
+        }
+    }
+
+    fun getExcludedFolders(): List<String> {
+        val prefs = getApplication<android.app.Application>().getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+        val json = prefs.getString("excluded_folders", "[]") ?: "[]"
+        return try {
+            val jsonArray = org.json.JSONArray(json)
+            (0 until jsonArray.length()).map { jsonArray.getString(it) }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun setExcludedFolders(folders: List<String>) {
+        val prefs = getApplication<android.app.Application>().getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+        val jsonArray = org.json.JSONArray()
+        folders.forEach { jsonArray.put(it) }
+        prefs.edit().putString("excluded_folders", jsonArray.toString()).apply()
+        // Force manual scan to apply exclusions instantly!
+        scanFiles(isManual = true)
+    }
+
+    fun getAllDeviceFolders(context: Context): List<String> {
+        val list = mutableListOf<String>()
+        val projection = arrayOf(android.provider.MediaStore.Audio.Media.DATA)
+        try {
+            context.contentResolver.query(
+                android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                val dataColumn = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.DATA)
+                while (cursor.moveToNext()) {
+                    val dataPath = cursor.getString(dataColumn) ?: continue
+                    val file = java.io.File(dataPath)
+                    val parentFile = file.parentFile
+                    if (parentFile != null) {
+                        val parentPath = parentFile.absolutePath
+                        if (!list.contains(parentPath)) {
+                            list.add(parentPath)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return list.sorted()
+    }
+
     override fun onCleared() {
         super.onCleared()
         browserFuture?.let { MediaBrowser.releaseFuture(it) }
@@ -948,16 +1138,21 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 }
 
-fun getPhysicalPath(context: android.content.Context, songId: Long): String? {
-    val uri = android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+fun getPhysicalPath(context: android.content.Context, songId: Long, uriString: String? = null): String? {
+    val uri = if (!uriString.isNullOrBlank()) {
+        Uri.parse(uriString)
+    } else {
+        android.content.ContentUris.withAppendedId(
+            android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            songId
+        )
+    }
     val projection = arrayOf(android.provider.MediaStore.Audio.Media.DATA)
-    val selection = "${android.provider.MediaStore.Audio.Media._ID} = ?"
-    val selectionArgs = arrayOf(songId.toString())
-    
     return try {
-        context.contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
+        context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
-                cursor.getString(0)
+                val idx = cursor.getColumnIndex(android.provider.MediaStore.Audio.Media.DATA)
+                if (idx != -1) cursor.getString(idx) else null
             } else null
         }
     } catch (e: Exception) {

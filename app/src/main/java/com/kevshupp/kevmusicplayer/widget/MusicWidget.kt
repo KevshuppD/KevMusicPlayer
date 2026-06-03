@@ -42,6 +42,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import com.kevshupp.kevmusicplayer.MainActivity
 import com.kevshupp.kevmusicplayer.playback.PlaybackService
+import androidx.core.content.ContextCompat
 
 class MusicWidget : GlanceAppWidget() {
     override val stateDefinition = PreferencesGlanceStateDefinition
@@ -55,23 +56,27 @@ class MusicWidget : GlanceAppWidget() {
 
     @Composable
     private fun WidgetContent(context: Context) {
+        android.util.Log.d("WidgetDebug", "WidgetContent: Start composition")
         val prefs = currentState<Preferences>()
         val title = prefs[stringPreferencesKey("title")] ?: ""
         val artist = prefs[stringPreferencesKey("artist")] ?: ""
         val isPlaying = prefs[booleanPreferencesKey("isPlaying")] ?: false
 
-        android.util.Log.d("WidgetDebug", "WidgetContent recomposing: title = $title, artist = $artist, isPlaying = $isPlaying")
+        android.util.Log.d("WidgetDebug", "WidgetContent: title = $title, artist = $artist, isPlaying = $isPlaying")
 
         val artFile = java.io.File(context.cacheDir, "current_widget_art.png")
         val bitmap = if (artFile.exists()) {
             try {
                 android.graphics.BitmapFactory.decodeFile(artFile.absolutePath)
             } catch (e: Exception) {
+                android.util.Log.e("WidgetDebug", "Error decoding art file", e)
                 null
             }
         } else {
             null
         }
+
+        android.util.Log.d("WidgetDebug", "WidgetContent: bitmap decoded, isNull = ${bitmap == null}")
 
         Box(
             modifier = GlanceModifier
@@ -222,28 +227,53 @@ class MusicWidget : GlanceAppWidget() {
 }
 
 class PlayPauseCallback : ActionCallback {
-    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+    override suspend fun onAction(
+        context: Context,
+        glanceId: GlanceId,
+        parameters: ActionParameters
+    ) {
         val intent = Intent(context, PlaybackService::class.java).apply {
             action = "com.kevshupp.kevmusicplayer.action.PLAY_PAUSE"
         }
-        context.startService(intent)
+        try {
+            ContextCompat.startForegroundService(context, intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }
 
 class NextCallback : ActionCallback {
-    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+    override suspend fun onAction(
+        context: Context,
+        glanceId: GlanceId,
+        parameters: ActionParameters
+    ) {
         val intent = Intent(context, PlaybackService::class.java).apply {
             action = "com.kevshupp.kevmusicplayer.action.NEXT"
         }
-        context.startService(intent)
+        try {
+            ContextCompat.startForegroundService(context, intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }
 
 class PreviousCallback : ActionCallback {
-    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+    override suspend fun onAction(
+        context: Context,
+        glanceId: GlanceId,
+        parameters: ActionParameters
+    ) {
         val intent = Intent(context, PlaybackService::class.java).apply {
             action = "com.kevshupp.kevmusicplayer.action.PREVIOUS"
         }
-        context.startService(intent)
+        try {
+            ContextCompat.startForegroundService(context, intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }
+

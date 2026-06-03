@@ -8,8 +8,6 @@
     <string name="language_title">Language</string>
     <string name="language_spanish">Spanish</string>
     <string name="language_english">English</string>
-    <string name="language_french">French</string>
-    <string name="language_portuguese">Portuguese</string>
     <string name="category_songs">Songs</string>
     <string name="category_albums">Albums</string>
     <string name="category_artists">Artists</string>

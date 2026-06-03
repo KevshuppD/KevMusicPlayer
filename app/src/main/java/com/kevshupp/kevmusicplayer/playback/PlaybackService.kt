@@ -28,6 +28,11 @@ import kotlinx.coroutines.launch
 class PlaybackService : MediaLibraryService() {
     private var mediaLibrarySession: MediaLibrarySession? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main)
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var playWhenRestored = false
+    private var isRestoring = false
+    private var skipToNextWhenRestored = false
+    private var skipToPrevWhenRestored = false
 
     companion object {
         const val CHANNEL_ID = "playback_channel"
@@ -35,6 +40,9 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onCreate() {
         super.onCreate()
+        
+        val powerManager = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+        wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "KevMusicPlayer:PlaybackWakeLock")
         
         val player = ExoPlayer.Builder(this)
             .setAudioAttributes(
@@ -47,6 +55,10 @@ class PlaybackService : MediaLibraryService() {
             .setHandleAudioBecomingNoisy(true) // pause when headphones unplugged
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
+
+        serviceScope.launch {
+            restorePlaybackState(player)
+        }
 
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -71,6 +83,24 @@ class PlaybackService : MediaLibraryService() {
                 val uriString = player.currentMediaItem?.requestMetadata?.mediaUri?.toString()
                 android.util.Log.d("WidgetDebug", "Is playing changed: $isPlaying, $title - $artist")
                 updateWidgetState(title, artist, isPlaying, uriString)
+
+                if (isPlaying) {
+                    try {
+                        if (wakeLock?.isHeld == false) {
+                            wakeLock?.acquire(10 * 60 * 1000L /* 10 minutes timeout */)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                } else {
+                    try {
+                        if (wakeLock?.isHeld == true) {
+                            wakeLock?.release()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
             }
         })
 
@@ -104,6 +134,8 @@ class PlaybackService : MediaLibraryService() {
                         ?: Uri.parse("content://media/external/audio/media/${item.mediaId}")
                     item.buildUpon()
                         .setUri(resolvedUri)
+                        .setMediaMetadata(item.mediaMetadata)
+                        .setRequestMetadata(item.requestMetadata)
                         .build()
                 }.toMutableList()
                 return Futures.immediateFuture(updatedItems)
@@ -186,8 +218,122 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    private suspend fun restorePlaybackState(player: Player) {
+        if (isRestoring || player.mediaItemCount > 0) return
+        isRestoring = true
+        try {
+            val prefs = getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+            val lastShuffleEnabled = prefs.getBoolean("last_shuffle_enabled", false)
+            player.shuffleModeEnabled = lastShuffleEnabled
+
+            val lastSongId = prefs.getLong("last_song_id", -1L)
+            val lastPosition = prefs.getLong("last_position", 0L)
+            val lastActiveIndex = prefs.getInt("last_active_index", 0)
+            val lastQueueIdsString = prefs.getString("last_queue_ids", null)
+
+            if (lastSongId != -1L) {
+                val database = com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(this)
+                val audioDao = database.audioDao()
+                val localAudioFiles = audioDao.getAllAudioFiles()
+
+                if (!lastQueueIdsString.isNullOrEmpty()) {
+                    val idStrings = lastQueueIdsString.split(",")
+                    val mediaItems = mutableListOf<MediaItem>()
+                    
+                    idStrings.forEach { idStr ->
+                        val idLong = idStr.toLongOrNull()
+                        if (idLong != null) {
+                            val song = localAudioFiles.find { it.id == idLong }
+                            if (song != null) {
+                                val trackUri = Uri.parse(song.uriString)
+                                val mediaItem = MediaItem.Builder()
+                                    .setMediaId(song.id.toString())
+                                    .setUri(trackUri)
+                                    .setRequestMetadata(
+                                        MediaItem.RequestMetadata.Builder()
+                                            .setMediaUri(trackUri)
+                                            .build()
+                                    )
+                                    .setMediaMetadata(
+                                        MediaMetadata.Builder()
+                                            .setTitle(song.title)
+                                            .setArtist(song.artist)
+                                            .setAlbumTitle(song.album)
+                                            .setIsPlayable(true)
+                                            .setIsBrowsable(false)
+                                            .build()
+                                    )
+                                    .build()
+                                mediaItems.add(mediaItem)
+                            }
+                        }
+                    }
+
+                    if (mediaItems.isNotEmpty()) {
+                        player.setMediaItems(mediaItems)
+                        val safeIndex = lastActiveIndex.coerceIn(0, mediaItems.size - 1)
+                        player.seekTo(safeIndex, lastPosition)
+                        player.prepare()
+                        
+                        if (skipToNextWhenRestored) {
+                            skipToNextWhenRestored = false
+                            if (player.hasNextMediaItem()) {
+                                player.seekToNextMediaItem()
+                            }
+                        } else if (skipToPrevWhenRestored) {
+                            skipToPrevWhenRestored = false
+                            if (player.hasPreviousMediaItem()) {
+                                player.seekToPreviousMediaItem()
+                            }
+                        }
+
+                        if (playWhenRestored) {
+                            player.play()
+                            playWhenRestored = false
+                        }
+                        return
+                    }
+                }
+
+                val song = localAudioFiles.find { it.id == lastSongId }
+                if (song != null) {
+                    val trackUri = Uri.parse(song.uriString)
+                    val mediaItem = MediaItem.Builder()
+                        .setMediaId(song.id.toString())
+                        .setUri(trackUri)
+                        .setRequestMetadata(
+                            MediaItem.RequestMetadata.Builder()
+                                .setMediaUri(trackUri)
+                                .build()
+                        )
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle(song.title)
+                                .setArtist(song.artist)
+                                .setAlbumTitle(song.album)
+                                .setIsPlayable(true)
+                                .setIsBrowsable(false)
+                                .build()
+                        )
+                        .build()
+                    
+                    player.setMediaItem(mediaItem)
+                    player.seekTo(lastPosition)
+                    player.prepare()
+                    
+                    if (playWhenRestored) {
+                        player.play()
+                        playWhenRestored = false
+                    }
+                }
+            }
+        } finally {
+            isRestoring = false
+        }
+    }
+
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
-        super.onStartCommand(intent, flags, startId)
+        val result = super.onStartCommand(intent, flags, startId)
         val action = intent?.action
         if (action != null) {
             val player = mediaLibrarySession?.player
@@ -199,23 +345,44 @@ class PlaybackService : MediaLibraryService() {
                         } else {
                             if (player.mediaItemCount > 0) {
                                 player.play()
+                            } else {
+                                playWhenRestored = true
+                                serviceScope.launch {
+                                    restorePlaybackState(player)
+                                }
                             }
                         }
                     }
                     "com.kevshupp.kevmusicplayer.action.NEXT" -> {
-                        if (player.hasNextMediaItem()) {
-                            player.seekToNextMediaItem()
+                        if (player.mediaItemCount > 0) {
+                            if (player.hasNextMediaItem()) {
+                                player.seekToNextMediaItem()
+                            }
+                        } else {
+                            skipToNextWhenRestored = true
+                            playWhenRestored = true
+                            serviceScope.launch {
+                                restorePlaybackState(player)
+                            }
                         }
                     }
                     "com.kevshupp.kevmusicplayer.action.PREVIOUS" -> {
-                        if (player.hasPreviousMediaItem()) {
-                            player.seekToPreviousMediaItem()
+                        if (player.mediaItemCount > 0) {
+                            if (player.hasPreviousMediaItem()) {
+                                player.seekToPreviousMediaItem()
+                            }
+                        } else {
+                            skipToPrevWhenRestored = true
+                            playWhenRestored = true
+                            serviceScope.launch {
+                                restorePlaybackState(player)
+                            }
                         }
                     }
                 }
             }
         }
-        return START_STICKY
+        return result
     }
 
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
@@ -233,6 +400,11 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onDestroy() {
         serviceScope.cancel()
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {}
         mediaLibrarySession?.run {
             player.release()
             release()

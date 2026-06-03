@@ -9,13 +9,13 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface AudioDao {
     @Query("SELECT * FROM audio_files ORDER BY title ASC")
-    fun getAllAudioFilesFlow(): Flow<List<AudioFileEntity>>
+    fun getAllAudioFilesFlow(): Flow<List<AudioFile>>
 
     @Query("SELECT * FROM audio_files ORDER BY title ASC")
-    suspend fun getAllAudioFiles(): List<AudioFileEntity>
+    suspend fun getAllAudioFiles(): List<AudioFile>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAll(audioFiles: List<AudioFileEntity>)
+    suspend fun insertAll(audioFiles: List<AudioFile>)
 
     @Query("DELETE FROM audio_files")
     suspend fun deleteAll()

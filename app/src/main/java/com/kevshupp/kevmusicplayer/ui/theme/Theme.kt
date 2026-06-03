@@ -55,6 +55,21 @@ private val ObsidianColorScheme = darkColorScheme(
     onSurfaceVariant = Color(0xFFFFFFFF)
 )
 
+private val TurquoiseColorScheme = darkColorScheme(
+    primary = Color(0xFF00F5D4),
+    onPrimary = Color(0xFF003830),
+    primaryContainer = Color(0xFF005A4E),
+    onPrimaryContainer = Color(0xFFB3FFF5),
+    secondary = Color(0xFF8FFFEF),
+    onSecondary = Color(0xFF003830),
+    background = Color(0xFF020E0C),
+    onBackground = Color(0xFFE0F7F4),
+    surface = Color(0xFF071F1B),
+    onSurface = Color(0xFFE0F7F4),
+    surfaceVariant = Color(0xFF0D322C),
+    onSurfaceVariant = Color(0xFFE0F7F4)
+)
+
 private val DarkColorScheme = darkColorScheme(
     primary = PrimaryDark,
     onPrimary = OnPrimaryDark,
@@ -110,6 +125,7 @@ fun KevMusicPlayerTheme(
     val colorScheme = when (currentTheme) {
         "petrol" -> PetrolColorScheme
         "obsidian" -> ObsidianColorScheme
+        "turquoise" -> TurquoiseColorScheme
         else -> DarkColorScheme
     }
 
