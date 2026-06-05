@@ -98,6 +98,7 @@ fun SongListView(
 ) {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     
 
     
@@ -159,7 +160,7 @@ fun SongListView(
                         .clip(RoundedCornerShape(16.dp))
                         .pointerInput(song) {
                             awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val down = awaitFirstDown(requireUnconsumed = true)
                                 var hasDragged = false
                                 var longPressTriggered = false
                                 val longPressTimeout = 500L
@@ -281,8 +282,14 @@ fun SongListView(
                                             // Still holding
                                             val change = changes.firstOrNull()
                                             if (change != null) {
+                                                if (change.isConsumed) {
+                                                    break
+                                                }
                                                 currentY = change.position.y
-                                                val dragDistance = Math.abs(currentY - down.position.y)
+                                                val dragDistanceX = Math.abs(change.position.x - down.position.x)
+                                                val dragDistanceY = Math.abs(currentY - down.position.y)
+                                                val dragDistance = Math.max(dragDistanceX, dragDistanceY)
+                                                val dragDistanceThreshold = if (currentIsMultiSelectModeVal) touchSlop else (touchSlop * 4f)
                                                 
                                                 // If they scroll/drag too much before long press, cancel and let parent handle scrolling
                                                 if (!longPressTriggered && dragDistance > touchSlop) {
@@ -291,6 +298,7 @@ fun SongListView(
                                                 
                                                 if (elapsed >= longPressTimeout && !longPressTriggered) {
                                                     longPressTriggered = true
+                                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                                 }
                                                 
                                                 if (longPressTriggered) {
@@ -301,9 +309,10 @@ fun SongListView(
                                                         dragViewportY = viewportY
                                                         
                                                         // Drag threshold check to enter selection mode
-                                                        if (!hasDragged && (dragDistance > touchSlop || targetIndex != currentIndex)) {
+                                                        if (!hasDragged && (dragDistance > dragDistanceThreshold || targetIndex != currentIndex)) {
                                                             hasDragged = true
                                                             if (!currentIsMultiSelectModeVal) {
+                                                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                                                 onSongLongClick(currentSong)
                                                             }
                                                         }
@@ -392,6 +401,18 @@ fun SongListView(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+                    
+                    if (!isMultiSelectMode) {
+                        IconButton(
+                            onClick = { onSongClick(song) }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MoreVert,
+                                contentDescription = "Options",
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
                     }
             }
         }
@@ -950,15 +971,17 @@ data class PlayerStateInfo(
 
 // ---------------- ALBUM ART CACHE & ASYNC LOADER ----------------
 val albumArtCache = LruCache<String, ByteArray>(100) // Cache up to 100 album arts in memory for blazing fast startup!
+var albumArtVersion by androidx.compose.runtime.mutableStateOf(0)
 
 @Composable
 fun rememberAlbumArt(uriString: String?): ByteArray? {
     if (uriString == null) return null
     val context = LocalContext.current
-    var artBytes by remember(uriString) { mutableStateOf(albumArtCache.get(uriString)) }
+    val version = albumArtVersion
+    var artBytes by remember(uriString, version) { mutableStateOf(albumArtCache.get(uriString)) }
 
     if (artBytes == null) {
-        LaunchedEffect(uriString) {
+        LaunchedEffect(uriString, version) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val retriever = android.media.MediaMetadataRetriever()
                 try {
@@ -1002,40 +1025,110 @@ fun savePlaylistCoverLocally(context: android.content.Context, playlistName: Str
 // ---------------- PLAYLIST GRID VIEW ----------------
 @Composable
 fun PlaylistGridView(
+    viewModel: MediaBrowserViewModel?,
     playlists: Map<String, List<AudioFile>>,
     playlistCovers: Map<String, String>,
     onCreatePlaylist: (String) -> Unit,
+    onCreateSmartPlaylist: (String, com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule, Int) -> Unit,
     onPlaylistClick: (String) -> Unit,
     onDeletePlaylist: (String) -> Unit
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }
+    var isSmartDialog by remember { mutableStateOf(false) }
+    var selectedRule by remember { mutableStateOf(com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED) }
+    var limitInput by remember { mutableStateOf("50") }
 
     if (showCreateDialog) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
             title = { Text("Nueva lista de reproducción", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) },
             text = {
-                OutlinedTextField(
-                    value = newPlaylistName,
-                    onValueChange = { newPlaylistName = it },
-                    label = { Text("Nombre de la lista", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
-                        cursorColor = MaterialTheme.colorScheme.primary
+                Column {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    ) {
+                        Text("Lista Normal", color = MaterialTheme.colorScheme.onSurface)
+                        Switch(
+                            checked = isSmartDialog,
+                            onCheckedChange = { isSmartDialog = it },
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+                        Text("Inteligente", color = MaterialTheme.colorScheme.onSurface)
+                    }
+
+                    OutlinedTextField(
+                        value = newPlaylistName,
+                        onValueChange = { newPlaylistName = it },
+                        label = { Text("Nombre de la lista", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                            cursorColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
                     )
-                )
+
+                    if (isSmartDialog) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Regla de generación:", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+                        
+                        var expanded by remember { mutableStateOf(false) }
+                        val ruleNames = mapOf(
+                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED to "Lo más escuchado",
+                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RECENTLY_ADDED to "Recién añadidas",
+                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.PLAYBACK_HISTORY to "Historial de reproducción"
+                        )
+
+                        Box {
+                            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text(ruleNames[selectedRule] ?: "", color = MaterialTheme.colorScheme.onSurface)
+                            }
+                            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                ruleNames.forEach { (rule, name) ->
+                                    DropdownMenuItem(
+                                        text = { Text(name) },
+                                        onClick = { selectedRule = rule; expanded = false }
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = limitInput,
+                            onValueChange = { if (it.all { char -> char.isDigit() }) limitInput = it },
+                            label = { Text("Límite de canciones", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)) },
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                                cursorColor = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
                         if (newPlaylistName.isNotBlank()) {
-                            onCreatePlaylist(newPlaylistName)
+                            if (isSmartDialog) {
+                                val limit = limitInput.toIntOrNull() ?: 50
+                                onCreateSmartPlaylist(newPlaylistName, selectedRule, limit)
+                            } else {
+                                onCreatePlaylist(newPlaylistName)
+                            }
                             newPlaylistName = ""
+                            limitInput = "50"
                             showCreateDialog = false
                         }
                     },
@@ -1098,6 +1191,7 @@ fun PlaylistGridView(
         items(playlists.keys.toList()) { name ->
             val listSongs = playlists[name] ?: emptyList()
             val coverPath = playlistCovers[name]
+            val isSmart = viewModel?.smartPlaylists?.containsKey(name) == true || name.startsWith("Recomendaciones")
             
             // Context menu state for playlist card
             var expandedMenu by remember { mutableStateOf(false) }
@@ -1142,21 +1236,39 @@ fun PlaylistGridView(
                                 )
                         )
 
-                        // Top right quick options button
-                        IconButton(
-                            onClick = { expandedMenu = true },
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(4.dp)
-                                .size(32.dp)
-                                .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.MoreVert,
-                                contentDescription = "Playlist Options",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
+                        // Top right quick options button or Smart Playlist badge
+                        if (isSmart) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(8.dp)
+                                    .size(28.dp)
+                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.AutoAwesome,
+                                    contentDescription = "Lista Inteligente",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        } else {
+                            IconButton(
+                                onClick = { expandedMenu = true },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .size(32.dp)
+                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MoreVert,
+                                    contentDescription = "Playlist Options",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
 
                         Column(
@@ -1181,25 +1293,27 @@ fun PlaylistGridView(
                     }
                 }
 
-                DropdownMenu(
-                    expanded = expandedMenu,
-                    onDismissRequest = { expandedMenu = false },
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Eliminar Lista", color = MaterialTheme.colorScheme.error) },
-                        onClick = {
-                            expandedMenu = false
-                            onDeletePlaylist(name)
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Rounded.DeleteOutline,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    )
+                if (!isSmart) {
+                    DropdownMenu(
+                        expanded = expandedMenu,
+                        onDismissRequest = { expandedMenu = false },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Eliminar Lista", color = MaterialTheme.colorScheme.error) },
+                            onClick = {
+                                expandedMenu = false
+                                onDeletePlaylist(name)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Rounded.DeleteOutline,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        )
+                    }
                 }
             }
         }

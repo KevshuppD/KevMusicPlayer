@@ -31,6 +31,16 @@ import java.io.OutputStream
 import android.content.Context
 
 
+enum class SmartPlaylistRule {
+    MOST_PLAYED, RECENTLY_ADDED, PLAYBACK_HISTORY
+}
+
+data class SmartPlaylistConfig(
+    val name: String,
+    val rule: SmartPlaylistRule,
+    val limit: Int = 50
+)
+
 class MediaBrowserViewModel(application: Application) : AndroidViewModel(application) {
     private var browserFuture: ListenableFuture<MediaBrowser>? = null
     val browser = mutableStateOf<MediaBrowser?>(null)
@@ -51,11 +61,24 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     val requestedSubViewType = mutableStateOf<String?>(null)
     val requestedSubViewName = mutableStateOf<String?>(null)
 
+    val isDownloadingAllLyrics = mutableStateOf(false)
+    val downloadAllLyricsCurrent = mutableStateOf(0)
+    val downloadAllLyricsTotal = mutableStateOf(0)
+    val downloadAllLyricsSuccessCount = mutableStateOf(0)
+    val downloadAllLyricsCurrentName = mutableStateOf("")
+
     private val audioScanner = AudioScanner(application)
     private val database = AppDatabase.getDatabase(application)
     private val audioDao = database.audioDao()
 
     init {
+        // Force jaudiotagger to run in Android mode (bypasses java.awt classes)
+        try {
+            org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
+        } catch (t: Throwable) {
+            t.printStackTrace()
+        }
+
         // Instantly load the cached songs from SQLite database to ensure the screen is NEVER empty upon startup!
         viewModelScope.launch {
             try {
@@ -72,13 +95,17 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         folderPath = entity.folderPath,
                         folderName = entity.folderName,
                         lyrics = entity.lyrics,
-                        translatedLyrics = entity.translatedLyrics
+                        translatedLyrics = entity.translatedLyrics,
+                        playCount = entity.playCount,
+                        dateAdded = entity.dateAdded,
+                        lastPlayed = entity.lastPlayed
                     )
                 }
                 if (cachedFiles.isNotEmpty()) {
                     localAudioFiles.clear()
                     localAudioFiles.addAll(cachedFiles)
                     loadPlaylists()
+                    updateSmartPlaylists()
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -104,6 +131,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         savePlaybackState()
                         fetchLyricsForCurrentSong()
+                        if (mediaItem != null) {
+                            val id = mediaItem.mediaId.toLongOrNull()
+                            if (id != null) {
+                                incrementSongPlayCount(id)
+                            }
+                        }
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         savePlaybackState()
@@ -251,7 +284,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         val b = browser.value ?: return
         val currentItem = b.currentMediaItem ?: return
         val id = currentItem.mediaId.toLongOrNull() ?: return
-        
+        val context = getApplication<android.app.Application>()
+
         viewModelScope.launch {
             try {
                 var attempts = 0
@@ -260,9 +294,35 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     attempts++
                 }
                 val song = localAudioFiles.find { it.id == id } ?: return@launch
-                if (song.lyrics.isNullOrBlank()) {
-                    val fetched = LyricsRepository.fetchLyricsFromLrcLib(song.artist, song.title)
-                    if (!fetched.isNullOrEmpty()) {
+                
+                // 1. Check local/embedded sources first (LRC file next to it or embedded tag)
+                val localLyrics = readLocalLrcOrEmbedded(context, song)
+                if (!localLyrics.isNullOrBlank()) {
+                    val localIsSynced = LyricsRepository.isLrcSynced(localLyrics)
+                    val dbIsSynced = LyricsRepository.isLrcSynced(song.lyrics)
+                    
+                    // If local is synced, or if DB is empty, use local lyrics!
+                    if (localIsSynced || (song.lyrics.isNullOrBlank() && !localIsSynced)) {
+                        if (song.lyrics != localLyrics) {
+                            updateSongLyrics(id, localLyrics)
+                        }
+                        if (localIsSynced) {
+                            return@launch // Synchronized lyrics successfully loaded, done!
+                        }
+                    }
+                }
+
+                // 2. If currently stored DB lyrics are already synchronized, do not fetch online
+                if (LyricsRepository.isLrcSynced(song.lyrics)) {
+                    return@launch
+                }
+
+                // 3. If currently stored/local lyrics are either blank or unsynced, fetch from LrcLib!
+                val fetched = LyricsRepository.fetchLyricsFromLrcLib(song.artist, song.title)
+                if (!fetched.isNullOrEmpty()) {
+                    val fetchedIsSynced = LyricsRepository.isLrcSynced(fetched)
+                    // If fetched lyrics are synced, or we currently have nothing, update!
+                    if (fetchedIsSynced || song.lyrics.isNullOrBlank()) {
                         updateSongLyrics(id, fetched)
                     }
                 }
@@ -312,7 +372,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     val existing = existingEntities[file.id]
                     file.copy(
                         lyrics = existing?.lyrics ?: file.lyrics,
-                        translatedLyrics = existing?.translatedLyrics ?: file.translatedLyrics
+                        translatedLyrics = existing?.translatedLyrics ?: file.translatedLyrics,
+                        playCount = existing?.playCount ?: 0
                     )
                 }
                 
@@ -329,12 +390,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 // 4. Update compose list with restored lyrics
                 localAudioFiles.clear()
                 localAudioFiles.addAll(filteredScanned.map { file ->
+                    val existing = existingEntities[file.id]
                     file.copy(
-                        lyrics = existingEntities[file.id]?.lyrics,
-                        translatedLyrics = existingEntities[file.id]?.translatedLyrics
+                        lyrics = existing?.lyrics,
+                        translatedLyrics = existing?.translatedLyrics,
+                        playCount = existing?.playCount ?: 0,
+                        lastPlayed = existing?.lastPlayed ?: 0L
                     )
                 })
                 loadPlaylists()
+                updateSmartPlaylists()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -394,6 +459,122 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 e.printStackTrace()
             }
         }
+    }
+
+    private fun getLocalized(es: String, en: String): String {
+        val locale = java.util.Locale.getDefault().language
+        return if (locale == "es") es else en
+    }
+
+    fun downloadAllLyrics(context: android.content.Context) {
+        if (isDownloadingAllLyrics.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val pendingListUpdates = mutableMapOf<Long, String>()
+            try {
+                isDownloadingAllLyrics.value = true
+                downloadAllLyricsSuccessCount.value = 0
+                val songsToProcess = localAudioFiles.toList()
+                downloadAllLyricsTotal.value = songsToProcess.size
+                
+                songsToProcess.forEachIndexed { index, song ->
+                    if (!isDownloadingAllLyrics.value) return@launch // Cancel if requested
+                    
+                    downloadAllLyricsCurrent.value = index + 1
+                    downloadAllLyricsCurrentName.value = song.title
+                    
+                    // Check if song already has synced lyrics in DB
+                    val dbHasSynced = !song.lyrics.isNullOrBlank() && LyricsRepository.isLrcSynced(song.lyrics)
+                    
+                    if (!dbHasSynced) {
+                        // Check local/embedded first
+                        val localLyrics = readLocalLrcOrEmbedded(context, song)
+                        val localIsSynced = !localLyrics.isNullOrBlank() && LyricsRepository.isLrcSynced(localLyrics)
+                        
+                        if (localIsSynced) {
+                            // Update DB
+                            audioDao.updateLyrics(song.id, localLyrics)
+                            pendingListUpdates[song.id] = localLyrics!!
+                            downloadAllLyricsSuccessCount.value++
+                        } else {
+                            // Fetch online from LrcLib
+                            try {
+                                val fetched = LyricsRepository.fetchLyricsFromLrcLib(song.artist, song.title)
+                                if (!fetched.isNullOrEmpty()) {
+                                    val fetchedIsSynced = LyricsRepository.isLrcSynced(fetched)
+                                    // If fetched is synced, or if local is completely empty, save it!
+                                    if (fetchedIsSynced || song.lyrics.isNullOrBlank()) {
+                                        audioDao.updateLyrics(song.id, fetched)
+                                        pendingListUpdates[song.id] = fetched
+                                        // Save physical
+                                        saveLyricsPhysical(context, song.id, song.title, song.folderPath, fetched)
+                                        downloadAllLyricsSuccessCount.value++
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                            // Small delay to be polite to LrcLib API rate limits
+                            kotlinx.coroutines.delay(300)
+                        }
+                    } else {
+                        // Already has synced lyrics, count as success/already done
+                        downloadAllLyricsSuccessCount.value++
+                    }
+
+                    // Flush batch updates to UI list in groups of 10
+                    if (pendingListUpdates.size >= 10 || index == songsToProcess.lastIndex) {
+                        val batch = pendingListUpdates.toMap()
+                        pendingListUpdates.clear()
+                        withContext(Dispatchers.Main) {
+                            batch.forEach { (songId, lyricsText) ->
+                                val listIndex = localAudioFiles.indexOfFirst { it.id == songId }
+                                if (listIndex != -1) {
+                                    localAudioFiles[listIndex] = localAudioFiles[listIndex].copy(lyrics = lyricsText)
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Done! Show a toast on main thread
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        context,
+                        getLocalized(
+                            "Descarga de letras completada: ${downloadAllLyricsSuccessCount.value}/${downloadAllLyricsTotal.value} éxitos",
+                            "Lyrics download completed: ${downloadAllLyricsSuccessCount.value}/${downloadAllLyricsTotal.value} successes"
+                        ),
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                // Apply any remaining list updates before exiting
+                if (pendingListUpdates.isNotEmpty()) {
+                    val batch = pendingListUpdates.toMap()
+                    pendingListUpdates.clear()
+                    withContext(Dispatchers.Main) {
+                        batch.forEach { (songId, lyricsText) ->
+                            val listIndex = localAudioFiles.indexOfFirst { it.id == songId }
+                            if (listIndex != -1) {
+                                localAudioFiles[listIndex] = localAudioFiles[listIndex].copy(lyrics = lyricsText)
+                            }
+                        }
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    isDownloadingAllLyrics.value = false
+                    downloadAllLyricsCurrent.value = 0
+                    downloadAllLyricsTotal.value = 0
+                    downloadAllLyricsCurrentName.value = ""
+                }
+            }
+        }
+    }
+
+    fun cancelDownloadAllLyrics() {
+        isDownloadingAllLyrics.value = false
     }
 
     fun deleteSongTranslatedLyrics(id: Long) {
@@ -595,7 +776,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         folderPath = entity.folderPath,
                         folderName = entity.folderName,
                         lyrics = entity.lyrics,
-                        translatedLyrics = entity.translatedLyrics
+                        translatedLyrics = entity.translatedLyrics,
+                        playCount = entity.playCount,
+                        dateAdded = entity.dateAdded,
+                        lastPlayed = entity.lastPlayed
                     )
                 }
 
@@ -625,6 +809,92 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     // Playlists system
     val playlists = androidx.compose.runtime.mutableStateMapOf<String, List<AudioFile>>()
     val playlistCovers = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    val smartPlaylists = androidx.compose.runtime.mutableStateMapOf<String, List<AudioFile>>()
+    val smartPlaylistConfigs = androidx.compose.runtime.mutableStateListOf<SmartPlaylistConfig>()
+
+    fun incrementSongPlayCount(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val now = System.currentTimeMillis()
+                audioDao.incrementPlayCount(id, now)
+                withContext(Dispatchers.Main) {
+                    val index = localAudioFiles.indexOfFirst { it.id == id }
+                    if (index != -1) {
+                        val currentSong = localAudioFiles[index]
+                        localAudioFiles[index] = currentSong.copy(
+                            playCount = currentSong.playCount + 1,
+                            lastPlayed = now
+                        )
+                    }
+                    
+                    playlists.keys.toList().forEach { playlistName ->
+                        val list = playlists[playlistName] ?: emptyList()
+                        val pIndex = list.indexOfFirst { it.id == id }
+                        if (pIndex != -1) {
+                            val newList = list.toMutableList()
+                            newList[pIndex] = newList[pIndex].copy(
+                                playCount = newList[pIndex].playCount + 1,
+                                lastPlayed = now
+                            )
+                            playlists[playlistName] = newList
+                        }
+                    }
+
+                    updateSmartPlaylists()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun updateSmartPlaylists() {
+        val keepRecommendations = smartPlaylists.filterKeys { it.startsWith("Recomendaciones") }
+        smartPlaylists.clear()
+        smartPlaylists.putAll(keepRecommendations)
+
+        smartPlaylistConfigs.forEach { config ->
+            val list = when (config.rule) {
+                SmartPlaylistRule.MOST_PLAYED -> {
+                    localAudioFiles.filter { it.playCount > 0 }
+                        .sortedByDescending { it.playCount }
+                        .take(config.limit)
+                }
+                SmartPlaylistRule.RECENTLY_ADDED -> {
+                    localAudioFiles.sortedByDescending { it.dateAdded }
+                        .take(config.limit)
+                }
+                SmartPlaylistRule.PLAYBACK_HISTORY -> {
+                    localAudioFiles.filter { it.lastPlayed > 0L }
+                        .sortedByDescending { it.lastPlayed }
+                        .take(config.limit)
+                }
+            }
+            smartPlaylists[config.name] = list
+        }
+
+        // 4. "Recomendaciones" (Recommendations) based on the user's most played artist
+        val artistPlayCounts = localAudioFiles.filter { it.playCount > 0 }
+            .groupBy { it.artist }
+            .mapValues { entry -> entry.value.sumOf { it.playCount } }
+        
+        val favoriteArtist = artistPlayCounts.maxByOrNull { it.value }?.key
+        
+        if (favoriteArtist != null) {
+            val artistSongs = localAudioFiles.filter { it.artist == favoriteArtist }
+            val recommendedSongs = artistSongs.sortedBy { it.playCount }.take(15)
+            smartPlaylists["Recomendaciones ($favoriteArtist)"] = recommendedSongs
+        } else {
+            val allArtists = localAudioFiles.map { it.artist }.distinct()
+            if (allArtists.isNotEmpty()) {
+                val randomArtist = allArtists.random()
+                val recommendedSongs = localAudioFiles.filter { it.artist == randomArtist }.take(15)
+                smartPlaylists["Recomendaciones ($randomArtist)"] = recommendedSongs
+            } else {
+                smartPlaylists["Recomendaciones"] = emptyList()
+            }
+        }
+    }
 
     fun loadPlaylists() {
         playlists.clear()
@@ -646,6 +916,22 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 playlistCovers[name] = cover
             }
         }
+
+        smartPlaylistConfigs.clear()
+        val smartNames = prefs.getStringSet("smart_playlist_names", emptySet()) ?: emptySet()
+        smartNames.forEach { name ->
+            val jsonString = prefs.getString("smart_playlist_config_$name", null)
+            if (jsonString != null) {
+                try {
+                    val json = JSONObject(jsonString)
+                    val rule = SmartPlaylistRule.valueOf(json.getString("rule"))
+                    val limit = json.getInt("limit")
+                    smartPlaylistConfigs.add(SmartPlaylistConfig(name, rule, limit))
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
     }
 
     fun createPlaylist(name: String) {
@@ -658,6 +944,26 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             .putString("playlist_$name", "")
             .apply()
         playlists[name] = emptyList()
+    }
+
+    fun createSmartPlaylist(name: String, rule: SmartPlaylistRule, limit: Int) {
+        if (name.isBlank()) return
+        val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
+        val names = (prefs.getStringSet("smart_playlist_names", emptySet()) ?: emptySet()).toMutableSet()
+        names.add(name)
+        
+        val json = JSONObject()
+        json.put("name", name)
+        json.put("rule", rule.name)
+        json.put("limit", limit)
+        
+        prefs.edit()
+            .putStringSet("smart_playlist_names", names)
+            .putString("smart_playlist_config_$name", json.toString())
+            .apply()
+            
+        smartPlaylistConfigs.add(SmartPlaylistConfig(name, rule, limit))
+        updateSmartPlaylists()
     }
 
     fun setPlaylistCover(name: String, imageUriStr: String) {
@@ -694,6 +1000,19 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     fun deletePlaylist(name: String) {
         val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
+        
+        val smartNames = (prefs.getStringSet("smart_playlist_names", emptySet()) ?: emptySet()).toMutableSet()
+        if (smartNames.contains(name)) {
+            smartNames.remove(name)
+            prefs.edit()
+                .putStringSet("smart_playlist_names", smartNames)
+                .remove("smart_playlist_config_$name")
+                .apply()
+            smartPlaylistConfigs.removeAll { it.name == name }
+            smartPlaylists.remove(name)
+            return
+        }
+
         val names = (prefs.getStringSet("playlist_names", emptySet()) ?: emptySet()).toMutableSet()
         names.remove(name)
 
@@ -882,13 +1201,22 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         artist: String,
         album: String,
         genre: String,
+        coverBytes: ByteArray? = null,
         onSuccess: () -> Unit,
         onError: (Exception) -> Unit
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                // Force jaudiotagger to run in Android mode
+                try {
+                    org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
+                } catch (t: Throwable) {
+                    t.printStackTrace()
+                }
+
                 // 1. Write metadata tags directly to physical file using jaudiotagger
                 val physicalPath = getPhysicalPath(context, songId)
+                var songUriString: String? = null
                 if (!physicalPath.isNullOrBlank()) {
                     val file = File(physicalPath)
                     if (file.exists()) {
@@ -898,8 +1226,27 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         tag.setField(FieldKey.ARTIST, artist)
                         tag.setField(FieldKey.ALBUM, album)
                         tag.setField(FieldKey.GENRE, genre)
+                        if (coverBytes != null) {
+                            try {
+                                tag.deleteArtworkField()
+                                val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
+                                artwork.binaryData = coverBytes
+                                artwork.mimeType = "image/jpeg"
+                                artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+                                tag.setField(artwork)
+                            } catch (e: Throwable) {
+                                e.printStackTrace()
+                            }
+                        }
                         audioFile.tag = tag
                         AudioFileIO.write(audioFile)
+
+                        // Sync updated physical file to system MediaStore
+                        android.media.MediaScannerConnection.scanFile(
+                            context,
+                            arrayOf(physicalPath),
+                            null
+                        ) { _, _ -> }
                     }
                 }
 
@@ -913,11 +1260,18 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         album = album,
                         genre = genre
                     )
+                    songUriString = updatedEntity.uriString
                     audioDao.insertAll(listOf(updatedEntity))
                 }
 
-                // 3. Update in-memory localAudioFiles on Main thread to instantly update UI
+                // 3. Clear/Update in-memory artwork cache
+                if (coverBytes != null && songUriString != null) {
+                    com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(songUriString, coverBytes)
+                }
+
+                // 4. Update in-memory localAudioFiles on Main thread to instantly update UI
                 withContext(Dispatchers.Main) {
+                    com.kevshupp.kevmusicplayer.ui.screens.albumArtVersion++
                     val index = localAudioFiles.indexOfFirst { it.id == songId }
                     if (index != -1) {
                         val currentSong = localAudioFiles[index]
@@ -925,7 +1279,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             title = title,
                             artist = artist,
                             album = album,
-                            genre = genre
+                            genre = genre,
+                            playCount = currentSong.playCount
                         )
                     }
                     
@@ -944,12 +1299,243 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             playlists[playlistName] = newList
                         }
                     }
+
+                    // Refresh smart playlists
+                    updateSmartPlaylists()
                     
                     onSuccess()
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 withContext(Dispatchers.Main) {
-                    onError(e)
+                    onError(if (e is Exception) e else Exception(e))
+                }
+            }
+        }
+    }
+
+    fun updateAlbumCover(
+        context: Context,
+        albumName: String,
+        coverBytes: ByteArray,
+        onSuccess: () -> Unit,
+        onError: (Exception) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Force jaudiotagger to run in Android mode
+                try {
+                    org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
+                } catch (t: Throwable) {
+                    t.printStackTrace()
+                }
+
+                // Find all songs in the album (robust, trimmed, case-insensitive match)
+                val songsInAlbum = localAudioFiles.filter { it.album.trim().equals(albumName.trim(), ignoreCase = true) }
+                if (songsInAlbum.isEmpty()) {
+                    throw Exception("No songs found in album $albumName")
+                }
+
+                for (song in songsInAlbum) {
+                    val physicalPath = getPhysicalPath(context, song.id, song.uriString)
+                    if (!physicalPath.isNullOrBlank()) {
+                        val file = File(physicalPath)
+                        if (file.exists()) {
+                            try {
+                                val audioFile = AudioFileIO.read(file)
+                                val tag = audioFile.tag ?: audioFile.createDefaultTag()
+                                tag.deleteArtworkField()
+                                val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
+                                artwork.binaryData = coverBytes
+                                artwork.mimeType = "image/jpeg"
+                                artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+                                tag.setField(artwork)
+                                audioFile.tag = tag
+                                AudioFileIO.write(audioFile)
+
+                                // Sync updated physical file to system MediaStore
+                                android.media.MediaScannerConnection.scanFile(
+                                    context,
+                                    arrayOf(physicalPath),
+                                    null
+                                ) { _, _ -> }
+                            } catch (e: Throwable) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
+
+                    // Update in-memory artwork cache
+                    com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, coverBytes)
+                }
+
+                // Force UI update by refreshing the localAudioFiles in-memory list
+                withContext(Dispatchers.Main) {
+                    com.kevshupp.kevmusicplayer.ui.screens.albumArtVersion++
+                    songsInAlbum.forEach { song ->
+                        val index = localAudioFiles.indexOfFirst { it.id == song.id }
+                        if (index != -1) {
+                            val currentSong = localAudioFiles[index]
+                            localAudioFiles[index] = currentSong.copy() // Re-assign copy to trigger State update
+                        }
+                    }
+                    
+                    // Update in playlists too
+                    playlists.keys.toList().forEach { playlistName ->
+                        val list = playlists[playlistName] ?: emptyList()
+                        var modified = false
+                        val newList = list.map { song ->
+                            if (song.album.trim().equals(albumName.trim(), ignoreCase = true)) {
+                                modified = true
+                                song.copy()
+                            } else {
+                                song
+                            }
+                        }
+                        if (modified) {
+                            playlists[playlistName] = newList
+                        }
+                    }
+
+                    // Refresh smart playlists
+                    updateSmartPlaylists()
+
+                    onSuccess()
+                }
+            } catch (e: Throwable) {
+                withContext(Dispatchers.Main) {
+                    onError(if (e is Exception) e else Exception(e))
+                }
+            }
+        }
+    }
+
+    fun updateAlbumMetadata(
+        context: Context,
+        oldAlbumName: String,
+        newAlbumName: String,
+        newArtist: String,
+        coverBytes: ByteArray? = null,
+        onSuccess: () -> Unit,
+        onError: (Exception) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Force jaudiotagger to run in Android mode
+                try {
+                    org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
+                } catch (t: Throwable) {
+                    t.printStackTrace()
+                }
+
+                // Find all songs in the old album (robust, trimmed, case-insensitive match)
+                val songsInAlbum = localAudioFiles.filter { it.album.trim().equals(oldAlbumName.trim(), ignoreCase = true) }
+                if (songsInAlbum.isEmpty()) {
+                    throw Exception("No songs found in album $oldAlbumName")
+                }
+
+                // 1. Write tags physically for each song
+                for (song in songsInAlbum) {
+                    val physicalPath = getPhysicalPath(context, song.id, song.uriString)
+                    if (!physicalPath.isNullOrBlank()) {
+                        val file = File(physicalPath)
+                        if (file.exists()) {
+                            try {
+                                val audioFile = AudioFileIO.read(file)
+                                val tag = audioFile.tag ?: audioFile.createDefaultTag()
+                                tag.setField(FieldKey.ALBUM, newAlbumName)
+                                if (newArtist.isNotBlank()) {
+                                    tag.setField(FieldKey.ARTIST, newArtist)
+                                }
+                                if (coverBytes != null) {
+                                    tag.deleteArtworkField()
+                                    val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
+                                    artwork.binaryData = coverBytes
+                                    artwork.mimeType = "image/jpeg"
+                                    artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+                                    tag.setField(artwork)
+                                }
+                                audioFile.tag = tag
+                                AudioFileIO.write(audioFile)
+
+                                // Sync updated physical file to system MediaStore
+                                android.media.MediaScannerConnection.scanFile(
+                                    context,
+                                    arrayOf(physicalPath),
+                                    null
+                                ) { _, _ -> }
+                            } catch (e: Throwable) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
+
+                    // Update in-memory artwork cache if new cover provided
+                    if (coverBytes != null) {
+                        com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, coverBytes)
+                    }
+                }
+
+                // 2. Update Room database entries
+                val allEntities = audioDao.getAllAudioFiles()
+                val updatedEntities = mutableListOf<AudioFile>()
+                for (song in songsInAlbum) {
+                    val entity = allEntities.find { it.id == song.id }
+                    if (entity != null) {
+                        updatedEntities.add(
+                            entity.copy(
+                                album = newAlbumName,
+                                artist = if (newArtist.isNotBlank()) newArtist else entity.artist
+                            )
+                        )
+                    }
+                }
+                if (updatedEntities.isNotEmpty()) {
+                    audioDao.insertAll(updatedEntities)
+                }
+
+                // 3. Update in-memory localAudioFiles on Main thread to instantly update UI
+                withContext(Dispatchers.Main) {
+                    com.kevshupp.kevmusicplayer.ui.screens.albumArtVersion++
+                    
+                    songsInAlbum.forEach { song ->
+                        val index = localAudioFiles.indexOfFirst { it.id == song.id }
+                        if (index != -1) {
+                            val currentSong = localAudioFiles[index]
+                            localAudioFiles[index] = currentSong.copy(
+                                album = newAlbumName,
+                                artist = if (newArtist.isNotBlank()) newArtist else currentSong.artist
+                            )
+                        }
+                    }
+
+                    // Update in playlists too
+                    playlists.keys.toList().forEach { playlistName ->
+                        val list = playlists[playlistName] ?: emptyList()
+                        val newList = list.toMutableList()
+                        var changed = false
+                        newList.indices.forEach { i ->
+                            val item = newList[i]
+                            if (item.album.trim().equals(oldAlbumName.trim(), ignoreCase = true)) {
+                                newList[i] = item.copy(
+                                    album = newAlbumName,
+                                    artist = if (newArtist.isNotBlank()) newArtist else item.artist
+                                )
+                                changed = true
+                            }
+                        }
+                        if (changed) {
+                            playlists[playlistName] = newList
+                        }
+                    }
+
+                    // Refresh smart playlists
+                    updateSmartPlaylists()
+                    
+                    onSuccess()
+                }
+            } catch (e: Throwable) {
+                withContext(Dispatchers.Main) {
+                    onError(if (e is Exception) e else Exception(e))
                 }
             }
         }
@@ -1184,4 +1770,42 @@ fun saveLyricsPhysical(context: android.content.Context, songId: Long, songTitle
     } catch (e: Exception) {
         e.printStackTrace()
     }
+}
+
+fun readLocalLrcOrEmbedded(context: android.content.Context, song: AudioFile): String? {
+    // 1. Try reading .lrc file next to the song
+    try {
+        val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val lrcFile = File(song.folderPath, "$cleanTitle.lrc")
+        if (lrcFile.exists() && lrcFile.isFile) {
+            val content = lrcFile.readText()
+            if (content.isNotBlank()) {
+                return content
+            }
+        }
+    } catch (e: java.lang.Exception) {
+        e.printStackTrace()
+    }
+
+    // 2. Try reading inside the song metadata using jaudiotagger
+    try {
+        val physicalPath = getPhysicalPath(context, song.id, song.uriString)
+        if (!physicalPath.isNullOrBlank()) {
+            val f = File(physicalPath)
+            if (f.exists() && f.isFile) {
+                val audioFile = AudioFileIO.read(f)
+                val tag = audioFile.tag
+                if (tag != null) {
+                    val embeddedLyrics = tag.getFirst(FieldKey.LYRICS)
+                    if (!embeddedLyrics.isNullOrBlank()) {
+                        return embeddedLyrics
+                    }
+                }
+            }
+        }
+    } catch (e: java.lang.Exception) {
+        e.printStackTrace()
+    }
+
+    return null
 }

@@ -298,176 +298,217 @@ fun SettingsScreen(
         }
     }
 
-    // Dynamic background brush
-    val backgroundBrush = remember {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color(0xFF121422),
-                Color(0xFF08090F)
-            )
+    val isMonochrome = selectedTheme == "monochrome"
+
+    // Overriding colorScheme for monochrome to prevent "plomo" bug
+    val localColorScheme = if (isMonochrome) {
+        lightColorScheme(
+            primary = Color(0xFF000000),
+            onPrimary = Color(0xFFFFFFFF),
+            primaryContainer = Color(0xFFE5E5E5),
+            onPrimaryContainer = Color(0xFF000000),
+            secondary = Color(0xFF555555),
+            onSecondary = Color(0xFFFFFFFF),
+            background = Color(0xFFFFFFFF),
+            onBackground = Color(0xFF000000),
+            surface = Color(0xFFF6F6F6),
+            onSurface = Color(0xFF000000),
+            surfaceVariant = Color(0xFFEEEEEE),
+            onSurfaceVariant = Color(0xFF000000)
         )
+    } else {
+        MaterialTheme.colorScheme
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.settings_title),
-                        fontWeight = FontWeight.Black,
-                        fontSize = 24.sp,
-                        color = Color.White
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF121422),
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White
+    // Settings screen is dark for dark themes, white for monochrome theme
+    val backgroundBrush = remember(isMonochrome) {
+        if (isMonochrome) {
+            Brush.verticalGradient(
+                colors = listOf(
+                    Color(0xFFFFFFFF),
+                    Color(0xFFFFFFFF)
                 )
             )
-        },
-        containerColor = Color.Transparent,
-        modifier = modifier.background(backgroundBrush)
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            // Horizontal Category Selector (Sticky at the top, just below TopBar)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .background(Color(0xFF121422))
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                categories.forEach { (tag, label, icon) ->
-                    val isSelected = activeCategory == tag
-                    val containerColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.05f)
-                    val contentColor = if (isSelected) Color.Black else Color.White
-                    val borderStroke = if (isSelected) null else BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+        } else {
+            Brush.verticalGradient(
+                colors = listOf(
+                    Color(0xFF121422),
+                    Color(0xFF08090F)
+                )
+            )
+        }
+    }
 
-                    Surface(
-                        onClick = { activeCategory = tag },
-                        shape = RoundedCornerShape(20.dp),
-                        color = containerColor,
-                        contentColor = contentColor,
-                        border = borderStroke,
-                        modifier = Modifier.height(40.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
+    MaterialTheme(colorScheme = localColorScheme) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = stringResource(R.string.settings_title),
+                            fontWeight = FontWeight.Black,
+                            fontSize = 24.sp,
+                            color = if (isMonochrome) Color.Black else Color.White
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
                             Icon(
-                                imageVector = icon,
-                                contentDescription = label,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = label,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold
+                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Back",
+                                tint = if (isMonochrome) Color.Black else Color.White
                             )
                         }
-                    }
-                }
-            }
-
-            // Scrollable Content
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = if (isMonochrome) Color(0xFFFFFFFF) else Color(0xFF121422),
+                        titleContentColor = if (isMonochrome) Color.Black else Color.White,
+                        navigationIconContentColor = if (isMonochrome) Color.Black else Color.White
+                    )
+                )
+            },
+            containerColor = Color.Transparent,
+            modifier = modifier.background(backgroundBrush)
+        ) { innerPadding ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(scrollState)
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp)
+                    .padding(innerPadding)
             ) {
-                when (activeCategory) {
-                    "general" -> {
-                        GeneralSettingsSection(
-                            selectedTheme = selectedTheme,
-                            onThemeSelected = { selectedTheme = it },
-                            selectedLanguage = selectedLanguage,
-                            applyLanguage = { applyLanguage(it) },
-                            sortBy = sortBy,
-                            onSortByChanged = onSortByChanged,
-                            getLocalized = getLocalized,
-                            settingsPrefs = settingsPrefs
-                        )
+                // Horizontal Category Selector (Sticky at the top, just below TopBar)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .background(if (isMonochrome) Color(0xFFFFFFFF) else Color(0xFF121422))
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    categories.forEach { (tag, label, icon) ->
+                        val isSelected = activeCategory == tag
+                        val containerColor = if (isSelected) {
+                            if (isMonochrome) Color.Black else MaterialTheme.colorScheme.primary
+                        } else {
+                            if (isMonochrome) Color.Black.copy(alpha = 0.05f) else Color.White.copy(alpha = 0.05f)
+                        }
+                        val contentColor = if (isSelected) {
+                            if (isMonochrome) Color.White else Color.Black
+                        } else {
+                            if (isMonochrome) Color.Black else Color.White
+                        }
+                        val borderStroke = if (isSelected) null else BorderStroke(1.dp, if (isMonochrome) Color.Black.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.1f))
+
+                        Surface(
+                            onClick = { activeCategory = tag },
+                            shape = RoundedCornerShape(20.dp),
+                            color = containerColor,
+                            contentColor = contentColor,
+                            border = borderStroke,
+                            modifier = Modifier.height(40.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = label,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = label,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
-                    "audio" -> {
-                        AudioSettingsSection(
-                            context = context,
-                            scope = scope,
-                            getLocalized = getLocalized
-                        )
-                    }
-                    "system" -> {
-                        SystemSettingsSection(
-                            selectedRefreshRate = selectedRefreshRate,
-                            onRefreshRateSelected = { selectedRefreshRate = it },
-                            disableAnimations = disableAnimations,
-                            onDisableAnimationsChanged = { disableAnimations = it },
-                            audioGranted = audioGranted,
-                            notificationGranted = notificationGranted,
-                            isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
-                            audioPermissionLauncher = audioPermissionLauncher,
-                            notificationPermissionLauncher = notificationPermissionLauncher,
-                            getLocalized = getLocalized,
-                            settingsPrefs = settingsPrefs,
-                            context = context
-                        )
-                    }
-                    "library" -> {
-                        LibrarySettingsSection(
-                            enabledTabs = enabledTabs,
-                            onEnabledTabsChanged = onEnabledTabsChanged,
-                            viewModel = viewModel,
-                            context = context,
-                            scope = scope,
-                            isScanning = isScanning,
-                            onRescan = onRescan,
-                            setIsScanning = { isScanning = it },
-                            backupDirUri = backupDirUri,
-                            selectBackupFolderLauncher = selectBackupFolderLauncher,
-                            openDocumentLauncher = openDocumentLauncher,
-                            createDocumentLauncher = createDocumentLauncher,
-                            performExportToFolder = ::performExportToFolder,
-                            getLocalized = getLocalized,
-                            isRenaming = isRenaming,
-                            setIsRenaming = { isRenaming = it },
-                            renamingCurrent = renamingCurrent,
-                            setRenamingCurrent = { renamingCurrent = it },
-                            renamingTotal = renamingTotal,
-                            setRenamingTotal = { renamingTotal = it },
-                            renamingCurrentName = renamingCurrentName,
-                            setRenamingCurrentName = { renamingCurrentName = it },
-                            showFolderList = showFolderList,
-                            setShowFolderList = { showFolderList = it },
-                            deviceFolders = deviceFolders,
-                            excludedFolders = excludedFolders,
-                            setExcludedFolders = { excludedFolders = it }
-                        )
-                    }
-                    "about" -> {
-                        AboutSettingsSection(
-                            context = context,
-                            scope = scope,
-                            getLocalized = getLocalized
-                        )
+                }
+
+                // Scrollable Content
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                ) {
+                    when (activeCategory) {
+                        "general" -> {
+                            GeneralSettingsSection(
+                                selectedTheme = selectedTheme,
+                                onThemeSelected = { selectedTheme = it },
+                                selectedLanguage = selectedLanguage,
+                                applyLanguage = { applyLanguage(it) },
+                                sortBy = sortBy,
+                                onSortByChanged = onSortByChanged,
+                                getLocalized = getLocalized,
+                                settingsPrefs = settingsPrefs
+                            )
+                        }
+                        "audio" -> {
+                            AudioSettingsSection(
+                                context = context,
+                                scope = scope,
+                                getLocalized = getLocalized
+                            )
+                        }
+                        "system" -> {
+                            SystemSettingsSection(
+                                selectedRefreshRate = selectedRefreshRate,
+                                onRefreshRateSelected = { selectedRefreshRate = it },
+                                disableAnimations = disableAnimations,
+                                onDisableAnimationsChanged = { disableAnimations = it },
+                                audioGranted = audioGranted,
+                                notificationGranted = notificationGranted,
+                                isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
+                                audioPermissionLauncher = audioPermissionLauncher,
+                                notificationPermissionLauncher = notificationPermissionLauncher,
+                                getLocalized = getLocalized,
+                                settingsPrefs = settingsPrefs,
+                                context = context
+                            )
+                        }
+                        "library" -> {
+                            LibrarySettingsSection(
+                                enabledTabs = enabledTabs,
+                                onEnabledTabsChanged = onEnabledTabsChanged,
+                                viewModel = viewModel,
+                                context = context,
+                                scope = scope,
+                                isScanning = isScanning,
+                                onRescan = onRescan,
+                                setIsScanning = { isScanning = it },
+                                backupDirUri = backupDirUri,
+                                selectBackupFolderLauncher = selectBackupFolderLauncher,
+                                openDocumentLauncher = openDocumentLauncher,
+                                createDocumentLauncher = createDocumentLauncher,
+                                performExportToFolder = ::performExportToFolder,
+                                getLocalized = getLocalized,
+                                isRenaming = isRenaming,
+                                setIsRenaming = { isRenaming = it },
+                                renamingCurrent = renamingCurrent,
+                                setRenamingCurrent = { renamingCurrent = it },
+                                renamingTotal = renamingTotal,
+                                setRenamingTotal = { renamingTotal = it },
+                                renamingCurrentName = renamingCurrentName,
+                                setRenamingCurrentName = { renamingCurrentName = it },
+                                showFolderList = showFolderList,
+                                setShowFolderList = { showFolderList = it },
+                                deviceFolders = deviceFolders,
+                                excludedFolders = excludedFolders,
+                                setExcludedFolders = { excludedFolders = it }
+                            )
+                        }
+                        "about" -> {
+                            AboutSettingsSection(
+                                context = context,
+                                scope = scope,
+                                getLocalized = getLocalized
+                            )
+                        }
                     }
                 }
             }

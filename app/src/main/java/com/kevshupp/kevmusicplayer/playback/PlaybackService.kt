@@ -64,6 +64,8 @@ class PlaybackService : MediaLibraryService() {
         startFadeCheckLoop(player)
         val eqPrefs = getSharedPreferences("equalizer_prefs", android.content.Context.MODE_PRIVATE)
         eqPrefs.registerOnSharedPreferenceChangeListener(eqPrefsListener)
+        val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+        settingsPrefs.registerOnSharedPreferenceChangeListener(settingsPrefsListener)
 
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -197,6 +199,13 @@ class PlaybackService : MediaLibraryService() {
                 .setChannelName(R.string.playback_notification_channel_name)
                 .build()
         )
+
+        val filter = android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(bluetoothReceiver, filter, android.content.Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(bluetoothReceiver, filter)
+        }
     }
 
     private fun updateWidgetState(title: String, artist: String, isPlaying: Boolean, uriString: String? = null) {
@@ -481,10 +490,13 @@ class PlaybackService : MediaLibraryService() {
         } catch (e: Exception) {}
         val eqPrefs = getSharedPreferences("equalizer_prefs", android.content.Context.MODE_PRIVATE)
         eqPrefs.unregisterOnSharedPreferenceChangeListener(eqPrefsListener)
+        val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+        settingsPrefs.unregisterOnSharedPreferenceChangeListener(settingsPrefsListener)
 
         equalizer?.release()
         bassBoost?.release()
         virtualizer?.release()
+        loudnessEnhancer?.release()
         fadeJob?.cancel()
         fadeInJob?.cancel()
 
@@ -493,12 +505,55 @@ class PlaybackService : MediaLibraryService() {
             release()
         }
         mediaLibrarySession = null
+        try {
+            unregisterReceiver(bluetoothReceiver)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         super.onDestroy()
+    }
+
+    private val bluetoothReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+            if (intent.action == android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED) {
+                val device = intent.getParcelableExtra<android.bluetooth.BluetoothDevice>(android.bluetooth.BluetoothDevice.EXTRA_DEVICE)
+                if (device != null) {
+                    val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+                    val isEnabled = settingsPrefs.getBoolean("bluetooth_resume_enabled", false)
+                    if (isEnabled) {
+                        val resumeAll = settingsPrefs.getBoolean("bluetooth_resume_all", true)
+                        val allowedDevices = settingsPrefs.getStringSet("bluetooth_resume_devices", emptySet()) ?: emptySet()
+                        
+                        val deviceName = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                device.name
+                            } else null
+                        } else {
+                            device.name
+                        }
+                        val deviceAddress = device.address
+
+                        val isAllowed = resumeAll || 
+                                (deviceName != null && allowedDevices.contains(deviceName)) || 
+                                (deviceAddress != null && allowedDevices.contains(deviceAddress))
+                        
+                        if (isAllowed) {
+                            serviceScope.launch {
+                                kotlinx.coroutines.delay(1500L)
+                                mediaLibrarySession?.player?.play()
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var equalizer: android.media.audiofx.Equalizer? = null
     private var bassBoost: android.media.audiofx.BassBoost? = null
     private var virtualizer: android.media.audiofx.Virtualizer? = null
+    private var loudnessEnhancer: android.media.audiofx.LoudnessEnhancer? = null
+    private var currentAudioSessionId: Int = 0
 
     private val eqPrefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
         val player = mediaLibrarySession?.player as? ExoPlayer
@@ -508,8 +563,31 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    private val settingsPrefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "normalize_sound") {
+            val player = mediaLibrarySession?.player as? ExoPlayer
+            val audioSessionId = player?.audioSessionId ?: 0
+            if (audioSessionId != 0) {
+                setupAudioEffects(audioSessionId)
+            }
+        }
+    }
+
     private fun setupAudioEffects(audioSessionId: Int) {
+        if (audioSessionId == 0) return
         try {
+            if (currentAudioSessionId != audioSessionId) {
+                try { equalizer?.release() } catch (e: Exception) {}
+                equalizer = null
+                try { bassBoost?.release() } catch (e: Exception) {}
+                bassBoost = null
+                try { virtualizer?.release() } catch (e: Exception) {}
+                virtualizer = null
+                try { loudnessEnhancer?.release() } catch (e: Exception) {}
+                loudnessEnhancer = null
+                currentAudioSessionId = audioSessionId
+            }
+            
             val prefs = getSharedPreferences("equalizer_prefs", android.content.Context.MODE_PRIVATE)
             
             // Equalizer
@@ -554,6 +632,26 @@ class PlaybackService : MediaLibraryService() {
             virtualizer?.enabled = virtEnabled
             if (virtEnabled) {
                 virtualizer?.setStrength(virtStrength)
+            }
+
+            // Loudness Normalization
+            val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+            val normalizeEnabled = settingsPrefs.getBoolean("normalize_sound", false)
+            if (loudnessEnhancer == null) {
+                try {
+                    loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            try {
+                loudnessEnhancer?.enabled = normalizeEnabled
+                if (normalizeEnabled) {
+                    // Set target gain to 800 mB for dynamic loudness enhancement/leveling
+                    loudnessEnhancer?.setTargetGain(800)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         } catch (e: Exception) {
             e.printStackTrace()

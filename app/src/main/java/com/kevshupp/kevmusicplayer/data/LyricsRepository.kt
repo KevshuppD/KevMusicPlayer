@@ -25,6 +25,7 @@ data class LrcLibSearchResult(
 )
 
 object LyricsRepository {
+    private val client = OkHttpClient()
 
     fun parseLrc(lrcText: String?): List<LyricLine> {
         if (lrcText.isNullOrBlank()) return emptyList()
@@ -50,9 +51,14 @@ object LyricsRepository {
         return lines.sortedBy { it.timeMs }
     }
 
+    fun isLrcSynced(lrcText: String?): Boolean {
+        if (lrcText.isNullOrBlank()) return false
+        val pattern = Regex("\\[\\d+:\\d+(?:\\.\\d+)?\\]")
+        return pattern.containsMatchIn(lrcText)
+    }
+
     suspend fun searchLyricsOptionsFromLrcLib(artist: String, title: String): List<LrcLibSearchResult> {
         return withContext(Dispatchers.IO) {
-            val client = OkHttpClient()
             val query = URLEncoder.encode("$artist $title", "UTF-8")
             val request = Request.Builder()
                 .url("https://lrclib.net/api/search?q=$query")
@@ -94,13 +100,14 @@ object LyricsRepository {
             } catch (e: Exception) {
                 e.printStackTrace()
             }
-            list
+            // Prioritize results that have synced lyrics
+            list.sortedWith(compareByDescending<LrcLibSearchResult> { it.syncedLyrics != null }
+                .thenBy { it.trackName.length })
         }
     }
 
     suspend fun fetchLyricsFromLrcLib(artist: String, title: String): String? {
         return withContext(Dispatchers.IO) {
-            val client = OkHttpClient()
             val query = URLEncoder.encode("$artist $title", "UTF-8")
             val request = Request.Builder()
                 .url("https://lrclib.net/api/search?q=$query")
@@ -111,14 +118,21 @@ object LyricsRepository {
                         val body = response.body?.string() ?: return@withContext null
                         val jsonArray = JSONArray(body)
                         if (jsonArray.length() > 0) {
-                            val bestMatch = jsonArray.getJSONObject(0)
-                            val syncedLyrics = bestMatch.optString("syncedLyrics")
-                            if (!syncedLyrics.isNullOrEmpty() && syncedLyrics != "null") {
-                                return@withContext syncedLyrics
+                            // First pass: try to find a match with synced lyrics
+                            for (i in 0 until jsonArray.length()) {
+                                val match = jsonArray.getJSONObject(i)
+                                val syncedLyrics = match.optString("syncedLyrics")
+                                if (!syncedLyrics.isNullOrEmpty() && syncedLyrics != "null") {
+                                    return@withContext syncedLyrics
+                                }
                             }
-                            val plainLyrics = bestMatch.optString("plainLyrics")
-                            if (!plainLyrics.isNullOrEmpty() && plainLyrics != "null") {
-                                return@withContext plainLyrics
+                            // Second pass: fallback to the first match with plain lyrics
+                            for (i in 0 until jsonArray.length()) {
+                                val match = jsonArray.getJSONObject(i)
+                                val plainLyrics = match.optString("plainLyrics")
+                                if (!plainLyrics.isNullOrEmpty() && plainLyrics != "null") {
+                                    return@withContext plainLyrics
+                                }
                             }
                         }
                     }
@@ -155,4 +169,63 @@ object LyricsRepository {
             null
         }
     }
+
+    suspend fun searchCoversFromITunes(query: String): List<ITunesCoverSearchResult> {
+        return withContext(Dispatchers.IO) {
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val request = Request.Builder()
+                .url("https://itunes.apple.com/search?term=$encodedQuery&entity=song&limit=10")
+                .build()
+            val list = mutableListOf<ITunesCoverSearchResult>()
+            try {
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: return@withContext emptyList()
+                        val jsonObject = JSONObject(body)
+                        val results = jsonObject.optJSONArray("results") ?: return@withContext emptyList()
+                        for (i in 0 until results.length()) {
+                            val obj = results.getJSONObject(i)
+                            val trackName = obj.optString("trackName", "")
+                            val artistName = obj.optString("artistName", "")
+                            val albumName = obj.optString("collectionName", "")
+                            var coverUrl = obj.optString("artworkUrl100", "")
+                            if (coverUrl.isNotEmpty()) {
+                                coverUrl = coverUrl.replace("100x100bb.jpg", "600x600bb.jpg")
+                            }
+                            if (coverUrl.isNotEmpty()) {
+                                list.add(ITunesCoverSearchResult(trackName, artistName, albumName, coverUrl))
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            list
+        }
+    }
+
+    suspend fun downloadCoverBytes(url: String): ByteArray? {
+        return withContext(Dispatchers.IO) {
+            val request = Request.Builder().url(url).build()
+            try {
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        response.body?.bytes()
+                    } else null
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        }
+    }
 }
+
+@kotlinx.serialization.Serializable
+data class ITunesCoverSearchResult(
+    val trackName: String,
+    val artistName: String,
+    val albumName: String,
+    val coverUrl: String
+)

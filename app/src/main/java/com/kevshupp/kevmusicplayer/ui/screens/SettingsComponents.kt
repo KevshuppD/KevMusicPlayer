@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -68,6 +69,30 @@ data class SortPrefItem(
 )
 
 @Composable
+fun settingsTextColor(): Color {
+    val isMonochrome = MaterialTheme.colorScheme.background == Color.White
+    return if (isMonochrome) Color.Black else Color.White
+}
+
+@Composable
+fun settingsTextMutedColor(): Color {
+    val isMonochrome = MaterialTheme.colorScheme.background == Color.White
+    return if (isMonochrome) Color.Black.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.5f)
+}
+
+@Composable
+fun settingsDividerColor(): Color {
+    val isMonochrome = MaterialTheme.colorScheme.background == Color.White
+    return if (isMonochrome) Color.Black.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.08f)
+}
+
+@Composable
+fun settingsCardContainerColor(): Color {
+    val isMonochrome = MaterialTheme.colorScheme.background == Color.White
+    return if (isMonochrome) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+}
+
+@Composable
 fun GeneralSettingsSection(
     selectedTheme: String,
     onThemeSelected: (String) -> Unit,
@@ -92,7 +117,7 @@ fun GeneralSettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -188,7 +213,7 @@ fun GeneralSettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -215,11 +240,11 @@ fun GeneralSettingsSection(
                             text = stringResource(resId),
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = settingsTextColor()
                         )
                     }
                     if (idx < languages.lastIndex) {
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+                        HorizontalDivider(color = settingsDividerColor())
                     }
                 }
             }
@@ -242,7 +267,7 @@ fun GeneralSettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -277,7 +302,7 @@ fun GeneralSettingsSection(
                             Icon(
                                 imageVector = pref.icon,
                                 contentDescription = null,
-                                tint = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.4f),
+                                tint = if (isSelected) MaterialTheme.colorScheme.primary else settingsTextMutedColor(),
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(12.dp))
@@ -286,19 +311,19 @@ fun GeneralSettingsSection(
                                     text = pref.name,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = settingsTextColor()
                                 )
                                 Text(
                                     text = pref.desc,
                                     fontSize = 12.sp,
-                                    color = Color.White.copy(alpha = 0.5f)
+                                    color = settingsTextMutedColor()
                                 )
                             }
                         }
                     }
                     if (index < sortPreferences.size - 1) {
                         HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.08f),
+                            color = settingsDividerColor(),
                             modifier = Modifier.padding(horizontal = 16.dp)
                         )
                     }
@@ -337,7 +362,7 @@ fun SystemSettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -533,7 +558,7 @@ fun SystemSettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -568,13 +593,13 @@ fun SystemSettingsSection(
                             text = getLocalized("Acceso a Música", "Music Files Access"),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = settingsTextColor()
                         )
                         Text(
                             text = if (audioGranted) getLocalized("Permitido. Almacenamiento escaneado con éxito.", "Granted. Storage scanned successfully.") 
                                    else getLocalized("Requerido para buscar y reproducir archivos MP3/FLAC locales.", "Required to discover and play local MP3/FLAC music files."),
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.5f)
+                            color = settingsTextMutedColor()
                         )
                     }
                     
@@ -607,7 +632,7 @@ fun SystemSettingsSection(
                     }
                 }
                 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+                HorizontalDivider(color = settingsDividerColor())
                 
                 // 2. Notification Permission Row
                 Row(
@@ -639,13 +664,13 @@ fun SystemSettingsSection(
                             text = getLocalized("Notificaciones de Reproducción", "Playback Notifications"),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = settingsTextColor()
                         )
                         Text(
                             text = if (notificationGranted) getLocalized("Permitido. Controlador del reproductor activo.", "Granted. Background player controller active.") 
                                    else getLocalized("Requerido para mostrar la canción actual en la barra de tareas.", "Required to show current track in system tray."),
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.5f)
+                            color = settingsTextMutedColor()
                         )
                     }
                     
@@ -673,7 +698,7 @@ fun SystemSettingsSection(
                     }
                 }
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+                HorizontalDivider(color = settingsDividerColor())
 
                 // 3. Background Services Status
                 Row(
@@ -702,12 +727,12 @@ fun SystemSettingsSection(
                             text = getLocalized("Servicio en Segundo Plano", "Background Foreground Service"),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = settingsTextColor()
                         )
                         Text(
                             text = getLocalized("Mantiene la reproducción persistente y el procesador activo.", "Enforces persistent playback thread and CPU Wake Lock."),
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.5f)
+                            color = settingsTextMutedColor()
                         )
                     }
                     
@@ -719,7 +744,7 @@ fun SystemSettingsSection(
                     )
                 }
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+                HorizontalDivider(color = settingsDividerColor())
 
                 // 4. Battery Optimization Exemption Row
                 Row(
@@ -751,7 +776,7 @@ fun SystemSettingsSection(
                             text = getLocalized("Optimización de Batería", "Battery Optimization"),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = settingsTextColor()
                         )
                         Text(
                             text = if (isIgnoringBatteryOptimizations) {
@@ -760,7 +785,7 @@ fun SystemSettingsSection(
                                 getLocalized("Optimizado. Puede cerrarse al estar en segundo plano.", "Optimized. Playback may be killed in background.")
                             },
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.5f)
+                            color = settingsTextMutedColor()
                         )
                     }
                     
@@ -820,6 +845,275 @@ fun SystemSettingsSection(
             }
         }
     }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // 3. Bluetooth Auto-Resume Card
+    Column {
+        Text(
+            text = getLocalized("CONEXIÓN BLUETOOTH", "BLUETOOTH CONNECTION"),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
+        )
+
+        var bluetoothResumeEnabled by remember {
+            mutableStateOf(settingsPrefs.getBoolean("bluetooth_resume_enabled", false))
+        }
+        var resumeAllBluetooth by remember {
+            mutableStateOf(settingsPrefs.getBoolean("bluetooth_resume_all", true))
+        }
+
+        val bluetoothAdapter = remember {
+            try {
+                val bm = context.getSystemService(android.content.Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager
+                bm?.adapter
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        var hasBluetoothConnectPermission by remember {
+            mutableStateOf(
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    androidx.core.content.ContextCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.BLUETOOTH_CONNECT
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                } else {
+                    true
+                }
+            )
+        }
+
+        val bluetoothPermissionLauncher = rememberLauncherForActivityResult(
+            contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+        ) { isGranted ->
+            hasBluetoothConnectPermission = isGranted
+            if (isGranted) {
+                bluetoothResumeEnabled = true
+                settingsPrefs.edit().putBoolean("bluetooth_resume_enabled", true).apply()
+            } else {
+                bluetoothResumeEnabled = false
+                settingsPrefs.edit().putBoolean("bluetooth_resume_enabled", false).apply()
+            }
+        }
+
+        val bondedDevicesList = remember(hasBluetoothConnectPermission) {
+            if (hasBluetoothConnectPermission) {
+                try {
+                    bluetoothAdapter?.bondedDevices?.toList() ?: emptyList()
+                } catch (e: SecurityException) {
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+        }
+
+        var allowedDevices by remember {
+            mutableStateOf(settingsPrefs.getStringSet("bluetooth_resume_devices", emptySet()) ?: emptySet())
+        }
+
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = settingsCardContainerColor()
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Main Toggle Row
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Bluetooth,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(14.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Autoreanudar por Bluetooth", "Bluetooth Auto-Resume"),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Reanudar música automáticamente al conectar un dispositivo Bluetooth",
+                                "Resume music automatically when connecting a Bluetooth device"
+                            ),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+
+                    Switch(
+                        checked = bluetoothResumeEnabled,
+                        onCheckedChange = { checked ->
+                            if (checked && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && !hasBluetoothConnectPermission) {
+                                bluetoothPermissionLauncher.launch(android.Manifest.permission.BLUETOOTH_CONNECT)
+                            } else {
+                                bluetoothResumeEnabled = checked
+                                settingsPrefs.edit().putBoolean("bluetooth_resume_enabled", checked).apply()
+                            }
+                        }
+                    )
+                }
+
+                if (bluetoothResumeEnabled) {
+                    HorizontalDivider(color = settingsDividerColor())
+
+                    // "Resume on All Devices" Switch Row
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = getLocalized("Todos los dispositivos", "All Devices"),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = getLocalized(
+                                    "Reanudar con cualquier dispositivo Bluetooth conectado",
+                                    "Resume with any connected Bluetooth device"
+                                ),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+
+                        Switch(
+                            checked = resumeAllBluetooth,
+                            onCheckedChange = { checked ->
+                                resumeAllBluetooth = checked
+                                settingsPrefs.edit().putBoolean("bluetooth_resume_all", checked).apply()
+                            }
+                        )
+                    }
+
+                    // If not "All Devices", show the checkable list of bonded devices
+                    if (!resumeAllBluetooth) {
+                        HorizontalDivider(color = settingsDividerColor())
+
+                        Text(
+                            text = getLocalized("Dispositivos Permitidos", "Allowed Devices"),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            letterSpacing = 0.5.sp
+                        )
+
+                        if (!hasBluetoothConnectPermission && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                            Text(
+                                text = getLocalized(
+                                    "Permiso de Bluetooth Connect no concedido para ver dispositivos.",
+                                    "Bluetooth Connect permission not granted to view devices."
+                                ),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        } else if (bondedDevicesList.isEmpty()) {
+                            Text(
+                                text = getLocalized(
+                                    "No hay dispositivos vinculados detectados.",
+                                    "No paired devices detected."
+                                ),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                        } else {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                bondedDevicesList.forEach { device ->
+                                    val name = try { device.name } catch (e: SecurityException) { null } ?: device.address
+                                    val address = device.address
+                                    val isChecked = allowedDevices.contains(address) || allowedDevices.contains(name)
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                val newSet = allowedDevices.toMutableSet()
+                                                if (isChecked) {
+                                                    newSet.remove(address)
+                                                    newSet.remove(name)
+                                                } else {
+                                                    newSet.add(address)
+                                                }
+                                                settingsPrefs.edit().putStringSet("bluetooth_resume_devices", newSet).apply()
+                                                allowedDevices = newSet
+                                            }
+                                            .padding(vertical = 4.dp)
+                                    ) {
+                                        Checkbox(
+                                            checked = isChecked,
+                                            onCheckedChange = { checked ->
+                                                val newSet = allowedDevices.toMutableSet()
+                                                if (!checked) {
+                                                    newSet.remove(address)
+                                                    newSet.remove(name)
+                                                } else {
+                                                    newSet.add(address)
+                                                }
+                                                settingsPrefs.edit().putStringSet("bluetooth_resume_devices", newSet).apply()
+                                                allowedDevices = newSet
+                                            },
+                                            colors = CheckboxDefaults.colors(
+                                                checkedColor = MaterialTheme.colorScheme.primary,
+                                                uncheckedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                            )
+                                        )
+
+                                        Spacer(modifier = Modifier.width(8.dp))
+
+                                        Column {
+                                            Text(
+                                                text = name,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = address,
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -866,7 +1160,7 @@ fun LibrarySettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -902,7 +1196,7 @@ fun LibrarySettingsSection(
                 Text(
                     text = stringResource(R.string.library_categories_drag_hint),
                     fontSize = 11.sp,
-                    color = Color.White.copy(alpha = 0.5f),
+                    color = settingsTextMutedColor(),
                     modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp)
                 )
 
@@ -974,12 +1268,12 @@ fun LibrarySettingsSection(
                                         text = stringResource(cat.labelRes),
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color.White
+                                        color = settingsTextColor()
                                     )
                                     Text(
                                         text = stringResource(cat.descRes),
                                         fontSize = 12.sp,
-                                        color = Color.White.copy(alpha = 0.5f)
+                                        color = settingsTextMutedColor()
                                     )
                                 }
                                 Switch(
@@ -993,7 +1287,7 @@ fun LibrarySettingsSection(
                                 )
                             }
                             HorizontalDivider(
-                                color = Color.White.copy(alpha = 0.08f),
+                                color = settingsDividerColor(),
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
                         }
@@ -1004,7 +1298,7 @@ fun LibrarySettingsSection(
                     Text(
                         text = stringResource(R.string.library_categories_disabled),
                         fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = settingsTextMutedColor(),
                         modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp)
                     )
                 }
@@ -1020,7 +1314,7 @@ fun LibrarySettingsSection(
                         Icon(
                             imageVector = cat.icon,
                             contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.4f),
+                            tint = settingsTextMutedColor(),
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(16.dp))
@@ -1029,12 +1323,12 @@ fun LibrarySettingsSection(
                                 text = stringResource(cat.labelRes),
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White.copy(alpha = 0.7f)
+                                color = settingsTextColor()
                             )
                             Text(
                                 text = stringResource(cat.descRes),
                                 fontSize = 12.sp,
-                                color = Color.White.copy(alpha = 0.4f)
+                                color = settingsTextMutedColor()
                             )
                         }
                         Switch(
@@ -1049,7 +1343,7 @@ fun LibrarySettingsSection(
                     }
                     if (index < disabledOrder.size - 1) {
                         HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.08f),
+                            color = settingsDividerColor(),
                             modifier = Modifier.padding(horizontal = 16.dp)
                         )
                     }
@@ -1064,7 +1358,7 @@ fun LibrarySettingsSection(
     Card(
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
+            containerColor = settingsCardContainerColor()
         ),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -1085,7 +1379,7 @@ fun LibrarySettingsSection(
             Text(
                 text = getLocalized("Forzar la actualización completa de tu biblioteca de audio y reescanear el almacenamiento", "Force refresh your entire audio library and re-scan device storage"),
                 fontSize = 12.sp,
-                color = Color.White.copy(alpha = 0.6f)
+                color = settingsTextMutedColor()
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -1108,7 +1402,7 @@ fun LibrarySettingsSection(
                 if (isScanning) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onPrimary,
                         strokeWidth = 2.dp
                     )
                     Spacer(modifier = Modifier.width(10.dp))
@@ -1132,9 +1426,95 @@ fun LibrarySettingsSection(
                 }
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            HorizontalDivider(
+                color = settingsDividerColor(),
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = getLocalized("DESCARGADOR DE LETRAS", "LYRICS DOWNLOADER"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp,
+                modifier = Modifier.align(Alignment.Start)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = getLocalized(
+                    "Descarga automáticamente letras (sincronizadas si están disponibles) de internet para toda tu música.",
+                    "Automatically download lyrics (synchronized if available) from the internet for all your music."
+                ),
+                fontSize = 12.sp,
+                color = settingsTextMutedColor(),
+                modifier = Modifier.align(Alignment.Start)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = {
+                    viewModel.downloadAllLyrics(context)
+                },
+                enabled = !viewModel.isDownloadingAllLyrics.value && !isScanning && !isRenaming,
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                if (viewModel.isDownloadingAllLyrics.value) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "${viewModel.downloadAllLyricsCurrent.value}/${viewModel.downloadAllLyricsTotal.value}: ${viewModel.downloadAllLyricsCurrentName.value}",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    IconButton(
+                        onClick = { viewModel.cancelDownloadAllLyrics() },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Cancel",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.CloudDownload,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = getLocalized("Descargar Letras de la Biblioteca", "Download Library Lyrics"),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                }
+            }
+
             // Organize Files Section
             HorizontalDivider(
-                color = Color.White.copy(alpha = 0.08f),
+                color = settingsDividerColor(),
                 modifier = Modifier.padding(vertical = 16.dp)
             )
 
@@ -1154,7 +1534,7 @@ fun LibrarySettingsSection(
                     "Automatically rename physical music files based on metadata to: <Track number>. <Artist> - <Title>.<ext>."
                 ),
                 fontSize = 12.sp,
-                color = Color.White.copy(alpha = 0.6f),
+                color = settingsTextMutedColor(),
                 modifier = Modifier.align(Alignment.Start)
             )
 
@@ -1196,7 +1576,7 @@ fun LibrarySettingsSection(
                 if (isRenaming) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
-                        color = Color.Black,
+                        color = MaterialTheme.colorScheme.onPrimary,
                         strokeWidth = 2.dp
                     )
                     Spacer(modifier = Modifier.width(10.dp))
@@ -1204,28 +1584,28 @@ fun LibrarySettingsSection(
                         text = "$renamingCurrent/$renamingTotal: $renamingCurrentName",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
-                        color = Color.Black
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.DriveFileRenameOutline,
                         contentDescription = null,
                         modifier = Modifier.size(20.dp),
-                        tint = Color.Black
+                        tint = MaterialTheme.colorScheme.onPrimary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Renombrar Archivos", "Rename Files"),
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
-                        color = Color.Black
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
                 }
             }
 
             // Excluded Folders Section
             HorizontalDivider(
-                color = Color.White.copy(alpha = 0.08f),
+                color = settingsDividerColor(),
                 modifier = Modifier.padding(vertical = 16.dp)
             )
 
@@ -1249,13 +1629,13 @@ fun LibrarySettingsSection(
                             "Hide folders from library (e.g. WhatsApp Audio)"
                         ),
                         fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.5f)
+                        color = settingsTextMutedColor()
                     )
                 }
                 Icon(
                     imageVector = if (showFolderList) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                     contentDescription = null,
-                    tint = Color.White
+                    tint = settingsTextColor()
                 )
             }
 
@@ -1265,7 +1645,7 @@ fun LibrarySettingsSection(
                     Text(
                         text = getLocalized("No se encontraron carpetas con música.", "No music folders found."),
                         fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.5f)
+                        color = settingsTextMutedColor()
                     )
                 } else {
                     Column(
@@ -1279,7 +1659,7 @@ fun LibrarySettingsSection(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(Color.White.copy(alpha = 0.04f))
+                                    .background(settingsDividerColor())
                                     .clickable {
                                         val newList = if (isExcluded) {
                                             excludedFolders - folderPath
@@ -1305,7 +1685,7 @@ fun LibrarySettingsSection(
                                     },
                                     colors = CheckboxDefaults.colors(
                                         checkedColor = MaterialTheme.colorScheme.primary,
-                                        uncheckedColor = Color.White.copy(alpha = 0.4f)
+                                        uncheckedColor = settingsTextMutedColor()
                                     )
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
@@ -1314,12 +1694,12 @@ fun LibrarySettingsSection(
                                         text = folderName,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color.White
+                                        color = settingsTextColor()
                                     )
                                     Text(
                                         text = folderPath,
                                         fontSize = 10.sp,
-                                        color = Color.White.copy(alpha = 0.4f)
+                                        color = settingsTextMutedColor()
                                     )
                                 }
                             }
@@ -1357,7 +1737,7 @@ fun LibrarySettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -1372,7 +1752,7 @@ fun LibrarySettingsSection(
                         "Safeguard your custom playlists, visual settings, and translated lyrics to a local file in a fixed folder persistently."
                     ),
                     fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.7f),
+                    color = settingsTextMutedColor(),
                     textAlign = TextAlign.Center
                 )
 
@@ -1380,7 +1760,7 @@ fun LibrarySettingsSection(
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                    border = BorderStroke(1.dp, settingsDividerColor()),
                     modifier = Modifier.fillMaxWidth().clickable {
                         selectBackupFolderLauncher.launch(null)
                     }
@@ -1401,18 +1781,18 @@ fun LibrarySettingsSection(
                                 text = getLocalized("Carpeta de Destino Fija", "Fixed Target Folder"),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = settingsTextColor()
                             )
                             Text(
                                 text = folderName ?: getLocalized("Toca para configurar una carpeta...", "Tap to configure a folder..."),
                                 fontSize = 11.sp,
-                                color = if (folderName != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.5f)
+                                color = if (folderName != null) MaterialTheme.colorScheme.primary else settingsTextMutedColor()
                             )
                         }
                         Icon(
                             imageVector = Icons.Rounded.Edit,
                             contentDescription = "Edit",
-                            tint = Color.White.copy(alpha = 0.7f),
+                            tint = settingsTextMutedColor(),
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -1443,14 +1823,14 @@ fun LibrarySettingsSection(
                         Icon(
                             imageVector = Icons.Rounded.Backup,
                             contentDescription = null,
-                            tint = Color.Black,
+                            tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = getLocalized("Exportar", "Backup"),
                             fontWeight = FontWeight.Bold,
-                            color = Color.Black
+                            color = MaterialTheme.colorScheme.onPrimary
                         )
                     }
 
@@ -1491,10 +1871,10 @@ fun LibrarySettingsSection(
                         DropdownMenu(
                             expanded = showRestoreOptions,
                             onDismissRequest = { showRestoreOptions = false },
-                            containerColor = Color(0xFF1E213A)
+                            containerColor = if (MaterialTheme.colorScheme.background == Color.White) MaterialTheme.colorScheme.surfaceVariant else Color(0xFF1E213A)
                         ) {
                             DropdownMenuItem(
-                                text = { Text(getLocalized("Restaurar desde carpeta fija", "Restore from fixed folder"), color = Color.White) },
+                                text = { Text(getLocalized("Restaurar desde carpeta fija", "Restore from fixed folder"), color = settingsTextColor()) },
                                 onClick = {
                                     showRestoreOptions = false
                                     val currentDirUri = backupDirUri
@@ -1530,13 +1910,13 @@ fun LibrarySettingsSection(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text(getLocalized("Seleccionar archivo...", "Select file..."), color = Color.White) },
+                                text = { Text(getLocalized("Seleccionar archivo...", "Select file..."), color = settingsTextColor()) },
                                 onClick = {
                                     showRestoreOptions = false
                                     openDocumentLauncher.launch(arrayOf("application/json"))
                                 },
                                 leadingIcon = {
-                                    Icon(Icons.Rounded.FileOpen, contentDescription = null, tint = Color.White.copy(alpha = 0.6f))
+                                    Icon(Icons.Rounded.FileOpen, contentDescription = null, tint = settingsTextMutedColor())
                                 }
                             )
                         }
@@ -1578,17 +1958,17 @@ fun AboutSettingsSection(
     if (showUpdateDialog) {
         AlertDialog(
             onDismissRequest = { if (!isDownloading) showUpdateDialog = false },
-            title = { Text(text = updateDialogTitle, fontWeight = FontWeight.Bold, color = Color.White) },
+            title = { Text(text = updateDialogTitle, fontWeight = FontWeight.Bold, color = settingsTextColor()) },
             text = {
                 Column {
-                    Text(text = updateDialogMessage, color = Color.White.copy(alpha = 0.8f))
+                    Text(text = updateDialogMessage, color = settingsTextColor().copy(alpha = 0.8f))
                     if (isDownloading) {
                         Spacer(modifier = Modifier.height(16.dp))
                         LinearProgressIndicator(
                             progress = { downloadProgress },
                             modifier = Modifier.fillMaxWidth(),
                             color = MaterialTheme.colorScheme.primary,
-                            trackColor = Color.White.copy(alpha = 0.1f)
+                            trackColor = settingsTextColor().copy(alpha = 0.1f)
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
@@ -1596,7 +1976,7 @@ fun AboutSettingsSection(
                                 "Descargando: ${(downloadProgress * 100).toInt()}%",
                                 "Downloading: ${(downloadProgress * 100).toInt()}%"
                             ),
-                            color = Color.White.copy(alpha = 0.6f),
+                            color = settingsTextMutedColor(),
                             fontSize = 12.sp
                         )
                     }
@@ -1692,11 +2072,11 @@ fun AboutSettingsSection(
             dismissButton = {
                 if (updateDownloadUrl != null && !isDownloading) {
                     TextButton(onClick = { showUpdateDialog = false }) {
-                        Text(text = getLocalized("Cancelar", "Cancel"), color = Color.White.copy(alpha = 0.6f))
+                        Text(text = getLocalized("Cancelar", "Cancel"), color = settingsTextMutedColor())
                     }
                 }
             },
-            containerColor = Color(0xFF1E2135),
+            containerColor = if (MaterialTheme.colorScheme.background == Color.White) MaterialTheme.colorScheme.surfaceVariant else Color(0xFF1E2135),
             shape = RoundedCornerShape(20.dp)
         )
     }
@@ -1715,7 +2095,7 @@ fun AboutSettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -1752,7 +2132,7 @@ fun AboutSettingsSection(
                     text = "Kev Music Player",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Black,
-                    color = Color.White
+                    color = settingsTextColor()
                 )
 
                 Text(
@@ -1770,7 +2150,7 @@ fun AboutSettingsSection(
                         "A minimalist, fast, and optimized music player designed for fluid 120Hz navigation."
                     ),
                     fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = settingsTextMutedColor(),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 10.dp)
                 )
@@ -1915,7 +2295,7 @@ fun AboutSettingsSection(
                         }
                     },
                     shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                    border = BorderStroke(1.dp, settingsDividerColor()),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(44.dp)
@@ -1923,20 +2303,20 @@ fun AboutSettingsSection(
                     Icon(
                         imageVector = Icons.Rounded.Person,
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = settingsTextColor(),
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("GitHub del Desarrollador", "Developer GitHub Profile"),
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = settingsTextColor()
                     )
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+                HorizontalDivider(color = settingsDividerColor())
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -1945,7 +2325,7 @@ fun AboutSettingsSection(
                     text = getLocalized("Tecnologías Utilizadas", "Libraries & Frameworks"),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.5f),
+                    color = settingsTextMutedColor(),
                     modifier = Modifier.align(Alignment.Start)
                 )
 
@@ -1961,14 +2341,14 @@ fun AboutSettingsSection(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Color.White.copy(alpha = 0.06f))
+                                .background(settingsDividerColor())
                                 .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Text(
                                 text = library,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White.copy(alpha = 0.7f)
+                                color = settingsTextMutedColor()
                             )
                         }
                     }
@@ -2025,6 +2405,71 @@ fun AudioSettingsSection(
     Column(
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
+        // 0. Audio Normalization Card
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+        ) {
+            Text(
+                text = getLocalized("NORMALIZACIÓN DE AUDIO", "AUDIO NORMALIZATION"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp
+            )
+            var normalizeEnabled by remember { mutableStateOf(settingsPrefs.getBoolean("normalize_sound", false)) }
+            Switch(
+                checked = normalizeEnabled,
+                onCheckedChange = {
+                    normalizeEnabled = it
+                    settingsPrefs.edit().putBoolean("normalize_sound", it).apply()
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = MaterialTheme.colorScheme.primary
+                )
+            )
+        }
+
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = settingsCardContainerColor()
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Normalizar Volumen", "Normalize Volume"),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = settingsTextColor()
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Mantiene un nivel de volumen constante y uniforme entre canciones",
+                                "Keeps a consistent and uniform volume level across all tracks"
+                            ),
+                            fontSize = 12.sp,
+                            color = settingsTextMutedColor()
+                        )
+                    }
+                }
+            }
+        }
+
         // 1. Crossfade & Gapless Card
         Text(
             text = getLocalized("REPRODUCCIÓN ININTERRUMPIDA", "SEAMLESS PLAYBACK"),
@@ -2038,7 +2483,7 @@ fun AudioSettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -2059,7 +2504,7 @@ fun AudioSettingsSection(
                             text = getLocalized("Transición Cruzada (Crossfade)", "Crossfade Transition"),
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = settingsTextColor()
                         )
                         Text(
                             text = if (crossfade > 0) {
@@ -2068,7 +2513,7 @@ fun AudioSettingsSection(
                                 getLocalized("Desactivado (cambio abrupto)", "Disabled (abrupt track change)")
                             },
                             fontSize = 12.sp,
-                            color = Color.White.copy(alpha = 0.5f)
+                            color = settingsTextMutedColor()
                         )
                     }
                 }
@@ -2079,6 +2524,8 @@ fun AudioSettingsSection(
                     value = crossfade.toFloat(),
                     onValueChange = {
                         crossfade = it.toInt()
+                    },
+                    onValueChangeFinished = {
                         settingsPrefs.edit().putInt("crossfade_duration", crossfade).apply()
                     },
                     valueRange = 0f..10f,
@@ -2086,7 +2533,7 @@ fun AudioSettingsSection(
                     colors = SliderDefaults.colors(
                         thumbColor = MaterialTheme.colorScheme.primary,
                         activeTrackColor = MaterialTheme.colorScheme.primary,
-                        inactiveTrackColor = Color.White.copy(alpha = 0.1f)
+                        inactiveTrackColor = settingsTextColor().copy(alpha = 0.1f)
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -2121,7 +2568,7 @@ fun AudioSettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -2196,6 +2643,8 @@ fun AudioSettingsSection(
                             onValueChange = { newValue ->
                                 eqBands[idx] = newValue
                                 selectedPreset = "Custom"
+                            },
+                            onValueChangeFinished = {
                                 eqPrefs.edit().putString("eq_preset", "Custom").apply()
                                 val bandsStr = eqBands.map { (it * 100).toInt() }.joinToString(",")
                                 eqPrefs.edit().putString("eq_bands", bandsStr).apply()
@@ -2222,7 +2671,7 @@ fun AudioSettingsSection(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -2244,7 +2693,7 @@ fun AudioSettingsSection(
                             text = getLocalized("Graves", "Bass Boost"),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = settingsTextColor()
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Switch(
@@ -2264,6 +2713,8 @@ fun AudioSettingsSection(
                         value = bbStrength / 1000f,
                         onValueChange = {
                             bbStrength = (it * 1000).toInt()
+                        },
+                        onValueChangeFinished = {
                             eqPrefs.edit().putInt("bb_strength", bbStrength).apply()
                         },
                         enabled = bbEnabled,
@@ -2276,7 +2727,7 @@ fun AudioSettingsSection(
                     modifier = Modifier
                         .height(120.dp)
                         .width(1.dp)
-                        .background(Color.White.copy(alpha = 0.08f))
+                        .background(settingsDividerColor())
                 )
 
                 Column(
@@ -2292,7 +2743,7 @@ fun AudioSettingsSection(
                             text = getLocalized("Virtual 3D", "3D Virtualizer"),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = settingsTextColor()
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Switch(
@@ -2312,6 +2763,8 @@ fun AudioSettingsSection(
                         value = virtStrength / 1000f,
                         onValueChange = {
                             virtStrength = (it * 1000).toInt()
+                        },
+                        onValueChangeFinished = {
                             eqPrefs.edit().putInt("virt_strength", virtStrength).apply()
                         },
                         enabled = virtEnabled,
@@ -2331,7 +2784,8 @@ fun CircularSlider(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     label: String = "",
-    valueSuffix: String = "%"
+    valueSuffix: String = "%",
+    onValueChangeFinished: (() -> Unit)? = null
 ) {
     Box(
         modifier = modifier,
@@ -2355,30 +2809,34 @@ fun CircularSlider(
                 }
                 .pointerInput(enabled) {
                     if (!enabled) return@pointerInput
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        val cx = width / 2f
-                        val cy = height / 2f
-                        val touchX = change.position.x
-                        val touchY = change.position.y
-                        
-                        var angle = Math.toDegrees(atan2(touchY - cy, touchX - cx).toDouble()).toFloat()
-                        if (angle < 0) {
-                            angle += 360f
+                    detectDragGestures(
+                        onDragEnd = { onValueChangeFinished?.invoke() },
+                        onDragCancel = { onValueChangeFinished?.invoke() },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            val cx = width / 2f
+                            val cy = height / 2f
+                            val touchX = change.position.x
+                            val touchY = change.position.y
+                            
+                            var angle = Math.toDegrees(atan2(touchY - cy, touchX - cx).toDouble()).toFloat()
+                            if (angle < 0) {
+                                angle += 360f
+                            }
+                            
+                            var relativeAngle = angle - 135f
+                            if (relativeAngle < 0) {
+                                relativeAngle += 360f
+                            }
+                            
+                            val newValue = when {
+                                relativeAngle <= 270f -> relativeAngle / 270f
+                                relativeAngle < 315f -> 1f
+                                else -> 0f
+                            }
+                            onValueChange(newValue)
                         }
-                        
-                        var relativeAngle = angle - 135f
-                        if (relativeAngle < 0) {
-                            relativeAngle += 360f
-                        }
-                        
-                        val newValue = when {
-                            relativeAngle <= 270f -> relativeAngle / 270f
-                            relativeAngle < 315f -> 1f
-                            else -> 0f
-                        }
-                        onValueChange(newValue)
-                    }
+                    )
                 }
         ) {
             val radius = minOf(this.size.width, this.size.height) / 2f - 8.dp.toPx()
@@ -2438,7 +2896,8 @@ fun VerticalFader(
     onValueChange: (Float) -> Unit,
     label: String,
     enabled: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onValueChangeFinished: (() -> Unit)? = null
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -2468,13 +2927,17 @@ fun VerticalFader(
                 .onSizeChanged { height = it.height }
                 .pointerInput(enabled) {
                     if (!enabled) return@pointerInput
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        val touchY = change.position.y
-                        val progress = 1f - (touchY / height).coerceIn(0f, 1f)
-                        val newValue = -15f + progress * 30f
-                        onValueChange(newValue)
-                    }
+                    detectDragGestures(
+                        onDragEnd = { onValueChangeFinished?.invoke() },
+                        onDragCancel = { onValueChangeFinished?.invoke() },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            val touchY = change.position.y
+                            val progress = 1f - (touchY / height).coerceIn(0f, 1f)
+                            val newValue = -15f + progress * 30f
+                            onValueChange(newValue)
+                        }
+                    )
                 },
             contentAlignment = Alignment.BottomCenter
         ) {

@@ -80,6 +80,7 @@ fun PlayerScreen(
     var showLyrics by remember { mutableStateOf(false) }
     var showEditLyricsDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showTagEditorDialog by remember { mutableStateOf(false) }
     var editLyricsText by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     var isSearchingOnline by remember { mutableStateOf(false) }
@@ -1070,6 +1071,32 @@ fun PlayerScreen(
                         Text("Go to Album", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     }
 
+                    // Option: Edit Metadata
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showMoreOptions = false
+                                showTagEditorDialog = true
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.EditNote,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = if (targetLang == "es") "Editar metadatos" else "Edit Metadata",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
                     // Option 5: Delete Track
                     Row(
                         modifier = Modifier
@@ -1524,6 +1551,14 @@ fun PlayerScreen(
                 containerColor = Color(0xFF161829),
                 titleContentColor = Color.White,
                 textContentColor = Color.White
+            )
+        }
+
+        if (showTagEditorDialog && currentSongFile != null && viewModel != null) {
+            TagEditorDialog(
+                song = currentSongFile,
+                viewModel = viewModel,
+                onDismiss = { showTagEditorDialog = false }
             )
         }
 

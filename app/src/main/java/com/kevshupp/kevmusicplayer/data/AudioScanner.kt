@@ -20,7 +20,8 @@ class AudioScanner(private val context: Context) {
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.DATA
+            MediaStore.Audio.Media.DATA,
+            MediaStore.Audio.Media.DATE_ADDED
         )
 
         // Query ALL audio files on the device (selection = null) to ensure absolutely NO songs are missed
@@ -42,6 +43,7 @@ class AudioScanner(private val context: Context) {
                 val albumColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
                 val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
                 val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
+                val dateAddedColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idColumn)
@@ -50,6 +52,8 @@ class AudioScanner(private val context: Context) {
                     val album = cursor.getString(albumColumn) ?: "Unknown Album"
                     val duration = cursor.getLong(durationColumn)
                     val dataPath = cursor.getString(dataColumn) ?: ""
+                    val dateAddedSec = cursor.getLong(dateAddedColumn)
+                    val dateAddedMs = dateAddedSec * 1000L
 
                     // Skip audio files that are shorter than 5 seconds (notification sounds, short recordings)
                     // but capture all actual music files on the phone
@@ -91,7 +95,8 @@ class AudioScanner(private val context: Context) {
                             duration = duration,
                             uriString = contentUri.toString(),
                             folderPath = folderPath,
-                            folderName = folderName
+                            folderName = folderName,
+                            dateAdded = dateAddedMs
                         )
                     )
                 }

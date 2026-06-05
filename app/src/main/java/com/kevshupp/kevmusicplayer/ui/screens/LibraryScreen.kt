@@ -101,6 +101,8 @@ fun LibraryScreen(
     var songToDelete by remember { mutableStateOf<AudioFile?>(null) }
     var songForPlaylist by remember { mutableStateOf<AudioFile?>(null) }
     var songForTagEditing by remember { mutableStateOf<AudioFile?>(null) }
+    var albumForCoverEditing by remember { mutableStateOf<String?>(null) }
+    var albumForEditing by remember { mutableStateOf<String?>(null) }
     var songForOptionsSheet by remember { mutableStateOf<AudioFile?>(null) }
     var playlistContextForOptionsSheet by remember { mutableStateOf<String?>(null) }
     var playlistSortBy by remember { mutableStateOf("Date") }
@@ -436,10 +438,24 @@ fun LibraryScreen(
                                     )
                                 }
                                 "Playlists" -> {
+                                    val allPlaylists = remember(viewModel?.playlists?.keys?.toList(), viewModel?.smartPlaylists?.keys?.toList()) {
+                                        val map = mutableMapOf<String, List<AudioFile>>()
+                                        viewModel?.smartPlaylists?.forEach { (name, list) ->
+                                            map[name] = list
+                                        }
+                                        viewModel?.playlists?.forEach { (name, list) ->
+                                            map[name] = list
+                                        }
+                                        map
+                                    }
                                     PlaylistGridView(
-                                        playlists = viewModel?.playlists ?: emptyMap(),
+                                        viewModel = viewModel,
+                                        playlists = allPlaylists,
                                         playlistCovers = viewModel?.playlistCovers ?: emptyMap(),
                                         onCreatePlaylist = { viewModel?.createPlaylist(it) },
+                                        onCreateSmartPlaylist = { name, rule, limit ->
+                                            viewModel?.createSmartPlaylist(name, rule, limit)
+                                        },
                                         onPlaylistClick = { currentSubView = SubView.PlaylistDetail(it) },
                                         onDeletePlaylist = { viewModel?.deletePlaylist(it) }
                                     )
@@ -465,13 +481,16 @@ fun LibraryScreen(
                     is SubView.FolderDetail -> "Folder"
                     is SubView.PlaylistDetail -> "Playlist"
                 }
-                val subSongs = remember(filteredFiles, subView, viewModel?.playlists, playlistSortBy) {
+                 val subSongs = remember(filteredFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy) {
                     val baseList = when (subView) {
                         is SubView.AlbumDetail -> filteredFiles.filter { it.album == subView.albumName }
                         is SubView.ArtistDetail -> filteredFiles.filter { it.artist == subView.artistName }
                         is SubView.GenreDetail -> filteredFiles.filter { it.genre == subView.genreName }
                         is SubView.FolderDetail -> filteredFiles.filter { it.folderName == subView.folderName }
-                        is SubView.PlaylistDetail -> viewModel?.playlists?.get(subView.playlistName) ?: emptyList()
+                        is SubView.PlaylistDetail -> {
+                            viewModel?.smartPlaylists?.get(subView.playlistName)
+                                ?: viewModel?.playlists?.get(subView.playlistName) ?: emptyList()
+                        }
                     }
                     if (subView is SubView.PlaylistDetail) {
                         when (playlistSortBy) {
@@ -488,14 +507,18 @@ fun LibraryScreen(
                     contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
                 ) { uri ->
                     if (uri != null && subView is SubView.PlaylistDetail) {
-                        val savedPath = savePlaylistCoverLocally(context, subView.playlistName, uri)
-                        if (savedPath != null) {
-                            viewModel?.setPlaylistCover(subView.playlistName, savedPath)
+                        val isSmart = subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
+                        if (!isSmart) {
+                            val savedPath = savePlaylistCoverLocally(context, subView.playlistName, uri)
+                            if (savedPath != null) {
+                                viewModel?.setPlaylistCover(subView.playlistName, savedPath)
+                            }
                         }
                     }
                 }
 
                 Column(modifier = Modifier.fillMaxSize()) {
+                    val isSmart = subView is SubView.PlaylistDetail && (subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones"))
                     // Sub-Header
                     Row(
                         modifier = Modifier
@@ -513,12 +536,13 @@ fun LibraryScreen(
                         
                         if (subView is SubView.PlaylistDetail) {
                             val currentCover = viewModel?.playlistCovers?.get(subView.playlistName)
+                            val isSmart = subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
                             Box(
                                 modifier = Modifier
                                     .size(56.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(if (currentCover != null) SolidColor(Color.Transparent) else getGradientForString(subView.playlistName))
-                                    .clickable {
+                                    .clickable(enabled = !isSmart) {
                                         coverPickerLauncher.launch("image/*")
                                     },
                                 contentAlignment = Alignment.Center
@@ -537,14 +561,13 @@ fun LibraryScreen(
                                     }
                                 } else {
                                     Icon(
-                                        imageVector = Icons.Rounded.Edit,
-                                        contentDescription = "Edit Cover",
+                                        imageVector = if (isSmart) Icons.Rounded.AutoAwesome else Icons.Rounded.Edit,
+                                        contentDescription = if (isSmart) "Smart Playlist" else "Edit Cover",
                                         tint = Color.White.copy(alpha = 0.8f),
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
                         } else if (subView is SubView.AlbumDetail) {
                             val firstSong = subSongs.firstOrNull()
                             val artBytes = rememberAlbumArt(firstSong?.uriString)
@@ -552,7 +575,8 @@ fun LibraryScreen(
                                 modifier = Modifier
                                     .size(56.dp)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(getGradientForString(subView.albumName)),
+                                    .background(getGradientForString(subView.albumName))
+                                    .clickable { albumForCoverEditing = subView.albumName },
                                 contentAlignment = Alignment.Center
                             ) {
                                 coil.compose.SubcomposeAsyncImage(
@@ -577,13 +601,27 @@ fun LibraryScreen(
                                         )
                                     }
                                 )
+                                // Sleek edit overlay icon
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.3f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Edit,
+                                        contentDescription = "Edit Album Cover",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                         }
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = typeLabel.uppercase(),
+                                text = if (isSmart) "LISTA INTELIGENTE" else typeLabel.uppercase(),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
@@ -695,19 +733,21 @@ fun LibraryScreen(
                                 }
 
                                 // 3. Add Songs Button
-                                IconButton(
-                                    onClick = { showAddSongsDialog = true },
-                                    colors = IconButtonDefaults.iconButtonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                    ),
-                                    modifier = Modifier.size(40.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Add,
-                                        contentDescription = "Add Songs",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                if (!isSmart) {
+                                    IconButton(
+                                        onClick = { showAddSongsDialog = true },
+                                        colors = IconButtonDefaults.iconButtonColors(
+                                            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                        ),
+                                        modifier = Modifier.size(40.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Add,
+                                            contentDescription = "Add Songs",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
 
@@ -720,6 +760,23 @@ fun LibraryScreen(
                                 )
                             }
                         }
+
+                        if (subView is SubView.AlbumDetail) {
+                            IconButton(
+                                onClick = { albumForEditing = subView.albumName },
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                ),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Edit,
+                                    contentDescription = "Edit Album",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
                     }
 
                     // Songs listing under the sub-view
@@ -727,7 +784,10 @@ fun LibraryScreen(
                         songs = subSongs,
                         onSongClick = { song ->
                             songForOptionsSheet = song
-                            playlistContextForOptionsSheet = if (subView is SubView.PlaylistDetail) subView.playlistName else null
+                            playlistContextForOptionsSheet = if (subView is SubView.PlaylistDetail) {
+                                val isSmart = subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
+                                if (isSmart) null else subView.playlistName
+                            } else null
                         },
                         onEditTagsClick = { songForTagEditing = it },
                         onSongLongClick = { song ->
@@ -1027,6 +1087,27 @@ fun LibraryScreen(
                 val s = songForOptionsSheet!!
                 songForOptionsSheet = null
                 songToDelete = s
+            }
+        )
+    }
+
+    if (albumForCoverEditing != null) {
+        AlbumCoverEditorDialog(
+            albumName = albumForCoverEditing!!,
+            viewModel = viewModel,
+            onDismiss = { albumForCoverEditing = null }
+        )
+    }
+
+    if (albumForEditing != null) {
+        AlbumEditorDialog(
+            albumName = albumForEditing!!,
+            viewModel = viewModel,
+            onDismiss = { newName ->
+                if (newName != null && currentSubView is SubView.AlbumDetail) {
+                    currentSubView = SubView.AlbumDetail(newName)
+                }
+                albumForEditing = null
             }
         )
     }

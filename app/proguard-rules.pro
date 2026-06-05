@@ -39,6 +39,7 @@
 # Ignore jaudiotagger Java SE Desktop references in Android builds
 -dontwarn javax.swing.**
 -dontwarn java.awt.**
+-dontwarn javax.imageio.**
 
 # OkHttp3 Platform and TLS Rules for secure HTTPS network requests in release mode
 -keepattributes Signature, InnerClasses, AnnotationDefault, EnclosingMethod
