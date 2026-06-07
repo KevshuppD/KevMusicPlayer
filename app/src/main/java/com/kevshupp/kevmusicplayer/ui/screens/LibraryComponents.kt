@@ -1039,6 +1039,22 @@ fun PlaylistGridView(
     var selectedRule by remember { mutableStateOf(com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED) }
     var limitInput by remember { mutableStateOf("50") }
 
+    androidx.compose.runtime.LaunchedEffect(isSmartDialog, selectedRule, limitInput) {
+        if (isSmartDialog) {
+            val ruleNames = mapOf(
+                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED to "Lo más escuchado",
+                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RECENTLY_ADDED to "Recién añadidas",
+                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.PLAYBACK_HISTORY to "Historial de reproducción",
+                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.LONGEST_SONGS to "Canciones más largas",
+                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.SHORTEST_SONGS to "Canciones más cortas",
+                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.NEVER_PLAYED to "Nunca escuchadas",
+                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RANDOM_MIX to "Mezcla aleatoria"
+            )
+            val cleanLimit = limitInput.toIntOrNull() ?: 50
+            newPlaylistName = "${ruleNames[selectedRule]} ($cleanLimit)"
+        }
+    }
+
     if (showCreateDialog) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
@@ -1081,7 +1097,11 @@ fun PlaylistGridView(
                         val ruleNames = mapOf(
                             com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED to "Lo más escuchado",
                             com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RECENTLY_ADDED to "Recién añadidas",
-                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.PLAYBACK_HISTORY to "Historial de reproducción"
+                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.PLAYBACK_HISTORY to "Historial de reproducción",
+                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.LONGEST_SONGS to "Canciones más largas",
+                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.SHORTEST_SONGS to "Canciones más cortas",
+                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.NEVER_PLAYED to "Nunca escuchadas",
+                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RANDOM_MIX to "Mezcla aleatoria"
                         )
 
                         Box {

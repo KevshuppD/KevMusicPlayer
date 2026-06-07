@@ -507,7 +507,7 @@ fun LibraryScreen(
                     contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
                 ) { uri ->
                     if (uri != null && subView is SubView.PlaylistDetail) {
-                        val isSmart = subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
+                        val isSmart = viewModel?.smartPlaylists?.containsKey(subView.playlistName) == true || subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
                         if (!isSmart) {
                             val savedPath = savePlaylistCoverLocally(context, subView.playlistName, uri)
                             if (savedPath != null) {
@@ -518,7 +518,7 @@ fun LibraryScreen(
                 }
 
                 Column(modifier = Modifier.fillMaxSize()) {
-                    val isSmart = subView is SubView.PlaylistDetail && (subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones"))
+                    val isSmart = subView is SubView.PlaylistDetail && (viewModel?.smartPlaylists?.containsKey(subView.playlistName) == true || subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones"))
                     // Sub-Header
                     Row(
                         modifier = Modifier
@@ -536,7 +536,7 @@ fun LibraryScreen(
                         
                         if (subView is SubView.PlaylistDetail) {
                             val currentCover = viewModel?.playlistCovers?.get(subView.playlistName)
-                            val isSmart = subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
+                            val isSmart = viewModel?.smartPlaylists?.containsKey(subView.playlistName) == true || subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
                             Box(
                                 modifier = Modifier
                                     .size(56.dp)
@@ -785,7 +785,7 @@ fun LibraryScreen(
                         onSongClick = { song ->
                             songForOptionsSheet = song
                             playlistContextForOptionsSheet = if (subView is SubView.PlaylistDetail) {
-                                val isSmart = subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
+                                val isSmart = viewModel?.smartPlaylists?.containsKey(subView.playlistName) == true || subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
                                 if (isSmart) null else subView.playlistName
                             } else null
                         },

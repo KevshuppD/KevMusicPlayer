@@ -32,7 +32,7 @@ import android.content.Context
 
 
 enum class SmartPlaylistRule {
-    MOST_PLAYED, RECENTLY_ADDED, PLAYBACK_HISTORY
+    MOST_PLAYED, RECENTLY_ADDED, PLAYBACK_HISTORY, LONGEST_SONGS, SHORTEST_SONGS, NEVER_PLAYED, RANDOM_MIX
 }
 
 data class SmartPlaylistConfig(
@@ -442,10 +442,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             try {
                 audioDao.updateLyrics(id, newLyrics)
+                audioDao.updateTranslatedLyrics(id, null)
                 val index = localAudioFiles.indexOfFirst { it.id == id }
                 if (index != -1) {
                     val file = localAudioFiles[index]
-                    localAudioFiles[index] = file.copy(lyrics = newLyrics)
+                    localAudioFiles[index] = file.copy(lyrics = newLyrics, translatedLyrics = null)
                     
                     // Physically write lyrics inside the song metadata and LRC file next to it!
                     if (!newLyrics.isNullOrBlank()) {
@@ -470,11 +471,37 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         if (isDownloadingAllLyrics.value) return
         viewModelScope.launch(Dispatchers.IO) {
             val pendingListUpdates = mutableMapOf<Long, String>()
+            
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            val NOTIFICATION_ID = 1001
+            val NOTIFICATION_ID_SUMMARY = 1002
+            
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    "lyrics_download_channel",
+                    getLocalized("Descargador de Letras", "Lyrics Downloader"),
+                    android.app.NotificationManager.IMPORTANCE_LOW
+                )
+                notificationManager.createNotificationChannel(channel)
+            }
+            
+            var downloadedSuccessCount = 0
+            var skippedCount = 0
+            var notFoundCount = 0
+            var errorCount = 0
+            
             try {
                 isDownloadingAllLyrics.value = true
                 downloadAllLyricsSuccessCount.value = 0
                 val songsToProcess = localAudioFiles.toList()
-                downloadAllLyricsTotal.value = songsToProcess.size
+                val total = songsToProcess.size
+                downloadAllLyricsTotal.value = total
+                
+                val builder = androidx.core.app.NotificationCompat.Builder(context, "lyrics_download_channel")
+                    .setSmallIcon(android.R.drawable.stat_sys_download)
+                    .setContentTitle(getLocalized("Descargando letras...", "Downloading lyrics..."))
+                    .setOngoing(true)
+                    .setOnlyAlertOnce(true)
                 
                 songsToProcess.forEachIndexed { index, song ->
                     if (!isDownloadingAllLyrics.value) return@launch // Cancel if requested
@@ -482,10 +509,18 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     downloadAllLyricsCurrent.value = index + 1
                     downloadAllLyricsCurrentName.value = song.title
                     
+                    // Update progress notification
+                    val titleText = song.title
+                    builder.setContentText("$titleText (${index + 1}/$total)")
+                        .setProgress(total, index + 1, false)
+                    notificationManager.notify(NOTIFICATION_ID, builder.build())
+                    
                     // Check if song already has synced lyrics in DB
                     val dbHasSynced = !song.lyrics.isNullOrBlank() && LyricsRepository.isLrcSynced(song.lyrics)
                     
-                    if (!dbHasSynced) {
+                    if (dbHasSynced) {
+                        skippedCount++
+                    } else {
                         // Check local/embedded first
                         val localLyrics = readLocalLrcOrEmbedded(context, song)
                         val localIsSynced = !localLyrics.isNullOrBlank() && LyricsRepository.isLrcSynced(localLyrics)
@@ -494,7 +529,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             // Update DB
                             audioDao.updateLyrics(song.id, localLyrics)
                             pendingListUpdates[song.id] = localLyrics!!
-                            downloadAllLyricsSuccessCount.value++
+                            skippedCount++
                         } else {
                             // Fetch online from LrcLib
                             try {
@@ -507,18 +542,20 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                         pendingListUpdates[song.id] = fetched
                                         // Save physical
                                         saveLyricsPhysical(context, song.id, song.title, song.folderPath, fetched)
-                                        downloadAllLyricsSuccessCount.value++
+                                        downloadedSuccessCount++
+                                    } else {
+                                        notFoundCount++
                                     }
+                                } else {
+                                    notFoundCount++
                                 }
                             } catch (e: Exception) {
                                 e.printStackTrace()
+                                errorCount++
                             }
                             // Small delay to be polite to LrcLib API rate limits
                             kotlinx.coroutines.delay(300)
                         }
-                    } else {
-                        // Already has synced lyrics, count as success/already done
-                        downloadAllLyricsSuccessCount.value++
                     }
 
                     // Flush batch updates to UI list in groups of 10
@@ -536,14 +573,30 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                 }
                 
-                // Done! Show a toast on main thread
+                // Done! Show a notification and toast
+                notificationManager.cancel(NOTIFICATION_ID)
+                
+                val totalWithLyricsNow = localAudioFiles.count { !it.lyrics.isNullOrBlank() }
+                downloadAllLyricsSuccessCount.value = downloadedSuccessCount
+                
+                val summaryText = getLocalized(
+                    "Con letra: $totalWithLyricsNow | Nuevas: $downloadedSuccessCount | Existentes: $skippedCount | No encontradas: $notFoundCount | Errores: $errorCount",
+                    "With lyrics: $totalWithLyricsNow | New: $downloadedSuccessCount | Existing: $skippedCount | Not Found: $notFoundCount | Errors: $errorCount"
+                )
+                
+                val summaryBuilder = androidx.core.app.NotificationCompat.Builder(context, "lyrics_download_channel")
+                    .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                    .setContentTitle(getLocalized("Descarga de letras finalizada", "Lyrics download finished"))
+                    .setContentText(summaryText)
+                    .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(summaryText))
+                    .setOngoing(false)
+                    .setAutoCancel(true)
+                notificationManager.notify(NOTIFICATION_ID_SUMMARY, summaryBuilder.build())
+
                 withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(
                         context,
-                        getLocalized(
-                            "Descarga de letras completada: ${downloadAllLyricsSuccessCount.value}/${downloadAllLyricsTotal.value} éxitos",
-                            "Lyrics download completed: ${downloadAllLyricsSuccessCount.value}/${downloadAllLyricsTotal.value} successes"
-                        ),
+                        summaryText,
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
@@ -563,6 +616,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         }
                     }
                 }
+                notificationManager.cancel(NOTIFICATION_ID)
                 withContext(Dispatchers.Main) {
                     isDownloadingAllLyrics.value = false
                     downloadAllLyricsCurrent.value = 0
@@ -627,12 +681,17 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 settingsJson.put("app_theme", settingsPrefs.getString("app_theme", "cyberpunk"))
                 settingsJson.put("refresh_rate", settingsPrefs.getString("refresh_rate", "120"))
                 settingsJson.put("disable_animations", settingsPrefs.getBoolean("disable_animations", false))
+                settingsJson.put("excluded_folders", settingsPrefs.getString("excluded_folders", "[]"))
                 
                 // Export backup folder setting if present
                 val backupDirUri = settingsPrefs.getString("backup_dir_uri", null)
                 if (backupDirUri != null) {
                     settingsJson.put("backup_dir_uri", backupDirUri)
                 }
+                
+                // Export tab configurations
+                val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
+                settingsJson.put("enabled_tabs", playbackPrefs.getString("enabled_tabs", ""))
                 
                 json.put("settings", settingsJson)
 
@@ -651,6 +710,21 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     playlistsJson.put(name, songIdsArray)
                 }
                 json.put("playlists", playlistsJson)
+
+                // Export smart playlists
+                val smartPlaylistsJson = JSONObject()
+                val smartPlaylistNames = playlistsPrefs.getStringSet("smart_playlist_names", emptySet()) ?: emptySet()
+                smartPlaylistNames.forEach { name ->
+                    val configStr = playlistsPrefs.getString("smart_playlist_config_$name", null)
+                    if (configStr != null) {
+                        try {
+                            smartPlaylistsJson.put(name, JSONObject(configStr))
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+                json.put("smart_playlists", smartPlaylistsJson)
 
                 // Export playlist covers
                 val playlistCoversJson = JSONObject()
@@ -716,7 +790,20 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     if (settingsJson.has("refresh_rate")) edit.putString("refresh_rate", settingsJson.getString("refresh_rate"))
                     if (settingsJson.has("disable_animations")) edit.putBoolean("disable_animations", settingsJson.getBoolean("disable_animations"))
                     if (settingsJson.has("backup_dir_uri")) edit.putString("backup_dir_uri", settingsJson.getString("backup_dir_uri"))
+                    if (settingsJson.has("excluded_folders")) edit.putString("excluded_folders", settingsJson.getString("excluded_folders"))
                     edit.apply()
+
+                    // Restore tab configurations
+                    if (settingsJson.has("enabled_tabs")) {
+                        val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
+                        val tabsStr = settingsJson.getString("enabled_tabs")
+                        playbackPrefs.edit().putString("enabled_tabs", tabsStr).apply()
+                        withContext(Dispatchers.Main) {
+                            if (!tabsStr.isNullOrBlank()) {
+                                enabledTabs.value = tabsStr.split(",")
+                            }
+                        }
+                    }
                 }
 
                 // 2. Restore playlists
@@ -736,6 +823,17 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         edit.putString("playlist_$name", songIds.joinToString(","))
                     }
                     edit.putStringSet("playlist_names", names)
+
+                    // Restore smart playlists if any
+                    if (json.has("smart_playlists")) {
+                        val smartJson = json.getJSONObject("smart_playlists")
+                        val smartNames = mutableSetOf<String>()
+                        smartJson.keys().forEach { name ->
+                            smartNames.add(name)
+                            edit.putString("smart_playlist_config_$name", smartJson.getJSONObject(name).toString())
+                        }
+                        edit.putStringSet("smart_playlist_names", smartNames)
+                    }
 
                     // Restore playlist covers if any
                     if (json.has("playlist_covers")) {
@@ -787,6 +885,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     localAudioFiles.clear()
                     localAudioFiles.addAll(updatedFiles)
                     loadPlaylists() // Reload playlists state instantly!
+                    updateSmartPlaylists() // Reload smart playlists state instantly!
                     onSuccess()
                 }
             } catch (e: Exception) {
@@ -867,6 +966,23 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 SmartPlaylistRule.PLAYBACK_HISTORY -> {
                     localAudioFiles.filter { it.lastPlayed > 0L }
                         .sortedByDescending { it.lastPlayed }
+                        .take(config.limit)
+                }
+                SmartPlaylistRule.LONGEST_SONGS -> {
+                    localAudioFiles.sortedByDescending { it.duration }
+                        .take(config.limit)
+                }
+                SmartPlaylistRule.SHORTEST_SONGS -> {
+                    localAudioFiles.sortedBy { it.duration }
+                        .take(config.limit)
+                }
+                SmartPlaylistRule.NEVER_PLAYED -> {
+                    localAudioFiles.filter { it.playCount == 0 }
+                        .sortedBy { it.title.lowercase() }
+                        .take(config.limit)
+                }
+                SmartPlaylistRule.RANDOM_MIX -> {
+                    localAudioFiles.shuffled()
                         .take(config.limit)
                 }
             }
@@ -1215,39 +1331,31 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 // 1. Write metadata tags directly to physical file using jaudiotagger
-                val physicalPath = getPhysicalPath(context, songId)
+                val songEntity = audioDao.getAllAudioFiles().find { it.id == songId }
                 var songUriString: String? = null
-                if (!physicalPath.isNullOrBlank()) {
-                    val file = File(physicalPath)
-                    if (file.exists()) {
-                        val audioFile = AudioFileIO.read(file)
-                        val tag = audioFile.tag ?: audioFile.createDefaultTag()
-                        tag.setField(FieldKey.TITLE, title)
-                        tag.setField(FieldKey.ARTIST, artist)
-                        tag.setField(FieldKey.ALBUM, album)
-                        tag.setField(FieldKey.GENRE, genre)
-                        if (coverBytes != null) {
-                            try {
-                                tag.deleteArtworkField()
-                                val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
-                                artwork.binaryData = coverBytes
-                                artwork.mimeType = "image/jpeg"
-                                artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
-                                tag.setField(artwork)
-                            } catch (e: Throwable) {
-                                e.printStackTrace()
-                            }
+                
+                val writeSuccess = writeMetadataWithTempFile(context, songId, songEntity?.uriString) { audioFile ->
+                    val tag = audioFile.getTagOrCreateAndSetDefault()
+                    tag.setField(FieldKey.TITLE, title)
+                    tag.setField(FieldKey.ARTIST, artist)
+                    tag.setField(FieldKey.ALBUM, album)
+                    tag.setField(FieldKey.GENRE, genre)
+                    if (coverBytes != null) {
+                        try {
+                            tag.deleteArtworkField()
+                            val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
+                            artwork.binaryData = coverBytes
+                            artwork.mimeType = getMimeTypeFromBytes(coverBytes)
+                            artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+                            tag.setField(artwork)
+                        } catch (e: Throwable) {
+                            e.printStackTrace()
                         }
-                        audioFile.tag = tag
-                        AudioFileIO.write(audioFile)
-
-                        // Sync updated physical file to system MediaStore
-                        android.media.MediaScannerConnection.scanFile(
-                            context,
-                            arrayOf(physicalPath),
-                            null
-                        ) { _, _ -> }
                     }
+                    audioFile.tag = tag
+                }
+                if (!writeSuccess) {
+                    throw Exception("Failed to write physical tags")
                 }
 
                 // 2. Update metadata in Room Database
@@ -1336,32 +1444,19 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 for (song in songsInAlbum) {
-                    val physicalPath = getPhysicalPath(context, song.id, song.uriString)
-                    if (!physicalPath.isNullOrBlank()) {
-                        val file = File(physicalPath)
-                        if (file.exists()) {
-                            try {
-                                val audioFile = AudioFileIO.read(file)
-                                val tag = audioFile.tag ?: audioFile.createDefaultTag()
-                                tag.deleteArtworkField()
-                                val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
-                                artwork.binaryData = coverBytes
-                                artwork.mimeType = "image/jpeg"
-                                artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
-                                tag.setField(artwork)
-                                audioFile.tag = tag
-                                AudioFileIO.write(audioFile)
-
-                                // Sync updated physical file to system MediaStore
-                                android.media.MediaScannerConnection.scanFile(
-                                    context,
-                                    arrayOf(physicalPath),
-                                    null
-                                ) { _, _ -> }
-                            } catch (e: Throwable) {
-                                e.printStackTrace()
-                            }
+                    writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
+                        val tag = audioFile.getTagOrCreateAndSetDefault()
+                        try {
+                            tag.deleteArtworkField()
+                            val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
+                            artwork.binaryData = coverBytes
+                            artwork.mimeType = getMimeTypeFromBytes(coverBytes)
+                            artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+                            tag.setField(artwork)
+                        } catch (e: Throwable) {
+                            e.printStackTrace()
                         }
+                        audioFile.tag = tag
                     }
 
                     // Update in-memory artwork cache
@@ -1435,38 +1530,21 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
                 // 1. Write tags physically for each song
                 for (song in songsInAlbum) {
-                    val physicalPath = getPhysicalPath(context, song.id, song.uriString)
-                    if (!physicalPath.isNullOrBlank()) {
-                        val file = File(physicalPath)
-                        if (file.exists()) {
-                            try {
-                                val audioFile = AudioFileIO.read(file)
-                                val tag = audioFile.tag ?: audioFile.createDefaultTag()
-                                tag.setField(FieldKey.ALBUM, newAlbumName)
-                                if (newArtist.isNotBlank()) {
-                                    tag.setField(FieldKey.ARTIST, newArtist)
-                                }
-                                if (coverBytes != null) {
-                                    tag.deleteArtworkField()
-                                    val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
-                                    artwork.binaryData = coverBytes
-                                    artwork.mimeType = "image/jpeg"
-                                    artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
-                                    tag.setField(artwork)
-                                }
-                                audioFile.tag = tag
-                                AudioFileIO.write(audioFile)
-
-                                // Sync updated physical file to system MediaStore
-                                android.media.MediaScannerConnection.scanFile(
-                                    context,
-                                    arrayOf(physicalPath),
-                                    null
-                                ) { _, _ -> }
-                            } catch (e: Throwable) {
-                                e.printStackTrace()
-                            }
+                    writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
+                        val tag = audioFile.getTagOrCreateAndSetDefault()
+                        tag.setField(FieldKey.ALBUM, newAlbumName)
+                        if (newArtist.isNotBlank()) {
+                            tag.setField(FieldKey.ARTIST, newArtist)
                         }
+                        if (coverBytes != null) {
+                            tag.deleteArtworkField()
+                            val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
+                            artwork.binaryData = coverBytes
+                            artwork.mimeType = getMimeTypeFromBytes(coverBytes)
+                            artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+                            tag.setField(artwork)
+                        }
+                        audioFile.tag = tag
                     }
 
                     // Update in-memory artwork cache if new cover provided
@@ -1758,17 +1836,10 @@ fun saveLyricsPhysical(context: android.content.Context, songId: Long, songTitle
     }
 
     // 2. Save directly inside the song metadata using jaudiotagger
-    try {
-        val physicalPath = getPhysicalPath(context, songId)
-        if (!physicalPath.isNullOrBlank()) {
-            val audioFile = AudioFileIO.read(File(physicalPath))
-            val tag = audioFile.tag ?: audioFile.createDefaultTag()
-            tag.setField(FieldKey.LYRICS, lyrics)
-            audioFile.tag = tag
-            AudioFileIO.write(audioFile)
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
+    writeMetadataWithTempFile(context, songId, null) { audioFile ->
+        val tag = audioFile.getTagOrCreateAndSetDefault()
+        tag.setField(FieldKey.LYRICS, lyrics)
+        audioFile.tag = tag
     }
 }
 
@@ -1809,3 +1880,99 @@ fun readLocalLrcOrEmbedded(context: android.content.Context, song: AudioFile): S
 
     return null
 }
+
+fun getMimeTypeFromBytes(bytes: ByteArray?): String {
+    if (bytes == null || bytes.size < 4) return "image/jpeg"
+    return if (bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()) {
+        "image/png"
+    } else {
+        "image/jpeg"
+    }
+}
+
+fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, uriString: String?, block: (org.jaudiotagger.audio.AudioFile) -> Unit): Boolean {
+    val physicalPath = getPhysicalPath(context, songId, uriString) ?: return false
+    val uri = if (!uriString.isNullOrBlank()) {
+        Uri.parse(uriString)
+    } else {
+        android.content.ContentUris.withAppendedId(
+            android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            songId
+        )
+    }
+    var tempFile: File? = null
+    return try {
+        // 1. Copy source file to temp file using the same extension so jaudiotagger can detect format
+        val extension = File(physicalPath).extension
+        val suffix = if (extension.isNotEmpty()) ".$extension" else ""
+        tempFile = File(context.cacheDir, "temp_jaudiotagger_${System.currentTimeMillis()}_${songId}$suffix")
+        
+        android.util.Log.d("MetadataWrite", "Copying original file to temp: $tempFile")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            tempFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        } ?: run {
+            android.util.Log.e("MetadataWrite", "Failed to open input stream for URI: $uri")
+            return false
+        }
+        
+        // 2. Open and modify tag in temp file (running in Android mode)
+        try {
+            org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
+        } catch (t: Throwable) {
+            android.util.Log.e("MetadataWrite", "Failed to set jaudiotagger android mode", t)
+        }
+        val audioFile = AudioFileIO.read(tempFile)
+        block(audioFile)
+        AudioFileIO.write(audioFile)
+        android.util.Log.d("MetadataWrite", "Successfully wrote tags to temp file.")
+        
+        // 3. Write temp file back to original source
+        var writtenDirectly = false
+        try {
+            val destFile = File(physicalPath)
+            tempFile.inputStream().use { input ->
+                destFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            writtenDirectly = true
+            android.util.Log.d("MetadataWrite", "Successfully copied temp back directly to physical path: $physicalPath")
+        } catch (e: Exception) {
+            android.util.Log.w("MetadataWrite", "Failed direct physical write, trying fallback", e)
+        }
+        
+        if (!writtenDirectly) {
+            // Fallback to ContentResolver write-truncate
+            context.contentResolver.openOutputStream(uri, "rwt")?.use { output ->
+                tempFile.inputStream().use { input ->
+                    input.copyTo(output)
+                }
+            } ?: run {
+                android.util.Log.e("MetadataWrite", "Fallback openOutputStream returned null")
+                return false
+            }
+            android.util.Log.d("MetadataWrite", "Successfully copied temp back via ContentResolver fallback")
+        }
+        
+        // 4. Force system to scan media
+        android.media.MediaScannerConnection.scanFile(
+            context,
+            arrayOf(physicalPath),
+            null
+        ) { _, _ -> }
+        
+        true
+    } catch (e: Exception) {
+        android.util.Log.e("MetadataWrite", "Exception in writeMetadataWithTempFile", e)
+        false
+    } finally {
+        try {
+            tempFile?.delete()
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+}
+
