@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,6 +64,34 @@ sealed interface SubView {
     data class PlaylistDetail(val playlistName: String) : SubView
 }
 
+val SubViewSaver = Saver<SubView?, Any>(
+    save = { subView ->
+        when (subView) {
+            is SubView.AlbumDetail -> listOf("Album", subView.albumName)
+            is SubView.ArtistDetail -> listOf("Artist", subView.artistName)
+            is SubView.GenreDetail -> listOf("Genre", subView.genreName)
+            is SubView.FolderDetail -> listOf("Folder", subView.folderName)
+            is SubView.PlaylistDetail -> listOf("Playlist", subView.playlistName)
+            null -> null
+        }
+    },
+    restore = { value ->
+        val list = value as? List<*> ?: return@Saver null
+        val type = list.getOrNull(0) as? String
+        val name = list.getOrNull(1) as? String
+        if (type != null && name != null) {
+            when (type) {
+                "Album" -> SubView.AlbumDetail(name)
+                "Artist" -> SubView.ArtistDetail(name)
+                "Genre" -> SubView.GenreDetail(name)
+                "Folder" -> SubView.FolderDetail(name)
+                "Playlist" -> SubView.PlaylistDetail(name)
+                else -> null
+            }
+        } else null
+    }
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
@@ -88,7 +117,7 @@ fun LibraryScreen(
         if (systemLang == "es") es else en
     }
     var selectedTab by rememberSaveable { mutableStateOf("Songs") }
-    var currentSubView by remember { mutableStateOf<SubView?>(null) }
+    var currentSubView by rememberSaveable(stateSaver = SubViewSaver) { mutableStateOf<SubView?>(null) }
 
     var isMultiSelectMode by remember { mutableStateOf(false) }
     val selectedSongs = remember { mutableStateListOf<AudioFile>() }
