@@ -35,10 +35,157 @@ enum class SmartPlaylistRule {
     MOST_PLAYED, RECENTLY_ADDED, PLAYBACK_HISTORY, LONGEST_SONGS, SHORTEST_SONGS, NEVER_PLAYED, RANDOM_MIX
 }
 
+enum class LogicalOperator {
+    AND, OR
+}
+
+enum class RuleField {
+    TITLE, ARTIST, ALBUM, GENRE, YEAR, DURATION_SECONDS, PLAY_COUNT, LAST_PLAYED_DAYS, DATE_ADDED_DAYS
+}
+
+enum class RuleOperator {
+    EQUALS, CONTAINS, GREATER_THAN, LESS_THAN, STARTS_WITH, ENDS_WITH
+}
+
+sealed class SmartRuleNode {
+    abstract fun evaluate(context: android.content.Context, song: AudioFile): Boolean
+    abstract fun toJson(): JSONObject
+
+    companion object {
+        fun fromJson(json: JSONObject): SmartRuleNode {
+            return if (json.has("operator")) {
+                val op = LogicalOperator.valueOf(json.getString("operator"))
+                val childrenJson = json.getJSONArray("children")
+                val children = mutableListOf<SmartRuleNode>()
+                for (i in 0 until childrenJson.length()) {
+                    children.add(fromJson(childrenJson.getJSONObject(i)))
+                }
+                GroupNode(op, children)
+            } else {
+                val field = RuleField.valueOf(json.getString("field"))
+                val op = RuleOperator.valueOf(json.getString("operator_type"))
+                val value = json.getString("value")
+                ConditionNode(field, op, value)
+            }
+        }
+    }
+}
+
+data class ConditionNode(
+    val field: RuleField,
+    val operator: RuleOperator,
+    val value: String
+) : SmartRuleNode() {
+    companion object {
+        val songYearCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
+    }
+
+    override fun evaluate(context: android.content.Context, song: AudioFile): Boolean {
+        return try {
+            val fieldValue: String = when (field) {
+                RuleField.TITLE -> song.title
+                RuleField.ARTIST -> song.artist
+                RuleField.ALBUM -> song.album
+                RuleField.GENRE -> song.genre ?: ""
+                RuleField.YEAR -> {
+                    val cached = songYearCache[song.id]
+                    if (cached != null) {
+                        cached
+                    } else {
+                        val yearVal = try {
+                            val path = getPhysicalPath(context, song.id, song.uriString)
+                            if (!path.isNullOrBlank()) {
+                                val f = File(path)
+                                if (f.exists() && f.isFile) {
+                                    val audioFile = AudioFileIO.read(f)
+                                    val tag = audioFile.tag
+                                    val yearStr = tag?.getFirst(FieldKey.YEAR) ?: ""
+                                    val yearMatch = Regex("\\d{4}").find(yearStr)
+                                    yearMatch?.value ?: yearStr
+                                } else ""
+                            } else ""
+                        } catch (e: Exception) {
+                            ""
+                        }
+                        songYearCache[song.id] = yearVal
+                        yearVal
+                    }
+                }
+                RuleField.DURATION_SECONDS -> (song.duration / 1000).toString()
+                RuleField.PLAY_COUNT -> song.playCount.toString()
+                RuleField.LAST_PLAYED_DAYS -> {
+                    if (song.lastPlayed <= 0L) "-1"
+                    else {
+                        val diffMs = System.currentTimeMillis() - song.lastPlayed
+                        val diffDays = diffMs / (1000L * 60 * 60 * 24)
+                        diffDays.toString()
+                    }
+                }
+                RuleField.DATE_ADDED_DAYS -> {
+                    val diffMs = System.currentTimeMillis() - song.dateAdded
+                    val diffDays = diffMs / (1000L * 60 * 60 * 24)
+                    diffDays.toString()
+                }
+            }
+
+            when (operator) {
+                RuleOperator.EQUALS -> fieldValue.equals(value, ignoreCase = true)
+                RuleOperator.CONTAINS -> fieldValue.contains(value, ignoreCase = true)
+                RuleOperator.STARTS_WITH -> fieldValue.startsWith(value, ignoreCase = true)
+                RuleOperator.ENDS_WITH -> fieldValue.endsWith(value, ignoreCase = true)
+                RuleOperator.GREATER_THAN -> {
+                    val fieldNum = fieldValue.toDoubleOrNull() ?: 0.0
+                    val valNum = value.toDoubleOrNull() ?: 0.0
+                    fieldNum > valNum
+                }
+                RuleOperator.LESS_THAN -> {
+                    val fieldNum = fieldValue.toDoubleOrNull() ?: 0.0
+                    val valNum = value.toDoubleOrNull() ?: 0.0
+                    fieldNum < valNum
+                }
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    override fun toJson(): JSONObject {
+        val json = JSONObject()
+        json.put("field", field.name)
+        json.put("operator_type", operator.name)
+        json.put("value", value)
+        return json
+    }
+}
+
+data class GroupNode(
+    val operator: LogicalOperator,
+    val children: List<SmartRuleNode>
+) : SmartRuleNode() {
+    override fun evaluate(context: android.content.Context, song: AudioFile): Boolean {
+        if (children.isEmpty()) return true
+        return when (operator) {
+            LogicalOperator.AND -> children.all { it.evaluate(context, song) }
+            LogicalOperator.OR -> children.any { it.evaluate(context, song) }
+        }
+    }
+
+    override fun toJson(): JSONObject {
+        val json = JSONObject()
+        json.put("operator", operator.name)
+        val arr = JSONArray()
+        children.forEach { arr.put(it.toJson()) }
+        json.put("children", arr)
+        return json
+    }
+}
+
 data class SmartPlaylistConfig(
     val name: String,
     val rule: SmartPlaylistRule,
-    val limit: Int = 50
+    val limit: Int = 50,
+    val isAdvanced: Boolean = false,
+    val advancedRule: SmartRuleNode? = null
 )
 
 class MediaBrowserViewModel(application: Application) : AndroidViewModel(application) {
@@ -297,6 +444,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 
                 // 1. Check local/embedded sources first (LRC file next to it or embedded tag)
                 val localLyrics = readLocalLrcOrEmbedded(context, song)
+                val localTranslation = readLocalTranslatedLrcOrEmbedded(context, song)
+                if (!localTranslation.isNullOrBlank() && song.translatedLyrics != localTranslation) {
+                    updateSongTranslatedLyrics(id, localTranslation)
+                }
+
                 if (!localLyrics.isNullOrBlank()) {
                     val localIsSynced = LyricsRepository.isLrcSynced(localLyrics)
                     val dbIsSynced = LyricsRepository.isLrcSynced(song.lyrics)
@@ -655,6 +807,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 if (index != -1) {
                     val file = localAudioFiles[index]
                     localAudioFiles[index] = file.copy(translatedLyrics = newTranslatedLyrics)
+                    
+                    if (!newTranslatedLyrics.isNullOrBlank()) {
+                        withContext(Dispatchers.IO) {
+                            saveTranslatedLyricsPhysical(getApplication(), id, file.title, file.folderPath, newTranslatedLyrics)
+                        }
+                    }
                 }
                 loadPlaylists() // Sync playlists cache
             } catch (e: Exception) {
@@ -953,37 +1111,42 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         smartPlaylists.putAll(keepRecommendations)
 
         smartPlaylistConfigs.forEach { config ->
-            val list = when (config.rule) {
-                SmartPlaylistRule.MOST_PLAYED -> {
-                    localAudioFiles.filter { it.playCount > 0 }
-                        .sortedByDescending { it.playCount }
-                        .take(config.limit)
-                }
-                SmartPlaylistRule.RECENTLY_ADDED -> {
-                    localAudioFiles.sortedByDescending { it.dateAdded }
-                        .take(config.limit)
-                }
-                SmartPlaylistRule.PLAYBACK_HISTORY -> {
-                    localAudioFiles.filter { it.lastPlayed > 0L }
-                        .sortedByDescending { it.lastPlayed }
-                        .take(config.limit)
-                }
-                SmartPlaylistRule.LONGEST_SONGS -> {
-                    localAudioFiles.sortedByDescending { it.duration }
-                        .take(config.limit)
-                }
-                SmartPlaylistRule.SHORTEST_SONGS -> {
-                    localAudioFiles.sortedBy { it.duration }
-                        .take(config.limit)
-                }
-                SmartPlaylistRule.NEVER_PLAYED -> {
-                    localAudioFiles.filter { it.playCount == 0 }
-                        .sortedBy { it.title.lowercase() }
-                        .take(config.limit)
-                }
-                SmartPlaylistRule.RANDOM_MIX -> {
-                    localAudioFiles.shuffled()
-                        .take(config.limit)
+            val list = if (config.isAdvanced && config.advancedRule != null) {
+                localAudioFiles.filter { config.advancedRule.evaluate(getApplication(), it) }
+                    .take(config.limit)
+            } else {
+                when (config.rule) {
+                    SmartPlaylistRule.MOST_PLAYED -> {
+                        localAudioFiles.filter { it.playCount > 0 }
+                            .sortedByDescending { it.playCount }
+                            .take(config.limit)
+                    }
+                    SmartPlaylistRule.RECENTLY_ADDED -> {
+                        localAudioFiles.sortedByDescending { it.dateAdded }
+                            .take(config.limit)
+                    }
+                    SmartPlaylistRule.PLAYBACK_HISTORY -> {
+                        localAudioFiles.filter { it.lastPlayed > 0L }
+                            .sortedByDescending { it.lastPlayed }
+                            .take(config.limit)
+                    }
+                    SmartPlaylistRule.LONGEST_SONGS -> {
+                        localAudioFiles.sortedByDescending { it.duration }
+                            .take(config.limit)
+                    }
+                    SmartPlaylistRule.SHORTEST_SONGS -> {
+                        localAudioFiles.sortedBy { it.duration }
+                            .take(config.limit)
+                    }
+                    SmartPlaylistRule.NEVER_PLAYED -> {
+                        localAudioFiles.filter { it.playCount == 0 }
+                            .sortedBy { it.title.lowercase() }
+                            .take(config.limit)
+                    }
+                    SmartPlaylistRule.RANDOM_MIX -> {
+                        localAudioFiles.shuffled()
+                            .take(config.limit)
+                    }
                 }
             }
             smartPlaylists[config.name] = list
@@ -1042,7 +1205,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     val json = JSONObject(jsonString)
                     val rule = SmartPlaylistRule.valueOf(json.getString("rule"))
                     val limit = json.getInt("limit")
-                    smartPlaylistConfigs.add(SmartPlaylistConfig(name, rule, limit))
+                    val isAdvanced = json.optBoolean("isAdvanced", false)
+                    val advancedRule = if (isAdvanced && json.has("advancedRule")) {
+                        SmartRuleNode.fromJson(json.getJSONObject("advancedRule"))
+                    } else null
+                    smartPlaylistConfigs.add(SmartPlaylistConfig(name, rule, limit, isAdvanced, advancedRule))
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
@@ -1062,7 +1229,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         playlists[name] = emptyList()
     }
 
-    fun createSmartPlaylist(name: String, rule: SmartPlaylistRule, limit: Int) {
+    fun createSmartPlaylist(name: String, rule: SmartPlaylistRule, limit: Int, isAdvanced: Boolean = false, advancedRule: SmartRuleNode? = null) {
         if (name.isBlank()) return
         val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
         val names = (prefs.getStringSet("smart_playlist_names", emptySet()) ?: emptySet()).toMutableSet()
@@ -1072,13 +1239,17 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         json.put("name", name)
         json.put("rule", rule.name)
         json.put("limit", limit)
+        json.put("isAdvanced", isAdvanced)
+        if (isAdvanced && advancedRule != null) {
+            json.put("advancedRule", advancedRule.toJson())
+        }
         
         prefs.edit()
             .putStringSet("smart_playlist_names", names)
             .putString("smart_playlist_config_$name", json.toString())
             .apply()
             
-        smartPlaylistConfigs.add(SmartPlaylistConfig(name, rule, limit))
+        smartPlaylistConfigs.add(SmartPlaylistConfig(name, rule, limit, isAdvanced, advancedRule))
         updateSmartPlaylists()
     }
 
@@ -1343,10 +1514,27 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     if (coverBytes != null) {
                         try {
                             tag.deleteArtworkField()
-                            val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
-                            artwork.binaryData = coverBytes
-                            artwork.mimeType = getMimeTypeFromBytes(coverBytes)
-                            artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+                            val artwork = AndroidArtwork().apply {
+                                setBinaryData(coverBytes)
+                                setMimeType(getMimeTypeFromBytes(coverBytes))
+                                setPictureType(org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID)
+                                try {
+                                    val options = android.graphics.BitmapFactory.Options().apply {
+                                        inJustDecodeBounds = true
+                                    }
+                                    android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, options)
+                                    if (options.outWidth > 0 && options.outHeight > 0) {
+                                        setWidth(options.outWidth)
+                                        setHeight(options.outHeight)
+                                    } else {
+                                        setWidth(800)
+                                        setHeight(800)
+                                    }
+                                } catch (e: Exception) {
+                                    setWidth(800)
+                                    setHeight(800)
+                                }
+                            }
                             tag.setField(artwork)
                         } catch (e: Throwable) {
                             e.printStackTrace()
@@ -1448,10 +1636,27 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         val tag = audioFile.getTagOrCreateAndSetDefault()
                         try {
                             tag.deleteArtworkField()
-                            val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
-                            artwork.binaryData = coverBytes
-                            artwork.mimeType = getMimeTypeFromBytes(coverBytes)
-                            artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+                            val artwork = AndroidArtwork().apply {
+                                setBinaryData(coverBytes)
+                                setMimeType(getMimeTypeFromBytes(coverBytes))
+                                setPictureType(org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID)
+                                try {
+                                    val options = android.graphics.BitmapFactory.Options().apply {
+                                        inJustDecodeBounds = true
+                                    }
+                                    android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, options)
+                                    if (options.outWidth > 0 && options.outHeight > 0) {
+                                        setWidth(options.outWidth)
+                                        setHeight(options.outHeight)
+                                    } else {
+                                        setWidth(800)
+                                        setHeight(800)
+                                    }
+                                } catch (e: Exception) {
+                                    setWidth(800)
+                                    setHeight(800)
+                                }
+                            }
                             tag.setField(artwork)
                         } catch (e: Throwable) {
                             e.printStackTrace()
@@ -1537,12 +1742,33 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             tag.setField(FieldKey.ARTIST, newArtist)
                         }
                         if (coverBytes != null) {
-                            tag.deleteArtworkField()
-                            val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
-                            artwork.binaryData = coverBytes
-                            artwork.mimeType = getMimeTypeFromBytes(coverBytes)
-                            artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
-                            tag.setField(artwork)
+                            try {
+                                tag.deleteArtworkField()
+                                val artwork = AndroidArtwork().apply {
+                                    setBinaryData(coverBytes)
+                                    setMimeType(getMimeTypeFromBytes(coverBytes))
+                                    setPictureType(org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID)
+                                    try {
+                                        val options = android.graphics.BitmapFactory.Options().apply {
+                                            inJustDecodeBounds = true
+                                        }
+                                        android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, options)
+                                        if (options.outWidth > 0 && options.outHeight > 0) {
+                                            setWidth(options.outWidth)
+                                            setHeight(options.outHeight)
+                                        } else {
+                                            setWidth(800)
+                                            setHeight(800)
+                                        }
+                                    } catch (e: Exception) {
+                                        setWidth(800)
+                                        setHeight(800)
+                                    }
+                                }
+                                tag.setField(artwork)
+                            } catch (e: Throwable) {
+                                e.printStackTrace()
+                            }
                         }
                         audioFile.tag = tag
                     }
@@ -1843,6 +2069,25 @@ fun saveLyricsPhysical(context: android.content.Context, songId: Long, songTitle
     }
 }
 
+fun saveTranslatedLyricsPhysical(context: android.content.Context, songId: Long, songTitle: String, folderPath: String, translatedLyrics: String?) {
+    if (translatedLyrics.isNullOrBlank()) return
+    try {
+        val cleanTitle = songTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val locale = java.util.Locale.getDefault().language
+        val lrcFile = File(folderPath, "$cleanTitle.$locale.lrc")
+        lrcFile.writeText(translatedLyrics)
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    writeMetadataWithTempFile(context, songId, null) { audioFile ->
+        val tag = audioFile.getTagOrCreateAndSetDefault()
+        val locale = java.util.Locale.getDefault().language
+        tag.setField(FieldKey.CUSTOM1, "TRANSLATED_LYRICS_$locale:$translatedLyrics")
+        audioFile.tag = tag
+    }
+}
+
 fun readLocalLrcOrEmbedded(context: android.content.Context, song: AudioFile): String? {
     // 1. Try reading .lrc file next to the song
     try {
@@ -1878,6 +2123,42 @@ fun readLocalLrcOrEmbedded(context: android.content.Context, song: AudioFile): S
         e.printStackTrace()
     }
 
+    return null
+}
+
+fun readLocalTranslatedLrcOrEmbedded(context: android.content.Context, song: AudioFile): String? {
+    val locale = java.util.Locale.getDefault().language
+    try {
+        val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val lrcFile = File(song.folderPath, "$cleanTitle.$locale.lrc")
+        if (lrcFile.exists() && lrcFile.isFile) {
+            val content = lrcFile.readText()
+            if (content.isNotBlank()) {
+                return content
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    try {
+        val physicalPath = getPhysicalPath(context, song.id, song.uriString)
+        if (!physicalPath.isNullOrBlank()) {
+            val f = File(physicalPath)
+            if (f.exists() && f.isFile) {
+                val audioFile = AudioFileIO.read(f)
+                val tag = audioFile.tag
+                if (tag != null) {
+                    val embedded = tag.getFirst(FieldKey.CUSTOM1)
+                    if (!embedded.isNullOrBlank() && embedded.startsWith("TRANSLATED_LYRICS_$locale:")) {
+                        return embedded.substringAfter("TRANSLATED_LYRICS_$locale:")
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
     return null
 }
 
@@ -1973,6 +2254,53 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
         } catch (e: Exception) {
             // ignore
         }
+    }
+}
+
+class AndroidArtwork : org.jaudiotagger.tag.images.Artwork {
+    private var binaryData: ByteArray = ByteArray(0)
+    private var mimeType: String = ""
+    private var description: String = ""
+    private var height: Int = 0
+    private var width: Int = 0
+    private var pictureType: Int = 0
+    private var imageUrl: String = ""
+    private var linked: Boolean = false
+
+    override fun getBinaryData(): ByteArray = binaryData
+    override fun setBinaryData(p0: ByteArray) { binaryData = p0 }
+    override fun getMimeType(): String = mimeType
+    override fun setMimeType(p0: String) { mimeType = p0 }
+    override fun getDescription(): String = description
+    override fun setDescription(p0: String) { description = p0 }
+    override fun getHeight(): Int = height
+    override fun setHeight(p0: Int) { height = p0 }
+    override fun getWidth(): Int = width
+    override fun setWidth(p0: Int) { width = p0 }
+    override fun getPictureType(): Int = pictureType
+    override fun setPictureType(p0: Int) { pictureType = p0 }
+    override fun getImageUrl(): String = imageUrl
+    override fun setImageUrl(p0: String) { imageUrl = p0 }
+    override fun isLinked(): Boolean = linked
+    override fun setLinked(p0: Boolean) { linked = p0 }
+    
+    override fun setImageFromData(): Boolean {
+        return true
+    }
+    
+    override fun getImage(): Any? = null
+    
+    override fun setFromFile(p0: java.io.File) {
+        binaryData = p0.readBytes()
+    }
+    
+    override fun setFromMetadataBlockDataPicture(p0: org.jaudiotagger.audio.flac.metadatablock.MetadataBlockDataPicture) {
+        binaryData = p0.imageData
+        mimeType = p0.mimeType
+        description = p0.description
+        height = p0.height
+        width = p0.width
+        pictureType = p0.pictureType
     }
 }
 

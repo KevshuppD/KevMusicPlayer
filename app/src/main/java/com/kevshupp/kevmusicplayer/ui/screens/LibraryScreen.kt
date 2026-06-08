@@ -74,9 +74,14 @@ fun LibraryScreen(
     enabledTabs: List<String>,
     sortBy: String,
     viewModel: MediaBrowserViewModel? = null,
+    isActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    val songsListState = rememberLazyListState()
+    val subViewSongsListState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+
     val context = LocalContext.current
     val systemLang = remember { context.resources.configuration.locales[0].language }
     val getLocalized = { es: String, en: String ->
@@ -89,7 +94,7 @@ fun LibraryScreen(
     val selectedSongs = remember { mutableStateListOf<AudioFile>() }
 
     // Intercept system back gestures to exit active subview details or multi-select first
-    BackHandler(enabled = isMultiSelectMode || currentSubView != null) {
+    BackHandler(enabled = isActive && (isMultiSelectMode || currentSubView != null)) {
         if (isMultiSelectMode) {
             isMultiSelectMode = false
             selectedSongs.clear()
@@ -148,6 +153,31 @@ fun LibraryScreen(
             "Artist" -> filtered.sortedBy { it.artist.lowercase() }
             "Duration" -> filtered.sortedByDescending { it.duration }
             else -> filtered
+        }
+    }
+
+    // Active song target index calculations for scrolling
+    val currentPlayingMediaId = player?.currentMediaItem?.mediaId?.toLongOrNull()
+    val scrollTargetIndex = remember(currentPlayingMediaId, selectedTab, currentSubView, filteredFiles, audioFiles, viewModel?.playlists, viewModel?.smartPlaylists) {
+        if (currentPlayingMediaId == null) return@remember -1
+
+        if (currentSubView == null) {
+            if (selectedTab == "Songs") {
+                filteredFiles.indexOfFirst { it.id == currentPlayingMediaId }
+            } else -1
+        } else {
+            val subSongs = when (val sv = currentSubView) {
+                is SubView.AlbumDetail -> filteredFiles.filter { it.album == sv.albumName }
+                is SubView.ArtistDetail -> filteredFiles.filter { it.artist == sv.artistName }
+                is SubView.GenreDetail -> filteredFiles.filter { it.genre == sv.genreName }
+                is SubView.FolderDetail -> filteredFiles.filter { it.folderName == sv.folderName }
+                is SubView.PlaylistDetail -> {
+                    viewModel?.smartPlaylists?.get(sv.playlistName)
+                        ?: viewModel?.playlists?.get(sv.playlistName) ?: emptyList()
+                }
+                else -> emptyList()
+            }
+            subSongs.indexOfFirst { it.id == currentPlayingMediaId }
         }
     }
 
@@ -269,6 +299,32 @@ fun LibraryScreen(
                             .height(52.dp)
                     )
 
+                    val showLocateButtonMain = activeTab == "Songs" && scrollTargetIndex != -1
+                    AnimatedVisibility(
+                        visible = showLocateButtonMain,
+                        enter = expandHorizontally() + fadeIn(),
+                        exit = shrinkHorizontally() + fadeOut()
+                    ) {
+                        IconButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    songsListState.animateScrollToItem(scrollTargetIndex)
+                                }
+                            },
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            ),
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MusicNote,
+                                contentDescription = "Ir a canción actual",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
                     IconButton(
                         onClick = {
                             if (filteredFiles.isNotEmpty()) {
@@ -370,6 +426,7 @@ fun LibraryScreen(
                                 "Songs" -> {
                                     SongListView(
                                         songs = filteredFiles,
+                                        listState = songsListState,
                                         onSongClick = { song ->
                                             songForOptionsSheet = song
                                             playlistContextForOptionsSheet = null
@@ -453,8 +510,8 @@ fun LibraryScreen(
                                         playlists = allPlaylists,
                                         playlistCovers = viewModel?.playlistCovers ?: emptyMap(),
                                         onCreatePlaylist = { viewModel?.createPlaylist(it) },
-                                        onCreateSmartPlaylist = { name, rule, limit ->
-                                            viewModel?.createSmartPlaylist(name, rule, limit)
+                                        onCreateSmartPlaylist = { name, rule, limit, isAdvanced, advRule ->
+                                            viewModel?.createSmartPlaylist(name, rule, limit, isAdvanced, advRule)
                                         },
                                         onPlaylistClick = { currentSubView = SubView.PlaylistDetail(it) },
                                         onDeletePlaylist = { viewModel?.deletePlaylist(it) }
@@ -635,6 +692,36 @@ fun LibraryScreen(
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                         }
+
+                        val showLocateButtonSub = scrollTargetIndex != -1
+                        AnimatedVisibility(
+                            visible = showLocateButtonSub,
+                            enter = expandHorizontally() + fadeIn(),
+                            exit = shrinkHorizontally() + fadeOut()
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        subViewSongsListState.animateScrollToItem(scrollTargetIndex)
+                                    }
+                                },
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                ),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MusicNote,
+                                    contentDescription = "Ir a canción actual",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        if (showLocateButtonSub && (subView is SubView.PlaylistDetail || subView is SubView.AlbumDetail)) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
                         
                         if (subView is SubView.PlaylistDetail) {
                             var showAddSongsDialog by remember { mutableStateOf(false) }
@@ -782,6 +869,7 @@ fun LibraryScreen(
                     // Songs listing under the sub-view
                     SongListView(
                         songs = subSongs,
+                        listState = subViewSongsListState,
                         onSongClick = { song ->
                             songForOptionsSheet = song
                             playlistContextForOptionsSheet = if (subView is SubView.PlaylistDetail) {

@@ -16,6 +16,8 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -94,9 +96,9 @@ fun SongListView(
     isMultiSelectMode: Boolean = false,
     onSongSelectToggle: ((AudioFile) -> Unit)? = null,
     onSelectionChanged: ((Set<AudioFile>) -> Unit)? = null,
-    onPlayDirectly: ((AudioFile) -> Unit)? = null
+    onPlayDirectly: ((AudioFile) -> Unit)? = null,
+    listState: LazyListState = rememberLazyListState()
 ) {
-    val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     
@@ -1023,13 +1025,130 @@ fun savePlaylistCoverLocally(context: android.content.Context, playlistName: Str
 }
 
 // ---------------- PLAYLIST GRID VIEW ----------------
+class UiCondition(
+    initialField: com.kevshupp.kevmusicplayer.playback.RuleField = com.kevshupp.kevmusicplayer.playback.RuleField.GENRE,
+    initialOperator: com.kevshupp.kevmusicplayer.playback.RuleOperator = com.kevshupp.kevmusicplayer.playback.RuleOperator.CONTAINS,
+    initialValue: String = ""
+) {
+    var field by androidx.compose.runtime.mutableStateOf(initialField)
+    var operator by androidx.compose.runtime.mutableStateOf(initialOperator)
+    var value by androidx.compose.runtime.mutableStateOf(initialValue)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ConditionRow(
+    condition: UiCondition,
+    onDelete: () -> Unit,
+    showDelete: Boolean
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Field Selector
+                var fieldExpanded by remember { mutableStateOf(false) }
+                val fieldNames = mapOf(
+                    com.kevshupp.kevmusicplayer.playback.RuleField.GENRE to "Género",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.ARTIST to "Artista",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.ALBUM to "Álbum",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.TITLE to "Título",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.YEAR to "Año",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.PLAY_COUNT to "Veces escuchada",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.DURATION_SECONDS to "Duración (seg)",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.LAST_PLAYED_DAYS to "Días última repro",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.DATE_ADDED_DAYS to "Días agregada"
+                )
+                
+                Box(modifier = Modifier.weight(1f)) {
+                    OutlinedButton(
+                        onClick = { fieldExpanded = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(fieldNames[condition.field] ?: "", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    DropdownMenu(expanded = fieldExpanded, onDismissRequest = { fieldExpanded = false }) {
+                        fieldNames.forEach { (field, name) ->
+                            DropdownMenuItem(
+                                text = { Text(name, fontSize = 12.sp) },
+                                onClick = { condition.field = field; fieldExpanded = false }
+                            )
+                        }
+                    }
+                }
+
+                // Operator Selector
+                var operatorExpanded by remember { mutableStateOf(false) }
+                val operatorNames = mapOf(
+                    com.kevshupp.kevmusicplayer.playback.RuleOperator.CONTAINS to "contiene",
+                    com.kevshupp.kevmusicplayer.playback.RuleOperator.EQUALS to "es igual a",
+                    com.kevshupp.kevmusicplayer.playback.RuleOperator.STARTS_WITH to "empieza con",
+                    com.kevshupp.kevmusicplayer.playback.RuleOperator.ENDS_WITH to "termina con",
+                    com.kevshupp.kevmusicplayer.playback.RuleOperator.GREATER_THAN to ">",
+                    com.kevshupp.kevmusicplayer.playback.RuleOperator.LESS_THAN to "<"
+                )
+
+                Box(modifier = Modifier.weight(1f)) {
+                    OutlinedButton(
+                        onClick = { operatorExpanded = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(operatorNames[condition.operator] ?: "", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    DropdownMenu(expanded = operatorExpanded, onDismissRequest = { operatorExpanded = false }) {
+                        operatorNames.forEach { (operator, name) ->
+                            DropdownMenuItem(
+                                text = { Text(name, fontSize = 12.sp) },
+                                onClick = { condition.operator = operator; operatorExpanded = false }
+                            )
+                        }
+                    }
+                }
+
+                if (showDelete) {
+                    IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Rounded.Delete, contentDescription = "Eliminar", tint = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = condition.value,
+                onValueChange = { condition.value = it },
+                placeholder = { Text("Valor", fontSize = 13.sp) },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+                    cursorColor = MaterialTheme.colorScheme.primary
+                ),
+                textStyle = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            )
+        }
+    }
+}
+
 @Composable
 fun PlaylistGridView(
     viewModel: MediaBrowserViewModel?,
     playlists: Map<String, List<AudioFile>>,
     playlistCovers: Map<String, String>,
     onCreatePlaylist: (String) -> Unit,
-    onCreateSmartPlaylist: (String, com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule, Int) -> Unit,
+    onCreateSmartPlaylist: (String, com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule, Int, Boolean, com.kevshupp.kevmusicplayer.playback.SmartRuleNode?) -> Unit,
     onPlaylistClick: (String) -> Unit,
     onDeletePlaylist: (String) -> Unit
 ) {
@@ -1039,19 +1158,32 @@ fun PlaylistGridView(
     var selectedRule by remember { mutableStateOf(com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED) }
     var limitInput by remember { mutableStateOf("50") }
 
-    androidx.compose.runtime.LaunchedEffect(isSmartDialog, selectedRule, limitInput) {
+    var isAdvancedRules by remember { mutableStateOf(false) }
+    val conditions = remember { mutableStateListOf<UiCondition>(UiCondition()) }
+    var topLevelOperator by remember { mutableStateOf(com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND) }
+    
+    var hasNestedGroup by remember { mutableStateOf(false) }
+    var nestedOperator by remember { mutableStateOf(com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR) }
+    val nestedConditions = remember { mutableStateListOf<UiCondition>() }
+
+    androidx.compose.runtime.LaunchedEffect(isSmartDialog, selectedRule, limitInput, isAdvancedRules) {
         if (isSmartDialog) {
-            val ruleNames = mapOf(
-                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED to "Lo más escuchado",
-                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RECENTLY_ADDED to "Recién añadidas",
-                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.PLAYBACK_HISTORY to "Historial de reproducción",
-                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.LONGEST_SONGS to "Canciones más largas",
-                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.SHORTEST_SONGS to "Canciones más cortas",
-                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.NEVER_PLAYED to "Nunca escuchadas",
-                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RANDOM_MIX to "Mezcla aleatoria"
-            )
-            val cleanLimit = limitInput.toIntOrNull() ?: 50
-            newPlaylistName = "${ruleNames[selectedRule]} ($cleanLimit)"
+            if (isAdvancedRules) {
+                val cleanLimit = limitInput.toIntOrNull() ?: 50
+                newPlaylistName = "Lista Inteligente ($cleanLimit)"
+            } else {
+                val ruleNames = mapOf(
+                    com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED to "Lo más escuchado",
+                    com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RECENTLY_ADDED to "Recién añadidas",
+                    com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.PLAYBACK_HISTORY to "Historial de reproducción",
+                    com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.LONGEST_SONGS to "Canciones más largas",
+                    com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.SHORTEST_SONGS to "Canciones más cortas",
+                    com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.NEVER_PLAYED to "Nunca escuchadas",
+                    com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RANDOM_MIX to "Mezcla aleatoria"
+                )
+                val cleanLimit = limitInput.toIntOrNull() ?: 50
+                newPlaylistName = "${ruleNames[selectedRule]} ($cleanLimit)"
+            }
         }
     }
 
@@ -1060,7 +1192,7 @@ fun PlaylistGridView(
             onDismissRequest = { showCreateDialog = false },
             title = { Text("Nueva lista de reproducción", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) },
             text = {
-                Column {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(bottom = 8.dp)
@@ -1091,29 +1223,159 @@ fun PlaylistGridView(
 
                     if (isSmartDialog) {
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text("Regla de generación:", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                         
-                        var expanded by remember { mutableStateOf(false) }
-                        val ruleNames = mapOf(
-                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED to "Lo más escuchado",
-                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RECENTLY_ADDED to "Recién añadidas",
-                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.PLAYBACK_HISTORY to "Historial de reproducción",
-                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.LONGEST_SONGS to "Canciones más largas",
-                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.SHORTEST_SONGS to "Canciones más cortas",
-                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.NEVER_PLAYED to "Nunca escuchadas",
-                            com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RANDOM_MIX to "Mezcla aleatoria"
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        ) {
+                            Text("Modo:", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+                            FilterChip(
+                                selected = !isAdvancedRules,
+                                onClick = { isAdvancedRules = false },
+                                label = { Text("Básico") },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            )
+                            FilterChip(
+                                selected = isAdvancedRules,
+                                onClick = { isAdvancedRules = true },
+                                label = { Text("Avanzado") },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            )
+                        }
 
-                        Box {
-                            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                                Text(ruleNames[selectedRule] ?: "", color = MaterialTheme.colorScheme.onSurface)
+                        if (!isAdvancedRules) {
+                            Text("Regla de generación:", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+                            
+                            var expanded by remember { mutableStateOf(false) }
+                            val ruleNames = mapOf(
+                                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED to "Lo más escuchado",
+                                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RECENTLY_ADDED to "Recién añadidas",
+                                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.PLAYBACK_HISTORY to "Historial de reproducción",
+                                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.LONGEST_SONGS to "Canciones más largas",
+                                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.SHORTEST_SONGS to "Canciones más cortas",
+                                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.NEVER_PLAYED to "Nunca escuchadas",
+                                com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.RANDOM_MIX to "Mezcla aleatoria"
+                            )
+
+                            Box {
+                                OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                                    Text(ruleNames[selectedRule] ?: "", color = MaterialTheme.colorScheme.onSurface)
+                                }
+                                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                    ruleNames.forEach { (rule, name) ->
+                                        DropdownMenuItem(
+                                            text = { Text(name) },
+                                            onClick = { selectedRule = rule; expanded = false }
+                                        )
+                                    }
+                                }
                             }
-                            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                                ruleNames.forEach { (rule, name) ->
-                                    DropdownMenuItem(
-                                        text = { Text(name) },
-                                        onClick = { selectedRule = rule; expanded = false }
-                                    )
+                        } else {
+                            Text("Constructor de Reglas:", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                            ) {
+                                Text("Combinar con:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f))
+                                FilterChip(
+                                    selected = topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND,
+                                    onClick = { topLevelOperator = com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND },
+                                    label = { Text("Y (AND)", fontSize = 12.sp) }
+                                )
+                                FilterChip(
+                                    selected = topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR,
+                                    onClick = { topLevelOperator = com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR },
+                                    label = { Text("O (OR)", fontSize = 12.sp) }
+                                )
+                            }
+                            
+                            conditions.forEachIndexed { index, cond ->
+                                ConditionRow(
+                                    condition = cond,
+                                    onDelete = { conditions.removeAt(index) },
+                                    showDelete = conditions.size > 1
+                                )
+                            }
+                            
+                            TextButton(
+                                onClick = { conditions.add(UiCondition()) },
+                                modifier = Modifier.align(Alignment.Start)
+                            ) {
+                                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Añadir Condición", fontSize = 13.sp)
+                            }
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Checkbox(
+                                    checked = hasNestedGroup,
+                                    onCheckedChange = { 
+                                        hasNestedGroup = it
+                                        if (it && nestedConditions.isEmpty()) {
+                                            nestedConditions.add(UiCondition())
+                                        }
+                                    }
+                                )
+                                Text("Grupo Anidado (Sub-reglas)", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                            }
+                            
+                            if (hasNestedGroup) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp, bottom = 8.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Combinar sub-reglas con:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f))
+                                            FilterChip(
+                                                selected = nestedOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND,
+                                                onClick = { nestedOperator = com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND },
+                                                label = { Text("Y", fontSize = 11.sp) }
+                                            )
+                                            FilterChip(
+                                                selected = nestedOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR,
+                                                onClick = { nestedOperator = com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR },
+                                                label = { Text("O", fontSize = 11.sp) }
+                                            )
+                                        }
+                                        
+                                        nestedConditions.forEachIndexed { index, cond ->
+                                            ConditionRow(
+                                                condition = cond,
+                                                onDelete = { nestedConditions.removeAt(index) },
+                                                showDelete = nestedConditions.size > 1
+                                            )
+                                        }
+                                        
+                                        TextButton(
+                                            onClick = { nestedConditions.add(UiCondition()) },
+                                            modifier = Modifier.align(Alignment.Start)
+                                        ) {
+                                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Añadir Sub-condición", fontSize = 12.sp)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1143,12 +1405,45 @@ fun PlaylistGridView(
                         if (newPlaylistName.isNotBlank()) {
                             if (isSmartDialog) {
                                 val limit = limitInput.toIntOrNull() ?: 50
-                                onCreateSmartPlaylist(newPlaylistName, selectedRule, limit)
+                                if (isAdvancedRules) {
+                                    val topLevelChildren = mutableListOf<com.kevshupp.kevmusicplayer.playback.SmartRuleNode>()
+                                    conditions.forEach { uiCond ->
+                                        if (uiCond.value.isNotBlank()) {
+                                            topLevelChildren.add(
+                                                com.kevshupp.kevmusicplayer.playback.ConditionNode(uiCond.field, uiCond.operator, uiCond.value)
+                                            )
+                                        }
+                                    }
+                                    if (hasNestedGroup && nestedConditions.isNotEmpty()) {
+                                        val nestedChildren = mutableListOf<com.kevshupp.kevmusicplayer.playback.SmartRuleNode>()
+                                        nestedConditions.forEach { uiCond ->
+                                            if (uiCond.value.isNotBlank()) {
+                                                nestedChildren.add(
+                                                    com.kevshupp.kevmusicplayer.playback.ConditionNode(uiCond.field, uiCond.operator, uiCond.value)
+                                                )
+                                            }
+                                        }
+                                        if (nestedChildren.isNotEmpty()) {
+                                            topLevelChildren.add(
+                                                com.kevshupp.kevmusicplayer.playback.GroupNode(nestedOperator, nestedChildren)
+                                            )
+                                        }
+                                    }
+                                    val finalRuleNode = com.kevshupp.kevmusicplayer.playback.GroupNode(topLevelOperator, topLevelChildren)
+                                    onCreateSmartPlaylist(newPlaylistName, com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED, limit, true, finalRuleNode)
+                                } else {
+                                    onCreateSmartPlaylist(newPlaylistName, selectedRule, limit, false, null)
+                                }
                             } else {
                                 onCreatePlaylist(newPlaylistName)
                             }
                             newPlaylistName = ""
                             limitInput = "50"
+                            isAdvancedRules = false
+                            conditions.clear()
+                            conditions.add(UiCondition())
+                            hasNestedGroup = false
+                            nestedConditions.clear()
                             showCreateDialog = false
                         }
                     },

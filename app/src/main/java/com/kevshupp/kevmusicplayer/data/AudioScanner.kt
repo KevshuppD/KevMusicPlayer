@@ -85,6 +85,43 @@ class AudioScanner(private val context: Context) {
                     // Get genre from our pre-cached map (O(1) lookup!)
                     val genre = genresMap[id] ?: "Unknown Genre"
 
+                    // Try to read ReplayGain metadata from physical files
+                    var replayGain: Float? = null
+                    if (dataPath.isNotEmpty()) {
+                        try {
+                            val file = java.io.File(dataPath)
+                            if (file.exists()) {
+                                val audioFile = org.jaudiotagger.audio.AudioFileIO.read(file)
+                                val tag = audioFile.tag
+                                if (tag != null) {
+                                    // Look for track or album replay gain tags
+                                    var gainStr = tag.getFirst("REPLAYGAIN_TRACK_GAIN")
+                                    if (gainStr.isNullOrEmpty()) {
+                                        gainStr = tag.getFirst("replaygain_track_gain")
+                                    }
+                                    if (gainStr.isNullOrEmpty()) {
+                                        gainStr = tag.getFirst("REPLAYGAIN_ALBUM_GAIN")
+                                    }
+                                    if (gainStr.isNullOrEmpty()) {
+                                        gainStr = tag.getFirst("replaygain_album_gain")
+                                    }
+                                    if (gainStr.isNullOrEmpty()) {
+                                        gainStr = tag.getFirst("LOUDNESS")
+                                    }
+                                    if (gainStr.isNullOrEmpty()) {
+                                        gainStr = tag.getFirst("loudness")
+                                    }
+                                    if (!gainStr.isNullOrEmpty()) {
+                                        val cleanGain = gainStr.replace("dB", "").trim()
+                                        replayGain = cleanGain.toFloatOrNull()
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // Suppress errors during tag scanning to keep scanner robust
+                        }
+                    }
+
                     audioList.add(
                         AudioFile(
                             id = id,
@@ -96,7 +133,8 @@ class AudioScanner(private val context: Context) {
                             uriString = contentUri.toString(),
                             folderPath = folderPath,
                             folderName = folderName,
-                            dateAdded = dateAddedMs
+                            dateAdded = dateAddedMs,
+                            replayGain = replayGain
                         )
                     )
                 }

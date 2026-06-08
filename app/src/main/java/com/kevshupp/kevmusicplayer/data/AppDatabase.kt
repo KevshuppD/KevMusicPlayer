@@ -7,7 +7,7 @@ import androidx.room.DatabaseConfiguration
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [AudioFile::class], version = 5, exportSchema = false)
+@Database(entities = [AudioFile::class], version = 6, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun audioDao(): AudioDao
 

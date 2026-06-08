@@ -197,7 +197,108 @@ fun GeneralSettingsSection(
         }
     }
 
-    Spacer(modifier = Modifier.height(8.dp))
+    Spacer(modifier = Modifier.height(16.dp))
+
+    Column {
+        Text(
+            text = getLocalized("FONDO DINÁMICO DE CANCIONES", "DYNAMIC SONG BACKGROUND"),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
+        )
+
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = settingsCardContainerColor()
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                var glowEnabled by remember { mutableStateOf(settingsPrefs.getBoolean("ambient_glow_enabled", true)) }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Fondo de Paleta de Colores", "Palette Color Background"),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Muestra un fondo dinámico basado en los colores de la carátula",
+                                "Show a dynamic background based on the album art colors"
+                            ),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                    Switch(
+                        checked = glowEnabled,
+                        onCheckedChange = { checked ->
+                            glowEnabled = checked
+                            settingsPrefs.edit().putBoolean("ambient_glow_enabled", checked).apply()
+                        }
+                    )
+                }
+
+                if (glowEnabled) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = getLocalized("Intensidad del Fondo", "Background Intensity"),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+
+                    var intensity by remember { mutableStateOf(settingsPrefs.getString("ambient_glow_intensity", "normal") ?: "normal") }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        listOf(
+                            "normal" to getLocalized("Normal (Suave)", "Normal (Soft)"),
+                            "strong" to getLocalized("Fuerte (Intenso)", "Strong (Intense)")
+                        ).forEach { (tag, label) ->
+                            val isSelected = intensity == tag
+                            Surface(
+                                onClick = {
+                                    intensity = tag
+                                    settingsPrefs.edit().putString("ambient_glow_intensity", tag).apply()
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                                contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                modifier = Modifier.weight(1f).height(40.dp)
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
 
     // 2. Language Settings Section
     Column {
@@ -2424,10 +2525,7 @@ fun AudioSettingsSection(
                 onCheckedChange = {
                     normalizeEnabled = it
                     settingsPrefs.edit().putBoolean("normalize_sound", it).apply()
-                },
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.primary
-                )
+                }
             )
         }
 
@@ -2558,10 +2656,7 @@ fun AudioSettingsSection(
                 onCheckedChange = {
                     eqEnabled = it
                     eqPrefs.edit().putBoolean("eq_enabled", it).apply()
-                },
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.primary
-                )
+                }
             )
         }
 
@@ -2702,9 +2797,6 @@ fun AudioSettingsSection(
                                 bbEnabled = it
                                 eqPrefs.edit().putBoolean("bb_enabled", it).apply()
                             },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = MaterialTheme.colorScheme.primary
-                            ),
                             modifier = Modifier.scale(0.8f)
                         )
                     }
@@ -2752,9 +2844,6 @@ fun AudioSettingsSection(
                                 virtEnabled = it
                                 eqPrefs.edit().putBoolean("virt_enabled", it).apply()
                             },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = MaterialTheme.colorScheme.primary
-                            ),
                             modifier = Modifier.scale(0.8f)
                         )
                     }

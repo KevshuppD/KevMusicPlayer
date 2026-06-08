@@ -244,7 +244,8 @@ fun AppNavigation() {
                         },
                         enabledTabs = viewModel.enabledTabs.value,
                         sortBy = viewModel.sortBy.value,
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        isActive = backStack.lastOrNull() == Screen.Library
                     )
                 }
                 entry<Screen.Settings> {

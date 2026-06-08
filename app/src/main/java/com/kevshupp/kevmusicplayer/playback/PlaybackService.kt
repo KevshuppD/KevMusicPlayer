@@ -74,6 +74,7 @@ class PlaybackService : MediaLibraryService() {
                 val uriString = mediaItem?.requestMetadata?.mediaUri?.toString()
                 android.util.Log.d("WidgetDebug", "Transition to: $title - $artist, uri: $uriString")
                 updateWidgetState(title, artist, player.isPlaying, uriString)
+                applyReplayGain(mediaItem)
             }
 
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
@@ -113,6 +114,8 @@ class PlaybackService : MediaLibraryService() {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 if (audioSessionId != 0) {
                     setupAudioEffects(audioSessionId)
+                    val prefs = getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+                    prefs.edit().putInt("audio_session_id", audioSessionId).apply()
                 }
             }
         })
@@ -554,6 +557,7 @@ class PlaybackService : MediaLibraryService() {
     private var virtualizer: android.media.audiofx.Virtualizer? = null
     private var loudnessEnhancer: android.media.audiofx.LoudnessEnhancer? = null
     private var currentAudioSessionId: Int = 0
+    private var currentReplayGainFactor: Float = 1f
 
     private val eqPrefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
         val player = mediaLibrarySession?.player as? ExoPlayer
@@ -570,6 +574,7 @@ class PlaybackService : MediaLibraryService() {
             if (audioSessionId != 0) {
                 setupAudioEffects(audioSessionId)
             }
+            applyReplayGain(player?.currentMediaItem)
         }
     }
 
@@ -658,6 +663,47 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    private fun applyReplayGain(mediaItem: MediaItem?) {
+        val songIdStr = mediaItem?.mediaId
+        if (songIdStr == null) {
+            currentReplayGainFactor = 1f
+            val player = mediaLibrarySession?.player as? ExoPlayer
+            player?.volume = 1f
+            return
+        }
+        val songId = songIdStr.toLongOrNull()
+        if (songId == null) {
+            currentReplayGainFactor = 1f
+            val player = mediaLibrarySession?.player as? ExoPlayer
+            player?.volume = 1f
+            return
+        }
+
+        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val database = com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(this@PlaybackService)
+            val song = database.audioDao().getAllAudioFiles().find { it.id == songId }
+            val gain = song?.replayGain
+
+            val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+            val normalizeEnabled = settingsPrefs.getBoolean("normalize_sound", false)
+
+            if (normalizeEnabled && gain != null) {
+                val rawFactor = Math.pow(10.0, gain / 20.0).toFloat()
+                currentReplayGainFactor = rawFactor.coerceIn(0.15f, 1.0f)
+                android.util.Log.d("ReplayGain", "Applied ReplayGain: $gain dB, factor: $currentReplayGainFactor for song: ${song?.title}")
+            } else {
+                currentReplayGainFactor = 1f
+            }
+
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val player = mediaLibrarySession?.player as? ExoPlayer
+                if (player != null && !isFadingIn && (fadeJob == null || !fadeJob!!.isActive)) {
+                    player.volume = currentReplayGainFactor
+                }
+            }
+        }
+    }
+
     private var fadeJob: kotlinx.coroutines.Job? = null
     private var isFadingIn = false
     private var fadeInJob: kotlinx.coroutines.Job? = null
@@ -673,8 +719,8 @@ class PlaybackService : MediaLibraryService() {
                 
                 val crossfadeSeconds = playbackPrefs.getInt("crossfade_duration", 0)
                 if (crossfadeSeconds <= 0) {
-                    if (player.volume != 1f && !isFadingIn) {
-                        player.volume = 1f
+                    if (player.volume != currentReplayGainFactor && !isFadingIn) {
+                        player.volume = currentReplayGainFactor
                     }
                     continue
                 }
@@ -687,15 +733,15 @@ class PlaybackService : MediaLibraryService() {
                     
                     if (remainingMs <= crossfadeMs) {
                         val progress = remainingMs.toFloat() / crossfadeMs
-                        player.volume = progress.coerceIn(0f, 1f)
+                        player.volume = progress.coerceIn(0f, 1f) * currentReplayGainFactor
                         
                         if (remainingMs <= 200L && player.hasNextMediaItem()) {
                             player.seekToNextMediaItem()
                             fadeNewTrackIn(player, crossfadeMs)
                         }
                     } else {
-                        if (player.volume < 1f && !isFadingIn) {
-                            player.volume = 1f
+                        if (player.volume < currentReplayGainFactor && !isFadingIn) {
+                            player.volume = currentReplayGainFactor
                         }
                     }
                 }
@@ -713,9 +759,9 @@ class PlaybackService : MediaLibraryService() {
             for (i in 1..steps) {
                 kotlinx.coroutines.delay(delayMs)
                 if (!player.isPlaying) break
-                player.volume = i.toFloat() / steps
+                player.volume = (i.toFloat() / steps) * currentReplayGainFactor
             }
-            player.volume = 1f
+            player.volume = currentReplayGainFactor
             isFadingIn = false
         }
     }
@@ -744,9 +790,9 @@ class PlaybackService : MediaLibraryService() {
             player.volume = 0f
             for (i in 1..fadeOutSteps) {
                 kotlinx.coroutines.delay(30)
-                player.volume = (i.toFloat() / fadeOutSteps)
+                player.volume = (i.toFloat() / fadeOutSteps) * currentReplayGainFactor
             }
-            player.volume = 1f
+            player.volume = currentReplayGainFactor
         }
     }
 }

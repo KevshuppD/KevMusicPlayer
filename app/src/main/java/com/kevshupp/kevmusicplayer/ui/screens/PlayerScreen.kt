@@ -47,6 +47,24 @@ import com.kevshupp.kevmusicplayer.R
 import com.kevshupp.kevmusicplayer.data.LyricLine
 import com.kevshupp.kevmusicplayer.data.LyricsRepository
 import com.kevshupp.kevmusicplayer.data.LrcLibSearchResult
+import androidx.palette.graphics.Palette
+import android.graphics.BitmapFactory
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,10 +157,112 @@ fun PlayerScreen(
     val context = LocalContext.current
     val locale = context.resources.configuration.locales[0]
     val targetLang = locale.language // "es" or "en"
-    
+
+    val settingsPrefs = remember(context) { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
+    var isVisualizerEnabled by remember {
+        mutableStateOf(settingsPrefs.getBoolean("show_visualizer", false))
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+        onResult = { isGranted ->
+            if (isGranted) {
+                isVisualizerEnabled = true
+                settingsPrefs.edit().putBoolean("show_visualizer", true).apply()
+            } else {
+                isVisualizerEnabled = true
+                settingsPrefs.edit().putBoolean("show_visualizer", true).apply()
+                android.widget.Toast.makeText(
+                    context,
+                    if (targetLang == "es") "Visualizador en modo simulación (sin permiso de audio)" else "Visualizer in simulation mode (no audio permission)",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    )
+
+    var heartPosition by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+    var showHeartAnimation by remember { mutableStateOf(false) }
+
     val currentSongUriString = remember(playerState.currentSong?.mediaId) {
         val mediaId = playerState.currentSong?.mediaId
         if (mediaId != null) "content://media/external/audio/media/$mediaId" else null
+    }
+
+    val isFavorite = remember(currentSongFile?.id, viewModel?.playlists) {
+        val favList = viewModel?.playlists?.get("Favoritos") ?: emptyList()
+        favList.any { it.id == currentSongFile?.id }
+    }
+
+    val hasAudioPermission = remember(isVisualizerEnabled) {
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    val playbackPrefs = remember(context) { context.getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE) }
+    val audioSessionId by produceState(initialValue = 0, key1 = playerState.isPlaying) {
+        value = playbackPrefs.getInt("audio_session_id", 0)
+    }
+
+    var fftData by remember { mutableStateOf(FloatArray(20) { 0f }) }
+
+    // Real Visualizer binding
+    if (isVisualizerEnabled && hasAudioPermission && audioSessionId != 0 && playerState.isPlaying) {
+        DisposableEffect(audioSessionId) {
+            val visualizer = try {
+                android.media.audiofx.Visualizer(audioSessionId).apply {
+                    captureSize = 128
+                    setDataCaptureListener(object : android.media.audiofx.Visualizer.OnDataCaptureListener {
+                        override fun onWaveFormDataCapture(v: android.media.audiofx.Visualizer?, waveform: ByteArray?, rate: Int) {}
+                        override fun onFftDataCapture(v: android.media.audiofx.Visualizer?, fft: ByteArray?, rate: Int) {
+                            if (fft != null) {
+                                val magnitudes = FloatArray(20)
+                                val size = minOf(fft.size / 2, magnitudes.size)
+                                for (i in 0 until size) {
+                                    val r = fft[2 * i].toFloat()
+                                    val im = fft[2 * i + 1].toFloat()
+                                    val mag = Math.hypot(r.toDouble(), im.toDouble()).toFloat()
+                                    magnitudes[i] = mag
+                                }
+                                fftData = magnitudes
+                            }
+                        }
+                    }, android.media.audiofx.Visualizer.getMaxCaptureRate() / 2, false, true)
+                    enabled = true
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+            onDispose {
+                try {
+                    visualizer?.enabled = false
+                    visualizer?.release()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+
+    // Simulated visualizer wave fallback
+    if (!isVisualizerEnabled || !hasAudioPermission || audioSessionId == 0 || !playerState.isPlaying) {
+        LaunchedEffect(playerState.isPlaying, isVisualizerEnabled) {
+            if (isVisualizerEnabled && playerState.isPlaying) {
+                while (true) {
+                    val t = System.currentTimeMillis() / 250.0
+                    fftData = FloatArray(20) { index ->
+                        val base = Math.sin(t + index * 0.4).toFloat() * 0.4f + 0.5f
+                        val noise = (Math.random().toFloat() * 0.2f)
+                        (base + noise).coerceIn(0.1f, 1.0f) * 70f
+                    }
+                    kotlinx.coroutines.delay(50)
+                }
+            } else {
+                fftData = FloatArray(20) { 3f }
+            }
+        }
     }
     val fileInfo by produceState(initialValue = Pair("MP3", "320 kbps"), key1 = playerState.currentSong?.mediaId) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -163,14 +283,36 @@ fun PlayerScreen(
     val surfaceVariant = MaterialTheme.colorScheme.surfaceVariant
     val background = MaterialTheme.colorScheme.background
 
-    // Dynamic background gradient based on the song's title
-    val backgroundBrush = remember(title, surfaceVariant, background) {
-        Brush.verticalGradient(
-            colors = listOf(
-                surfaceVariant,
-                background
+    // Load album art bytes for Palette extraction
+    val artBytes = rememberAlbumArt(currentSongUriString)
+    val dominantColor = rememberDominantColor(artBytes)
+    val animatedColor by animateColorAsState(
+        targetValue = dominantColor,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 1000),
+        label = "DominantColor"
+    )
+
+    val glowEnabled = remember(settingsPrefs, playerState.currentSong?.mediaId) { settingsPrefs.getBoolean("ambient_glow_enabled", true) }
+    val glowIntensity = remember(settingsPrefs, playerState.currentSong?.mediaId) { settingsPrefs.getString("ambient_glow_intensity", "normal") ?: "normal" }
+
+    // Dynamic background gradient based on the animated extracted cover color
+    val backgroundBrush = remember(animatedColor, background, glowEnabled, glowIntensity) {
+        if (glowEnabled) {
+            val alphaVal = if (glowIntensity == "strong") 0.85f else 0.35f
+            Brush.verticalGradient(
+                colors = listOf(
+                    animatedColor.copy(alpha = alphaVal),
+                    background
+                )
             )
-        )
+        } else {
+            Brush.verticalGradient(
+                colors = listOf(
+                    background,
+                    background
+                )
+            )
+        }
     }
 
     // Curated gradient pairs for the massive artwork card
@@ -183,6 +325,41 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(backgroundBrush)
     ) {
+        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+        val pulseScale by infiniteTransition.animateFloat(
+            initialValue = 0.85f,
+            targetValue = 1.15f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 4000, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulseScale"
+        )
+
+        if (glowEnabled) {
+            val pulseAlpha = if (glowIntensity == "strong") 0.85f else 0.45f
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(420.dp)
+                    .align(Alignment.TopCenter)
+                    .graphicsLayer {
+                        scaleX = pulseScale
+                        scaleY = pulseScale
+                        alpha = 0.5f
+                        translationY = -120f
+                    }
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                animatedColor.copy(alpha = pulseAlpha),
+                                Color.Transparent
+                            )
+                        )
+                    )
+            )
+        }
+
         val translateLyrics: suspend () -> Unit = {
             val getLocalized: (String, String) -> String = { es, en ->
                 if (targetLang == "es") es else en
@@ -399,7 +576,6 @@ fun PlayerScreen(
             }
         }
 
-        val settingsPrefs = remember(context) { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
         val autoTranslateEnabled = remember(settingsPrefs) { settingsPrefs.getBoolean("auto_translate", false) }
 
         LaunchedEffect(currentSongFile?.id, lyricLines, autoTranslateEnabled) {
@@ -555,158 +731,346 @@ fun PlayerScreen(
                     )
                 }
             } else {
-                Spacer(modifier = Modifier.weight(0.2f))
+                val currentMediaItemIndex = playerState.currentSong?.let { player.currentMediaItemIndex } ?: 0
+                val pagerState = rememberPagerState(
+                    initialPage = currentMediaItemIndex,
+                    pageCount = { player.mediaItemCount }
+                )
 
-                // Premium Album Art Container with rich shadow and organic roundings
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth(0.9f)
-                        .aspectRatio(1f)
-                        .clickable { showLyrics = !showLyrics }
-                        .shadow(
-                            elevation = 32.dp,
-                            shape = RoundedCornerShape(32.dp),
-                            clip = false,
-                            ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                            spotColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)
-                        ),
-                    shape = RoundedCornerShape(32.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-                ) {
-                    val currentSongId = playerState.currentSong?.mediaId
-                    val currentSongUriString = remember(currentSongId) {
-                        if (currentSongId != null) "content://media/external/audio/media/$currentSongId" else null
+                LaunchedEffect(currentMediaItemIndex) {
+                    if (currentMediaItemIndex in 0 until player.mediaItemCount && pagerState.currentPage != currentMediaItemIndex) {
+                        pagerState.scrollToPage(currentMediaItemIndex)
                     }
-                    Box(
+                }
+
+                LaunchedEffect(pagerState.currentPage) {
+                    if (pagerState.currentPage != player.currentMediaItemIndex && pagerState.currentPage in 0 until player.mediaItemCount) {
+                        player.seekTo(pagerState.currentPage, 0)
+                        player.play()
+                    }
+                }
+
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) { page ->
+                    val pageSong = remember(page, playerState.currentSong) {
+                        if (page in 0 until player.mediaItemCount) player.getMediaItemAt(page) else null
+                    }
+                    val pageSongFile = remember(pageSong?.mediaId, viewModel?.localAudioFiles?.toList()) {
+                        viewModel?.localAudioFiles?.find { it.id.toString() == pageSong?.mediaId }
+                    }
+                    val pageTitle = pageSong?.mediaMetadata?.title?.toString() ?: "Unknown Title"
+                    val pageArtist = pageSong?.mediaMetadata?.artist?.toString() ?: "Unknown Artist"
+                    val pageUriString = remember(pageSong?.mediaId) {
+                        if (pageSong?.mediaId != null) "content://media/external/audio/media/${pageSong.mediaId}" else null
+                    }
+                    val pageIsFavorite = remember(pageSongFile, viewModel?.playlists) {
+                        val favList = viewModel?.playlists?.get("Favoritos") ?: emptyList()
+                        favList.any { it.id == pageSongFile?.id }
+                    }
+                    val pageFileInfo by produceState(initialValue = Pair("MP3", "320 kbps"), key1 = pageSong?.mediaId) {
+                        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            getAudioFileInfo(context, pageUriString)
+                        }
+                    }
+                    val pageArtGradient = remember(pageTitle) {
+                        getGradientForString(pageTitle)
+                    }
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(artGradient),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val artBytes = rememberAlbumArt(currentSongUriString)
-                        SubcomposeAsyncImage(
-                            model = artBytes,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                            loading = {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize(0.92f)
-                                        .clip(CircleShape)
-                                        .background(Color.Black.copy(alpha = 0.08f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.MusicNote,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(110.dp),
-                                        tint = Color.White.copy(alpha = 0.95f)
-                                    )
-                                }
-                            },
-                            error = {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize(0.92f)
-                                        .clip(CircleShape)
-                                        .background(Color.Black.copy(alpha = 0.08f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.MusicNote,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(110.dp),
-                                        tint = Color.White.copy(alpha = 0.95f)
-                                    )
-                                }
+                            .pointerInput(pageSong?.mediaId) {
+                                detectTapGestures(
+                                    onDoubleTap = { offset ->
+                                        if (pageSongFile != null && viewModel != null) {
+                                            val favExists = viewModel.playlists.containsKey("Favoritos")
+                                            if (!favExists) {
+                                                viewModel.createPlaylist("Favoritos")
+                                            }
+                                            if (pageIsFavorite) {
+                                                viewModel.removeSongFromPlaylist("Favoritos", pageSongFile.id)
+                                            } else {
+                                                viewModel.addSongToPlaylist("Favoritos", pageSongFile.id)
+                                            }
+                                        }
+                                        heartPosition = offset
+                                        showHeartAnimation = true
+                                    },
+                                    onTap = {
+                                        showLyrics = !showLyrics
+                                    }
+                                )
                             }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.weight(0.3f))
-
-                // Title and Artist with clean spacing
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.Black,
-                            letterSpacing = (-0.5).sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Text(
-                        text = artist,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Medium
-                        ),
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .pointerInput(pageSong?.mediaId) {
+                                var totalY = 0f
+                                detectVerticalDragGestures(
+                                    onDragStart = { totalY = 0f },
+                                    onDragEnd = {
+                                        if (totalY < -100f) {
+                                            showLyrics = true
+                                        }
+                                    },
+                                    onVerticalDrag = { change, dragAmount ->
+                                        change.consume()
+                                        totalY += dragAmount
+                                    }
+                                )
+                            }
                     ) {
-                        // Extension Badge
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.height(20.dp)
+                        Spacer(modifier = Modifier.weight(0.2f))
+
+                        // Premium Album Art Container with rich shadow and organic roundings
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth(0.9f)
+                                .aspectRatio(1f)
+                                .shadow(
+                                    elevation = 32.dp,
+                                    shape = RoundedCornerShape(32.dp),
+                                    clip = false,
+                                    ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                                    spotColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)
+                                ),
+                            shape = RoundedCornerShape(32.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.Transparent)
                         ) {
                             Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 8.dp)
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(pageArtGradient),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    text = fileInfo.first,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.ExtraBold,
-                                        letterSpacing = 0.5.sp
-                                    ),
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                val pageArtBytes = rememberAlbumArt(pageUriString)
+                                SubcomposeAsyncImage(
+                                    model = pageArtBytes,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                    loading = {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize(0.92f)
+                                                .clip(CircleShape)
+                                                .background(Color.Black.copy(alpha = 0.08f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.MusicNote,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(110.dp),
+                                                tint = Color.White.copy(alpha = 0.95f)
+                                            )
+                                        }
+                                    },
+                                    error = {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize(0.92f)
+                                                .clip(CircleShape)
+                                                .background(Color.Black.copy(alpha = 0.08f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.MusicNote,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(110.dp),
+                                                tint = Color.White.copy(alpha = 0.95f)
+                                            )
+                                        }
+                                    }
                                 )
+
+                                if (showHeartAnimation && page == pagerState.currentPage) {
+                                    LaunchedEffect(showHeartAnimation) {
+                                        if (showHeartAnimation) {
+                                            kotlinx.coroutines.delay(800)
+                                            showHeartAnimation = false
+                                        }
+                                    }
+
+                                    val scale by animateFloatAsState(
+                                        targetValue = if (showHeartAnimation) 1.5f else 0f,
+                                        animationSpec = androidx.compose.animation.core.spring(
+                                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                                            stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+                                        ),
+                                        label = "heartScale"
+                                    )
+
+                                    val hPos = heartPosition ?: androidx.compose.ui.geometry.Offset.Zero
+                                    Icon(
+                                        imageVector = if (pageIsFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                        contentDescription = null,
+                                        tint = if (pageIsFavorite) Color.Red else Color.White.copy(alpha = 0.8f),
+                                        modifier = Modifier
+                                            .offset {
+                                                androidx.compose.ui.unit.IntOffset(
+                                                    (hPos.x - 48.dp.toPx()).toInt(),
+                                                    (hPos.y - 48.dp.toPx()).toInt()
+                                                )
+                                            }
+                                            .size(96.dp)
+                                            .graphicsLayer {
+                                                scaleX = scale
+                                                scaleY = scale
+                                                alpha = (1f - (scale - 1f).coerceIn(0f, 1f))
+                                            }
+                                    )
+                                }
                             }
                         }
 
-                        // Bitrate Badge
-                        Surface(
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f),
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.height(20.dp)
-                        ) {
+                        if (isVisualizerEnabled) {
+                            val waveColor = animatedColor
+                            val barWidth = 6.dp
+                            val barSpacing = 4.dp
+
                             Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 8.dp)
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(60.dp)
+                                    .padding(vertical = 8.dp)
+                                    .clickable {
+                                        isVisualizerEnabled = false
+                                        settingsPrefs.edit().putBoolean("show_visualizer", false).apply()
+                                    },
+                                contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    text = fileInfo.second,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
-                                )
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    val count = fftData.size
+                                    val totalWidth = (barWidth.toPx() * count) + (barSpacing.toPx() * (count - 1))
+                                    val startX = (size.width - totalWidth) / 2
+
+                                    for (i in 0 until count) {
+                                        val rawVal = fftData[i]
+                                        val value = if (hasAudioPermission && audioSessionId != 0) {
+                                            (rawVal * 2.5f).coerceIn(2f, 150f)
+                                        } else {
+                                            rawVal.coerceIn(2f, 150f)
+                                        }
+
+                                        val barHeight = (value / 150f) * size.height
+                                        val x = startX + i * (barWidth.toPx() + barSpacing.toPx())
+                                        val y = (size.height - barHeight) / 2
+
+                                        drawRoundRect(
+                                            color = waveColor.copy(alpha = 0.85f),
+                                            topLeft = androidx.compose.ui.geometry.Offset(x, y),
+                                            size = androidx.compose.ui.geometry.Size(barWidth.toPx(), barHeight.coerceAtLeast(4f)),
+                                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth.toPx() / 2)
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            Spacer(
+                                modifier = Modifier
+                                    .weight(0.3f)
+                                    .clickable {
+                                        val recordPermission = android.Manifest.permission.RECORD_AUDIO
+                                        val hasPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                                            context,
+                                            recordPermission
+                                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                                        if (!hasPermission) {
+                                            permissionLauncher.launch(recordPermission)
+                                        } else {
+                                            isVisualizerEnabled = true
+                                            settingsPrefs.edit().putBoolean("show_visualizer", true).apply()
+                                        }
+                                    }
+                            )
+                        }
+
+                        // Title and Artist with clean spacing
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = pageTitle,
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = (-0.5).sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Text(
+                                text = pageArtist,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Extension Badge
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.height(20.dp)
+                                ) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier.padding(horizontal = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = pageFileInfo.first,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.ExtraBold,
+                                                letterSpacing = 0.5.sp
+                                            ),
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+
+                                // Bitrate Badge
+                                Surface(
+                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.height(20.dp)
+                                ) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier.padding(horizontal = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = pageFileInfo.second,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
+                                        )
+                                    }
+                                }
                             }
                         }
+
+                        Spacer(modifier = Modifier.weight(0.2f))
                     }
                 }
-
-                Spacer(modifier = Modifier.weight(0.2f))
             }
 
             // Premium Custom Seeking Slider
@@ -1602,5 +1966,34 @@ fun PlayerScreen(
             )
         }
     }
+}
+
+@Composable
+fun rememberDominantColor(artBytes: ByteArray?): Color {
+    val defaultColor = MaterialTheme.colorScheme.surfaceVariant
+    var dominantColor by remember(artBytes) { mutableStateOf(defaultColor) }
+
+    LaunchedEffect(artBytes) {
+        if (artBytes != null) {
+            withContext(Dispatchers.IO) {
+                try {
+                    val bitmap = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
+                    if (bitmap != null) {
+                        val palette = Palette.from(bitmap).generate()
+                        val color = palette.getVibrantColor(
+                            palette.getDominantColor(defaultColor.toArgb())
+                        )
+                        dominantColor = Color(color)
+                        bitmap.recycle()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        } else {
+            dominantColor = defaultColor
+        }
+    }
+    return dominantColor
 }
 
