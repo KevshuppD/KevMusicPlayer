@@ -276,7 +276,7 @@ fun UniversalSearchOverlay(
                                     item {
                                         SearchHeader(getLocalized("Canciones", "Songs"))
                                     }
-                                    items(searchResults.songs.take(3)) { song ->
+                                    items(searchResults.songs.take(3), key = { it.id }) { song ->
                                         SongSearchResultItem(song, onSongClick, searchResults.songs)
                                     }
                                 }
@@ -285,7 +285,7 @@ fun UniversalSearchOverlay(
                                     item {
                                         SearchHeader(getLocalized("Artistas", "Artists"))
                                     }
-                                    items(searchResults.artists.take(3)) { artist ->
+                                    items(searchResults.artists.take(3), key = { it }) { artist ->
                                         SimpleSearchResultItem(
                                             title = artist,
                                             subtitle = getLocalized("Artista", "Artist"),
@@ -302,7 +302,7 @@ fun UniversalSearchOverlay(
                                     item {
                                         SearchHeader(getLocalized("Álbumes", "Albums"))
                                     }
-                                    items(searchResults.albums.take(3)) { album ->
+                                    items(searchResults.albums.take(3), key = { it }) { album ->
                                         val songSample = audioFiles.firstOrNull { it.album == album }
                                         val artUri = songSample?.uriString
                                         AlbumSearchResultItem(
@@ -321,7 +321,7 @@ fun UniversalSearchOverlay(
                                     item {
                                         SearchHeader(getLocalized("Playlists", "Playlists"))
                                     }
-                                    items(searchResults.playlists.take(3)) { playlist ->
+                                    items(searchResults.playlists.take(3), key = { it }) { playlist ->
                                         SimpleSearchResultItem(
                                             title = playlist,
                                             subtitle = getLocalized("Lista de reproducción", "Playlist"),
@@ -335,12 +335,12 @@ fun UniversalSearchOverlay(
                                 }
                             }
                             "Songs" -> {
-                                items(searchResults.songs) { song ->
+                                items(searchResults.songs, key = { it.id }) { song ->
                                     SongSearchResultItem(song, onSongClick, searchResults.songs)
                                 }
                             }
                             "Artists" -> {
-                                items(searchResults.artists) { artist ->
+                                items(searchResults.artists, key = { it }) { artist ->
                                     SimpleSearchResultItem(
                                         title = artist,
                                         subtitle = getLocalized("Artista", "Artist"),
@@ -353,7 +353,7 @@ fun UniversalSearchOverlay(
                                 }
                             }
                             "Albums" -> {
-                                items(searchResults.albums) { album ->
+                                items(searchResults.albums, key = { it }) { album ->
                                     val songSample = audioFiles.firstOrNull { it.album == album }
                                     val artUri = songSample?.uriString
                                     AlbumSearchResultItem(
@@ -368,7 +368,7 @@ fun UniversalSearchOverlay(
                                 }
                             }
                             "Playlists" -> {
-                                items(searchResults.playlists) { playlist ->
+                                items(searchResults.playlists, key = { it }) { playlist ->
                                     SimpleSearchResultItem(
                                         title = playlist,
                                         subtitle = getLocalized("Lista de reproducción", "Playlist"),

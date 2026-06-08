@@ -50,6 +50,8 @@ import com.kevshupp.kevmusicplayer.ui.screens.PlayerScreen
 import com.kevshupp.kevmusicplayer.ui.screens.SettingsScreen
 import com.kevshupp.kevmusicplayer.ui.theme.KevMusicPlayerTheme
 import kotlinx.serialization.Serializable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
@@ -171,9 +173,100 @@ fun AppNavigation() {
     }
 
     val context = LocalContext.current
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateDialogTitle by remember { mutableStateOf("") }
+    var updateDialogMessage by remember { mutableStateOf("") }
+    var updateDownloadUrl by remember { mutableStateOf<String?>(null) }
+    var isDownloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0f) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    val packageInfo = remember {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0)
+        } catch (e: Exception) {
+            null
+        }
+    }
+    val versionName = remember(packageInfo) { packageInfo?.versionName ?: "1.0.2" }
+
     LaunchedEffect(Unit) {
         if (checkInitialPermissions(context)) {
             viewModel.connect()
+        }
+        
+        // Auto update check on startup
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val client = okhttp3.OkHttpClient()
+                val request = okhttp3.Request.Builder()
+                    .url("https://api.github.com/repos/KevshuppD/KevMusicPlayer/releases/latest")
+                    .header("User-Agent", "KevMusicPlayer")
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: ""
+                        val json = org.json.JSONObject(body)
+                        val latestTag = json.optString("tag_name", "1.0")
+                        val htmlUrl = json.optString("html_url", "https://github.com/KevshuppD/KevMusicPlayer")
+                        
+                        // Parse assets to find APK
+                        val assets = json.optJSONArray("assets")
+                        var apkUrl: String? = null
+                        if (assets != null) {
+                            for (i in 0 until assets.length()) {
+                                val asset = assets.optJSONObject(i)
+                                if (asset != null) {
+                                    val name = asset.optString("name", "")
+                                    if (name.endsWith(".apk")) {
+                                        val browserUrl = asset.optString("browser_download_url")
+                                        if (browserUrl.isNotEmpty()) {
+                                            apkUrl = browserUrl
+                                            break
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        val downloadUrl = apkUrl ?: htmlUrl
+
+                        val cleanLatest = latestTag.replace(Regex("[^0-9.]"), "")
+                        val cleanCurrent = versionName.replace(Regex("[^0-9.]"), "")
+                        val latestParts = cleanLatest.split(".")
+                        val currentParts = cleanCurrent.split(".")
+                        var isNewer = false
+                        for (i in 0 until minOf(latestParts.size, currentParts.size)) {
+                            val l = latestParts[i].toIntOrNull() ?: 0
+                            val c = currentParts[i].toIntOrNull() ?: 0
+                            if (l > c) {
+                                isNewer = true
+                                break
+                            } else if (l < c) {
+                                break
+                            }
+                        }
+                        if (!isNewer && latestParts.size > currentParts.size) {
+                            isNewer = true
+                        }
+
+                        if (isNewer) {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                val isSpanish = java.util.Locale.getDefault().language == "es"
+                                updateDialogTitle = if (isSpanish) "¡Nueva versión disponible!" else "Update Available!"
+                                updateDialogMessage = if (isSpanish) {
+                                    "Una versión más reciente (${latestTag}) está disponible en GitHub. ¿Deseas descargarla?"
+                                } else {
+                                    "A newer version (${latestTag}) is available on GitHub. Do you want to download it?"
+                                }
+                                updateDownloadUrl = downloadUrl
+                                showUpdateDialog = true
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -304,6 +397,130 @@ fun AppNavigation() {
                     settingsPrefs = settingsPrefs
                 )
             }
+        }
+
+        if (showUpdateDialog) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { if (!isDownloading) showUpdateDialog = false },
+                title = { Text(text = updateDialogTitle, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
+                text = {
+                    Column {
+                        Text(text = updateDialogMessage, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f))
+                        if (isDownloading) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { downloadProgress },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            val isSpanish = java.util.Locale.getDefault().language == "es"
+                            Text(
+                                text = if (isSpanish) "Descargando: ${(downloadProgress * 100).toInt()}%" else "Downloading: ${(downloadProgress * 100).toInt()}%",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    if (!isDownloading) {
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                val url = updateDownloadUrl
+                                if (url != null) {
+                                    if (url.endsWith(".apk") || url.contains("/releases/download/")) {
+                                        isDownloading = true
+                                        downloadProgress = 0f
+                                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                            try {
+                                                val client = okhttp3.OkHttpClient()
+                                                val request = okhttp3.Request.Builder().url(url).build()
+                                                client.newCall(request).execute().use { response ->
+                                                    if (!response.isSuccessful) {
+                                                        throw java.io.IOException("HTTP Error: ${response.code}")
+                                                    }
+                                                    val body = response.body ?: throw java.io.IOException("Empty body")
+                                                    val totalBytes = body.contentLength()
+                                                    val apkFile = java.io.File(context.cacheDir, "update.apk")
+                                                    if (apkFile.exists()) apkFile.delete()
+                                                    
+                                                    body.byteStream().use { inputStream ->
+                                                        java.io.FileOutputStream(apkFile).use { outputStream ->
+                                                            val buffer = ByteArray(8192)
+                                                            var bytesRead: Int
+                                                            var totalBytesRead = 0L
+                                                            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                                                                outputStream.write(buffer, 0, bytesRead)
+                                                                totalBytesRead += bytesRead
+                                                                if (totalBytes > 0) {
+                                                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                                        downloadProgress = totalBytesRead.toFloat() / totalBytes
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    
+                                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                        isDownloading = false
+                                                        showUpdateDialog = false
+                                                        val authority = "${context.packageName}.fileprovider"
+                                                        val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, apkFile)
+                                                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                                                            setDataAndType(uri, "application/vnd.android.package-archive")
+                                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                        }
+                                                        context.startActivity(intent)
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                    isDownloading = false
+                                                    val isSpanish = java.util.Locale.getDefault().language == "es"
+                                                    updateDialogTitle = if (isSpanish) "Error de descarga" else "Download Error"
+                                                    updateDialogMessage = if (isSpanish) {
+                                                        "No se pudo descargar la actualización: ${e.localizedMessage}"
+                                                    } else {
+                                                        "Failed to download update: ${e.localizedMessage}"
+                                                    }
+                                                    updateDownloadUrl = null 
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        try {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            context.startActivity(intent)
+                                            showUpdateDialog = false
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        }
+                                    }
+                                }
+                            }
+                        ) {
+                            val isSpanish = java.util.Locale.getDefault().language == "es"
+                            Text(text = if (isSpanish) "Actualizar" else "Update", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                },
+                dismissButton = {
+                    if (!isDownloading) {
+                        androidx.compose.material3.TextButton(
+                            onClick = { showUpdateDialog = false }
+                        ) {
+                            val isSpanish = java.util.Locale.getDefault().language == "es"
+                            Text(text = if (isSpanish) "Cancelar" else "Cancel")
+                        }
+                    }
+                }
+            )
         }
     }
 }

@@ -487,8 +487,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun scanFiles(isManual: Boolean = false) {
         viewModelScope.launch {
             try {
-                // 1. Perform background MediaStore scanning
-                val scannedFiles = audioScanner.scanAudioFiles()
+                // 0. Fetch existing cached entities first to bypass slow disk I/O on unchanged files
+                val existingEntities = audioDao.getAllAudioFiles().associateBy { it.id }
+
+                // 1. Perform background MediaStore scanning, passing the existing cache map
+                val scannedFiles = audioScanner.scanAudioFiles(existingEntities)
                 
                 if (scannedFiles == null) {
                     // Scan failed (exception or permissions). Do NOT touch the cache!
@@ -519,7 +522,6 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
                 
                 // 2. Map scanned files to database entities, preserving custom edited lyrics
-                val existingEntities = audioDao.getAllAudioFiles().associateBy { it.id }
                 val entities = filteredScanned.map { file ->
                     val existing = existingEntities[file.id]
                     file.copy(
@@ -850,8 +852,36 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 // Export tab configurations
                 val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
                 settingsJson.put("enabled_tabs", playbackPrefs.getString("enabled_tabs", ""))
+
+                // Export additional settings
+                settingsJson.put("ambient_glow_enabled", settingsPrefs.getBoolean("ambient_glow_enabled", true))
+                settingsJson.put("ambient_glow_intensity", settingsPrefs.getString("ambient_glow_intensity", "medium"))
+                settingsJson.put("auto_translate", settingsPrefs.getBoolean("auto_translate", false))
+                settingsJson.put("bluetooth_resume_enabled", settingsPrefs.getBoolean("bluetooth_resume_enabled", false))
+                settingsJson.put("bluetooth_resume_all", settingsPrefs.getBoolean("bluetooth_resume_all", false))
+                
+                val btDevices = settingsPrefs.getStringSet("bluetooth_resume_devices", emptySet()) ?: emptySet()
+                val btDevicesArray = JSONArray()
+                btDevices.forEach { btDevicesArray.put(it) }
+                settingsJson.put("bluetooth_resume_devices", btDevicesArray)
+                
+                settingsJson.put("normalize_sound", settingsPrefs.getBoolean("normalize_sound", false))
+                settingsJson.put("crossfade_duration", settingsPrefs.getInt("crossfade_duration", 0))
+                settingsJson.put("show_visualizer", settingsPrefs.getBoolean("show_visualizer", true))
                 
                 json.put("settings", settingsJson)
+
+                // 1.5. Export equalizer
+                val eqPrefs = context.getSharedPreferences("equalizer_prefs", Context.MODE_PRIVATE)
+                val eqJson = JSONObject()
+                eqJson.put("eq_enabled", eqPrefs.getBoolean("eq_enabled", false))
+                eqJson.put("bb_enabled", eqPrefs.getBoolean("bb_enabled", false))
+                eqJson.put("bb_strength", eqPrefs.getInt("bb_strength", 0))
+                eqJson.put("virt_enabled", eqPrefs.getBoolean("virt_enabled", false))
+                eqJson.put("virt_strength", eqPrefs.getInt("virt_strength", 0))
+                eqJson.put("eq_bands", eqPrefs.getString("eq_bands", "0,0,0,0,0"))
+                eqJson.put("eq_preset", eqPrefs.getString("eq_preset", "Flat"))
+                json.put("equalizer", eqJson)
 
                 // 2. Export playlists
                 val playlistsPrefs = context.getSharedPreferences("playlists_prefs", Context.MODE_PRIVATE)
@@ -949,6 +979,26 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     if (settingsJson.has("disable_animations")) edit.putBoolean("disable_animations", settingsJson.getBoolean("disable_animations"))
                     if (settingsJson.has("backup_dir_uri")) edit.putString("backup_dir_uri", settingsJson.getString("backup_dir_uri"))
                     if (settingsJson.has("excluded_folders")) edit.putString("excluded_folders", settingsJson.getString("excluded_folders"))
+                    
+                    if (settingsJson.has("ambient_glow_enabled")) edit.putBoolean("ambient_glow_enabled", settingsJson.getBoolean("ambient_glow_enabled"))
+                    if (settingsJson.has("ambient_glow_intensity")) edit.putString("ambient_glow_intensity", settingsJson.getString("ambient_glow_intensity"))
+                    if (settingsJson.has("auto_translate")) edit.putBoolean("auto_translate", settingsJson.getBoolean("auto_translate"))
+                    if (settingsJson.has("bluetooth_resume_enabled")) edit.putBoolean("bluetooth_resume_enabled", settingsJson.getBoolean("bluetooth_resume_enabled"))
+                    if (settingsJson.has("bluetooth_resume_all")) edit.putBoolean("bluetooth_resume_all", settingsJson.getBoolean("bluetooth_resume_all"))
+                    
+                    if (settingsJson.has("bluetooth_resume_devices")) {
+                        val btArray = settingsJson.getJSONArray("bluetooth_resume_devices")
+                        val btSet = mutableSetOf<String>()
+                        for (i in 0 until btArray.length()) {
+                            btSet.add(btArray.getString(i))
+                        }
+                        edit.putStringSet("bluetooth_resume_devices", btSet)
+                    }
+                    
+                    if (settingsJson.has("normalize_sound")) edit.putBoolean("normalize_sound", settingsJson.getBoolean("normalize_sound"))
+                    if (settingsJson.has("crossfade_duration")) edit.putInt("crossfade_duration", settingsJson.getInt("crossfade_duration"))
+                    if (settingsJson.has("show_visualizer")) edit.putBoolean("show_visualizer", settingsJson.getBoolean("show_visualizer"))
+                    
                     edit.apply()
 
                     // Restore tab configurations
@@ -962,6 +1012,21 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             }
                         }
                     }
+                }
+
+                // 1.5. Restore equalizer
+                if (json.has("equalizer")) {
+                    val eqJson = json.getJSONObject("equalizer")
+                    val eqPrefs = context.getSharedPreferences("equalizer_prefs", Context.MODE_PRIVATE)
+                    val eqEdit = eqPrefs.edit()
+                    if (eqJson.has("eq_enabled")) eqEdit.putBoolean("eq_enabled", eqJson.getBoolean("eq_enabled"))
+                    if (eqJson.has("bb_enabled")) eqEdit.putBoolean("bb_enabled", eqJson.getBoolean("bb_enabled"))
+                    if (eqJson.has("bb_strength")) eqEdit.putInt("bb_strength", eqJson.getInt("bb_strength"))
+                    if (eqJson.has("virt_enabled")) eqEdit.putBoolean("virt_enabled", eqJson.getBoolean("virt_enabled"))
+                    if (eqJson.has("virt_strength")) eqEdit.putInt("virt_strength", eqJson.getInt("virt_strength"))
+                    if (eqJson.has("eq_bands")) eqEdit.putString("eq_bands", eqJson.getString("eq_bands"))
+                    if (eqJson.has("eq_preset")) eqEdit.putString("eq_preset", eqJson.getString("eq_preset"))
+                    eqEdit.apply()
                 }
 
                 // 2. Restore playlists

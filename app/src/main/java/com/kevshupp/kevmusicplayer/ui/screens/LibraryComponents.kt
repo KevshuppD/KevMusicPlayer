@@ -147,7 +147,7 @@ fun SongListView(
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            itemsIndexed(songs) { index, song ->
+            itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
                 val isSelected = selectedSongs.contains(song)
                 
                 val currentSong by rememberUpdatedState(song)
@@ -422,28 +422,49 @@ fun SongListView(
         // Fast Scroll Alphabet Overlay Scrollbar
         if (alphabet != null) {
             val density = LocalDensity.current
-            val alphabetAlpha by animateFloatAsState(targetValue = if (showAlphabetPopup) 1f else 0f, label = "alphabet_alpha")
-            Box(
+            val scrollPercent = remember {
+                derivedStateOf {
+                    val layoutInfo = listState.layoutInfo
+                    val totalItems = layoutInfo.totalItemsCount
+                    if (totalItems == 0) return@derivedStateOf 0f
+                    val visibleItems = layoutInfo.visibleItemsInfo
+                    if (visibleItems.isEmpty()) return@derivedStateOf 0f
+                    val firstVisible = visibleItems.first()
+                    val lastVisible = visibleItems.last()
+                    val firstIndex = firstVisible.index
+                    val lastIndex = lastVisible.index
+                    val visibleCount = lastIndex - firstIndex + 1
+                    if (visibleCount >= totalItems) return@derivedStateOf 0f
+                    val averageItemSize = visibleItems.map { it.size }.average()
+                    val currentScrollOffset = (firstIndex * averageItemSize) + listState.firstVisibleItemScrollOffset
+                    val totalScrollLength = (totalItems * averageItemSize) - layoutInfo.viewportSize.height
+                    if (totalScrollLength <= 0) 0f else (currentScrollOffset / totalScrollLength).coerceIn(0.0, 1.0).toFloat()
+                }
+            }
+
+            BoxWithConstraints(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
-                    .width(28.dp)
-                    .graphicsLayer { alpha = alphabetAlpha }
+                    .width(22.dp)
                     .padding(vertical = 16.dp)
-                    .background(Color.Black.copy(alpha = 0.15f), RoundedCornerShape(14.dp))
-                    .pointerInput(alphabet, totalHeight) {
+                    .pointerInput(alphabet) {
                         detectVerticalDragGestures(
                             onDragStart = { offset ->
                                 dragY = offset.y
                                 showAlphabetPopup = true
-                                val percent = (offset.y / totalHeight).coerceIn(0f, 1f)
+                                val containerHeight = size.height.toFloat()
+                                val percent = (offset.y / containerHeight).coerceIn(0f, 1f)
                                 val index = (percent * alphabet.size).toInt().coerceIn(0, alphabet.lastIndex)
                                 currentLetter = alphabet[index]
                                 val targetIndex = songs.indexOfFirst {
-                                    val char = it.title.firstOrNull()?.uppercaseChar() ?: '#'
-                                    if (currentLetter == '#') char.isDigit()
-                                    else if (currentLetter == '?') !char.isLetterOrDigit()
-                                    else char == currentLetter
+                                    val firstChar = it.title.firstOrNull()?.uppercaseChar() ?: '#'
+                                    val mappedChar = when {
+                                        firstChar.isDigit() -> '#'
+                                        firstChar in 'A'..'Z' -> firstChar
+                                        else -> '?'
+                                    }
+                                    mappedChar == currentLetter
                                 }
                                 if (targetIndex != -1) {
                                     coroutineScope.launch {
@@ -458,15 +479,19 @@ fun SongListView(
                                 showAlphabetPopup = false
                             },
                             onVerticalDrag = { change, dragAmount ->
-                                dragY = (dragY + dragAmount).coerceIn(0f, totalHeight)
-                                val percent = (dragY / totalHeight).coerceIn(0f, 1f)
+                                val containerHeight = size.height.toFloat()
+                                dragY = (dragY + dragAmount).coerceIn(0f, containerHeight)
+                                val percent = (dragY / containerHeight).coerceIn(0f, 1f)
                                 val index = (percent * alphabet.size).toInt().coerceIn(0, alphabet.lastIndex)
                                 currentLetter = alphabet[index]
                                 val targetIndex = songs.indexOfFirst {
-                                    val char = it.title.firstOrNull()?.uppercaseChar() ?: '#'
-                                    if (currentLetter == '#') char.isDigit()
-                                    else if (currentLetter == '?') !char.isLetterOrDigit()
-                                    else char == currentLetter
+                                    val firstChar = it.title.firstOrNull()?.uppercaseChar() ?: '#'
+                                    val mappedChar = when {
+                                        firstChar.isDigit() -> '#'
+                                        firstChar in 'A'..'Z' -> firstChar
+                                        else -> '?'
+                                    }
+                                    mappedChar == currentLetter
                                 }
                                 if (targetIndex != -1) {
                                     coroutineScope.launch {
@@ -477,8 +502,41 @@ fun SongListView(
                         )
                     }
             ) {
+                val containerHeightPx = with(density) { maxHeight.toPx() }
+                val thumbHeight = 40.dp
+                val thumbHeightPx = with(density) { thumbHeight.toPx() }
+                val maxOffsetPx = containerHeightPx - thumbHeightPx
+                val thumbOffsetDp = with(density) { (maxOffsetPx * scrollPercent.value).toDp() }
+
+                // Scrollbar Track (Barra vertical siempre presente)
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(2.dp)
+                        .background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(1.dp))
+                        .align(Alignment.CenterEnd)
+                )
+
+                // Scrollbar Thumb (Trozo pintado siempre presente)
+                Box(
+                    modifier = Modifier
+                        .height(thumbHeight)
+                        .width(4.dp)
+                        .offset(y = thumbOffsetDp)
+                        .background(
+                            color = if (showAlphabetPopup) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(2.dp)
+                        )
+                        .align(Alignment.TopEnd)
+                )
+
+                // Alphabet List (visible only when dragging, or we can make it show/fade with alphabetAlpha)
+                val alphabetAlpha by animateFloatAsState(targetValue = if (showAlphabetPopup) 1f else 0f, label = "alphabet_alpha")
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = alphabetAlpha }
+                        .padding(end = 6.dp),
                     verticalArrangement = Arrangement.SpaceEvenly,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -487,7 +545,7 @@ fun SongListView(
                             text = letter.toString(),
                             color = if (currentLetter == letter && showAlphabetPopup) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
                             fontWeight = if (currentLetter == letter && showAlphabetPopup) FontWeight.Black else FontWeight.Bold,
-                            fontSize = if (currentLetter == letter && showAlphabetPopup) 12.sp else 10.sp
+                            fontSize = if (currentLetter == letter && showAlphabetPopup) 11.sp else 9.sp
                         )
                     }
                 }
@@ -1594,10 +1652,11 @@ fun PlaylistGridView(
                             Text(
                                 text = name,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
+                                fontSize = 14.sp,
                                 color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                lineHeight = 18.sp
                             )
                             Text(
                                 text = "${listSongs.size} Tracks",

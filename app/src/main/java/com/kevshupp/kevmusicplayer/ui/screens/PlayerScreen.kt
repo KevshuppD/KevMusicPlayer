@@ -1569,7 +1569,7 @@ fun PlayerScreen(
                                 .fillMaxWidth()
                                 .heightIn(max = 400.dp)
                         ) {
-                            itemsIndexed(queueSongs) { index, song ->
+                            itemsIndexed(queueSongs, key = { index, song -> "${song.id}_$index" }) { index, song ->
                                 val isCurrent = playerState.currentSong?.mediaId == song.id.toString()
                                 Row(
                                     modifier = Modifier

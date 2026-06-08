@@ -178,7 +178,27 @@ fun LibraryScreen(
             it.genre.contains(searchQuery, ignoreCase = true)
         }
         when (sortBy) {
-            "Alphabetical" -> filtered.sortedBy { it.title.lowercase() }
+            "Alphabetical" -> filtered.sortedWith { songA, songB ->
+                val charA = songA.title.firstOrNull()?.uppercaseChar() ?: '#'
+                val charB = songB.title.firstOrNull()?.uppercaseChar() ?: '#'
+                
+                val typeA = when {
+                    charA.isDigit() -> 0  // '#'
+                    charA in 'A'..'Z' -> 1 // Letters
+                    else -> 2             // '?'
+                }
+                val typeB = when {
+                    charB.isDigit() -> 0
+                    charB in 'A'..'Z' -> 1
+                    else -> 2
+                }
+                
+                if (typeA != typeB) {
+                    typeA.compareTo(typeB)
+                } else {
+                    songA.title.lowercase().compareTo(songB.title.lowercase())
+                }
+            }
             "Artist" -> filtered.sortedBy { it.artist.lowercase() }
             "Duration" -> filtered.sortedByDescending { it.duration }
             else -> filtered
@@ -716,7 +736,7 @@ fun LibraryScreen(
                             Text(
                                 text = title,
                                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onBackground
                             )

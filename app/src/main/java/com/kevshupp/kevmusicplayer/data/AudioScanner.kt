@@ -8,7 +8,7 @@ import kotlinx.coroutines.withContext
 
 class AudioScanner(private val context: Context) {
 
-    suspend fun scanAudioFiles(): List<AudioFile>? = withContext(Dispatchers.IO) {
+    suspend fun scanAudioFiles(existingFiles: Map<Long, AudioFile> = emptyMap()): List<AudioFile>? = withContext(Dispatchers.IO) {
         val audioList = mutableListOf<AudioFile>()
         
         // Batch query all genres first for blazing fast performance
@@ -85,9 +85,12 @@ class AudioScanner(private val context: Context) {
                     // Get genre from our pre-cached map (O(1) lookup!)
                     val genre = genresMap[id] ?: "Unknown Genre"
 
-                    // Try to read ReplayGain metadata from physical files
-                    var replayGain: Float? = null
-                    if (dataPath.isNotEmpty()) {
+                    // Try to get ReplayGain metadata.
+                    // Check local DB cache first to avoid extremely slow synchronous physical disk read/write on every startup scan!
+                    val cachedFile = existingFiles[id]
+                    var replayGain: Float? = cachedFile?.replayGain
+
+                    if (replayGain == null && dataPath.isNotEmpty()) {
                         try {
                             val file = java.io.File(dataPath)
                             if (file.exists()) {
