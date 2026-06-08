@@ -213,6 +213,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     val downloadAllLyricsTotal = mutableStateOf(0)
     val downloadAllLyricsSuccessCount = mutableStateOf(0)
     val downloadAllLyricsCurrentName = mutableStateOf("")
+    val isScanning = mutableStateOf(false)
 
     private val audioScanner = AudioScanner(application)
     private val database = AppDatabase.getDatabase(application)
@@ -229,24 +230,26 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         // Instantly load the cached songs from SQLite database to ensure the screen is NEVER empty upon startup!
         viewModelScope.launch {
             try {
-                val cachedEntities = audioDao.getAllAudioFiles()
-                val cachedFiles = cachedEntities.map { entity ->
-                    AudioFile(
-                        id = entity.id,
-                        title = entity.title,
-                        artist = entity.artist,
-                        album = entity.album,
-                        genre = entity.genre,
-                        duration = entity.duration,
-                        uriString = entity.uriString,
-                        folderPath = entity.folderPath,
-                        folderName = entity.folderName,
-                        lyrics = entity.lyrics,
-                        translatedLyrics = entity.translatedLyrics,
-                        playCount = entity.playCount,
-                        dateAdded = entity.dateAdded,
-                        lastPlayed = entity.lastPlayed
-                    )
+                val cachedFiles = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val cachedEntities = audioDao.getAllAudioFiles()
+                    cachedEntities.map { entity ->
+                        AudioFile(
+                            id = entity.id,
+                            title = entity.title,
+                            artist = entity.artist,
+                            album = entity.album,
+                            genre = entity.genre,
+                            duration = entity.duration,
+                            uriString = entity.uriString,
+                            folderPath = entity.folderPath,
+                            folderName = entity.folderName,
+                            lyrics = entity.lyrics,
+                            translatedLyrics = entity.translatedLyrics,
+                            playCount = entity.playCount,
+                            dateAdded = entity.dateAdded,
+                            lastPlayed = entity.lastPlayed
+                        )
+                    }
                 }
                 if (cachedFiles.isNotEmpty()) {
                     localAudioFiles.clear()
@@ -261,7 +264,21 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun connect() {
-        if (browser.value != null) return
+        if (browser.value != null && browser.value?.isConnected == true) {
+            if (localAudioFiles.isEmpty()) {
+                scanFiles()
+            }
+            return
+        }
+
+        browserFuture?.let {
+            try {
+                MediaBrowser.releaseFuture(it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        browser.value = null
 
         val sessionToken = SessionToken(
             getApplication(),
@@ -485,77 +502,87 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun scanFiles(isManual: Boolean = false) {
+        if (isScanning.value) return
+        isScanning.value = true
         viewModelScope.launch {
             try {
-                // 0. Fetch existing cached entities first to bypass slow disk I/O on unchanged files
-                val existingEntities = audioDao.getAllAudioFiles().associateBy { it.id }
+                val updatedFilesList = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    // 0. Fetch existing cached entities first to bypass slow disk I/O on unchanged files
+                    val existingEntities = audioDao.getAllAudioFiles().associateBy { it.id }
 
-                // 1. Perform background MediaStore scanning, passing the existing cache map
-                val scannedFiles = audioScanner.scanAudioFiles(existingEntities)
-                
-                if (scannedFiles == null) {
-                    // Scan failed (exception or permissions). Do NOT touch the cache!
-                    return@launch
-                }
+                    // 1. Perform background MediaStore scanning, passing the existing cache map
+                    val scannedFiles = audioScanner.scanAudioFiles(existingEntities)
+                    
+                    if (scannedFiles == null) {
+                        return@withContext null
+                    }
 
-                // Exclude folders filtering
-                val prefs = getApplication<android.app.Application>().getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
-                val excludedJson = prefs.getString("excluded_folders", "[]") ?: "[]"
-                val excludedFolders = try {
-                    val jsonArray = org.json.JSONArray(excludedJson)
-                    (0 until jsonArray.length()).map { jsonArray.getString(it) }
-                } catch (e: Exception) {
-                    emptyList<String>()
-                }
+                    // Exclude folders filtering
+                    val prefs = getApplication<android.app.Application>().getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+                    val excludedJson = prefs.getString("excluded_folders", "[]") ?: "[]"
+                    val excludedFolders = try {
+                        val jsonArray = org.json.JSONArray(excludedJson)
+                        (0 until jsonArray.length()).map { jsonArray.getString(it) }
+                    } catch (e: Exception) {
+                        emptyList<String>()
+                    }
 
-                val filteredScanned = scannedFiles.filter { file ->
-                    excludedFolders.none { excluded ->
-                        file.folderPath.equals(excluded, ignoreCase = true) || file.folderPath.startsWith(excluded + "/", ignoreCase = true)
+                    val filteredScanned = scannedFiles.filter { file ->
+                        excludedFolders.none { excluded ->
+                            file.folderPath.equals(excluded, ignoreCase = true) || file.folderPath.startsWith(excluded + "/", ignoreCase = true)
+                        }
+                    }
+                    
+                    // Note: We use localAudioFiles.isEmpty() check. To read it safely on IO, we can pass its size or empty status
+                    val isLocalEmpty = localAudioFiles.isEmpty()
+                    if (filteredScanned.isEmpty() && !isManual && !isLocalEmpty) {
+                        // Automatic scan returned empty, but we already have songs cached in memory.
+                        // Keep the cache intact and display the saved songs so the user is never met with an empty screen!
+                        return@withContext null
+                    }
+                    
+                    // 2. Map scanned files to database entities, preserving custom edited lyrics
+                    val entities = filteredScanned.map { file ->
+                        val existing = existingEntities[file.id]
+                        file.copy(
+                            lyrics = existing?.lyrics ?: file.lyrics,
+                            translatedLyrics = existing?.translatedLyrics ?: file.translatedLyrics,
+                            playCount = existing?.playCount ?: 0
+                        )
+                    }
+                    
+                    // 3. Write to Room database (single transaction cache sync)
+                    // Clean up old files that were deleted from device storage
+                    val scannedIds = filteredScanned.map { it.id }
+                    if (scannedIds.isNotEmpty()) {
+                        audioDao.keepOnlyIds(scannedIds)
+                        audioDao.insertAll(entities)
+                    } else {
+                        audioDao.deleteAll()
+                    }
+                    
+                    // 4. Return updated files with restored lyrics details
+                    filteredScanned.map { file ->
+                        val existing = existingEntities[file.id]
+                        file.copy(
+                            lyrics = existing?.lyrics,
+                            translatedLyrics = existing?.translatedLyrics,
+                            playCount = existing?.playCount ?: 0,
+                            lastPlayed = existing?.lastPlayed ?: 0L
+                        )
                     }
                 }
-                
-                if (filteredScanned.isEmpty() && !isManual) {
-                    // Automatic scan returned empty. This is a false negative due to startup delays,
-                    // content provider load lag, or transient lifecycle issues.
-                    // Keep the cache intact and display the saved songs so the user is never met with an empty screen!
-                    return@launch
+
+                if (updatedFilesList != null) {
+                    localAudioFiles.clear()
+                    localAudioFiles.addAll(updatedFilesList)
+                    loadPlaylists()
+                    updateSmartPlaylists()
                 }
-                
-                // 2. Map scanned files to database entities, preserving custom edited lyrics
-                val entities = filteredScanned.map { file ->
-                    val existing = existingEntities[file.id]
-                    file.copy(
-                        lyrics = existing?.lyrics ?: file.lyrics,
-                        translatedLyrics = existing?.translatedLyrics ?: file.translatedLyrics,
-                        playCount = existing?.playCount ?: 0
-                    )
-                }
-                
-                // 3. Write to Room database (single transaction cache sync)
-                // Clean up old files that were deleted from device storage
-                val scannedIds = filteredScanned.map { it.id }
-                if (scannedIds.isNotEmpty()) {
-                    audioDao.keepOnlyIds(scannedIds)
-                    audioDao.insertAll(entities)
-                } else {
-                    audioDao.deleteAll()
-                }
-                
-                // 4. Update compose list with restored lyrics
-                localAudioFiles.clear()
-                localAudioFiles.addAll(filteredScanned.map { file ->
-                    val existing = existingEntities[file.id]
-                    file.copy(
-                        lyrics = existing?.lyrics,
-                        translatedLyrics = existing?.translatedLyrics,
-                        playCount = existing?.playCount ?: 0,
-                        lastPlayed = existing?.lastPlayed ?: 0L
-                    )
-                })
-                loadPlaylists()
-                updateSmartPlaylists()
             } catch (e: Exception) {
                 e.printStackTrace()
+            } finally {
+                isScanning.value = false
             }
         }
     }
@@ -1171,72 +1198,81 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun updateSmartPlaylists() {
-        val keepRecommendations = smartPlaylists.filterKeys { it.startsWith("Recomendaciones") }
-        smartPlaylists.clear()
-        smartPlaylists.putAll(keepRecommendations)
+        val localFilesCopy = ArrayList(localAudioFiles)
+        viewModelScope.launch {
+            val updatedMap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val tempMap = mutableMapOf<String, List<AudioFile>>()
+                val keepRecommendations = smartPlaylists.filterKeys { it.startsWith("Recomendaciones") }
+                tempMap.putAll(keepRecommendations)
 
-        smartPlaylistConfigs.forEach { config ->
-            val list = if (config.isAdvanced && config.advancedRule != null) {
-                localAudioFiles.filter { config.advancedRule.evaluate(getApplication(), it) }
-                    .take(config.limit)
-            } else {
-                when (config.rule) {
-                    SmartPlaylistRule.MOST_PLAYED -> {
-                        localAudioFiles.filter { it.playCount > 0 }
-                            .sortedByDescending { it.playCount }
+                smartPlaylistConfigs.forEach { config ->
+                    val list = if (config.isAdvanced && config.advancedRule != null) {
+                        localFilesCopy.filter { config.advancedRule.evaluate(getApplication(), it) }
                             .take(config.limit)
+                    } else {
+                        when (config.rule) {
+                            SmartPlaylistRule.MOST_PLAYED -> {
+                                localFilesCopy.filter { it.playCount > 0 }
+                                    .sortedByDescending { it.playCount }
+                                    .take(config.limit)
+                            }
+                            SmartPlaylistRule.RECENTLY_ADDED -> {
+                                localFilesCopy.sortedByDescending { it.dateAdded }
+                                    .take(config.limit)
+                            }
+                            SmartPlaylistRule.PLAYBACK_HISTORY -> {
+                                localFilesCopy.filter { it.lastPlayed > 0L }
+                                    .sortedByDescending { it.lastPlayed }
+                                    .take(config.limit)
+                            }
+                            SmartPlaylistRule.LONGEST_SONGS -> {
+                                localFilesCopy.sortedByDescending { it.duration }
+                                    .take(config.limit)
+                            }
+                            SmartPlaylistRule.SHORTEST_SONGS -> {
+                                localFilesCopy.sortedBy { it.duration }
+                                    .take(config.limit)
+                            }
+                            SmartPlaylistRule.NEVER_PLAYED -> {
+                                localFilesCopy.filter { it.playCount == 0 }
+                                    .sortedBy { it.title.lowercase() }
+                                    .take(config.limit)
+                            }
+                            SmartPlaylistRule.RANDOM_MIX -> {
+                                localFilesCopy.shuffled()
+                                    .take(config.limit)
+                            }
+                        }
                     }
-                    SmartPlaylistRule.RECENTLY_ADDED -> {
-                        localAudioFiles.sortedByDescending { it.dateAdded }
-                            .take(config.limit)
-                    }
-                    SmartPlaylistRule.PLAYBACK_HISTORY -> {
-                        localAudioFiles.filter { it.lastPlayed > 0L }
-                            .sortedByDescending { it.lastPlayed }
-                            .take(config.limit)
-                    }
-                    SmartPlaylistRule.LONGEST_SONGS -> {
-                        localAudioFiles.sortedByDescending { it.duration }
-                            .take(config.limit)
-                    }
-                    SmartPlaylistRule.SHORTEST_SONGS -> {
-                        localAudioFiles.sortedBy { it.duration }
-                            .take(config.limit)
-                    }
-                    SmartPlaylistRule.NEVER_PLAYED -> {
-                        localAudioFiles.filter { it.playCount == 0 }
-                            .sortedBy { it.title.lowercase() }
-                            .take(config.limit)
-                    }
-                    SmartPlaylistRule.RANDOM_MIX -> {
-                        localAudioFiles.shuffled()
-                            .take(config.limit)
+                    tempMap[config.name] = list
+                }
+
+                // 4. "Recomendaciones" (Recommendations) based on the user's most played artist
+                val artistPlayCounts = localFilesCopy.filter { it.playCount > 0 }
+                    .groupBy { it.artist }
+                    .mapValues { entry -> entry.value.sumOf { it.playCount } }
+                
+                val favoriteArtist = artistPlayCounts.maxByOrNull { it.value }?.key
+                
+                if (favoriteArtist != null) {
+                    val artistSongs = localFilesCopy.filter { it.artist == favoriteArtist }
+                    val recommendedSongs = artistSongs.sortedBy { it.playCount }.take(15)
+                    tempMap["Recomendaciones ($favoriteArtist)"] = recommendedSongs
+                } else {
+                    val allArtists = localFilesCopy.map { it.artist }.distinct()
+                    if (allArtists.isNotEmpty()) {
+                        val randomArtist = allArtists.random()
+                        val recommendedSongs = localFilesCopy.filter { it.artist == randomArtist }.take(15)
+                        tempMap["Recomendaciones ($randomArtist)"] = recommendedSongs
+                    } else {
+                        tempMap["Recomendaciones"] = emptyList()
                     }
                 }
+                tempMap
             }
-            smartPlaylists[config.name] = list
-        }
 
-        // 4. "Recomendaciones" (Recommendations) based on the user's most played artist
-        val artistPlayCounts = localAudioFiles.filter { it.playCount > 0 }
-            .groupBy { it.artist }
-            .mapValues { entry -> entry.value.sumOf { it.playCount } }
-        
-        val favoriteArtist = artistPlayCounts.maxByOrNull { it.value }?.key
-        
-        if (favoriteArtist != null) {
-            val artistSongs = localAudioFiles.filter { it.artist == favoriteArtist }
-            val recommendedSongs = artistSongs.sortedBy { it.playCount }.take(15)
-            smartPlaylists["Recomendaciones ($favoriteArtist)"] = recommendedSongs
-        } else {
-            val allArtists = localAudioFiles.map { it.artist }.distinct()
-            if (allArtists.isNotEmpty()) {
-                val randomArtist = allArtists.random()
-                val recommendedSongs = localAudioFiles.filter { it.artist == randomArtist }.take(15)
-                smartPlaylists["Recomendaciones ($randomArtist)"] = recommendedSongs
-            } else {
-                smartPlaylists["Recomendaciones"] = emptyList()
-            }
+            smartPlaylists.clear()
+            smartPlaylists.putAll(updatedMap)
         }
     }
 
@@ -1567,7 +1603,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 // 1. Write metadata tags directly to physical file using jaudiotagger
-                val songEntity = audioDao.getAllAudioFiles().find { it.id == songId }
+                val songEntity = audioDao.getAudioFileById(songId)
                 var songUriString: String? = null
                 
                 val writeSuccess = writeMetadataWithTempFile(context, songId, songEntity?.uriString) { audioFile ->

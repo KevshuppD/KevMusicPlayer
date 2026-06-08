@@ -36,7 +36,7 @@ Designed to be highly responsive, it adapts its layout seamlessly across phone, 
 ---
 
 ## 4. Development & Testing Rules
-- **Automatic Build & Test**: Every feature modification, bug fix, or session iteration MUST be compiled, packaged, and verified by running `./gradlew installDebug`. **Always use installDebug to install the app on the connected device for testing.** This ensures the code compiles correctly, detects syntax issues, and verifies deployment stability on physical devices or emulators. Always run this command and check its output.
+- **CRITICAL: MANDATORY USE OF installDebug FOR ALL DEVELOPMENT TESTING**: Every single feature modification, bug fix, or session iteration MUST be compiled, packaged, and verified by running `./gradlew installDebug` to install the app on the user's testing device (`moto g35 5G`). Do not run other install variants. This is the absolute, non-negotiable standard for installing, testing, and verifying the application in this environment to guarantee deployment consistency and stable debugging. Always run this command and check its output.
 - **Release Distribution**: Whenever a new GitHub Release is created, the compiled APK (e.g., `app/build/outputs/apk/release/app-release.apk`) MUST be attached as an asset to the release using the GitHub CLI (`gh release upload`).
 - **Theme Integrity**: Colors must adapt dynamically. Do not use hardcoded black/white backgrounds or colors that break dark modes (especially Obsidian and Cyberpunk) or light modes (Monochrome clear theme).
 - **Error Handling**: Maintain robust try-catch blocks around file I/O operations (such as jaudiotagger actions) to prevent application crashes on corrupted or write-protected files.

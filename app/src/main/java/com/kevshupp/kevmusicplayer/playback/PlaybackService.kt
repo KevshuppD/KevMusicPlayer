@@ -306,95 +306,90 @@ class PlaybackService : MediaLibraryService() {
             val lastQueueIdsString = prefs.getString("last_queue_ids", null)
 
             if (lastSongId != -1L) {
-                val database = com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(this)
-                val audioDao = database.audioDao()
-                val localAudioFiles = audioDao.getAllAudioFiles()
-
-                if (!lastQueueIdsString.isNullOrEmpty()) {
-                    val idStrings = lastQueueIdsString.split(",")
-                    val mediaItems = mutableListOf<MediaItem>()
+                val mediaItems = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val database = com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(this@PlaybackService)
+                    val audioDao = database.audioDao()
+                    val localAudioFiles = audioDao.getAllAudioFiles()
+                    val songsMap = localAudioFiles.associateBy { it.id }
                     
-                    idStrings.forEach { idStr ->
-                        val idLong = idStr.toLongOrNull()
-                        if (idLong != null) {
-                            val song = localAudioFiles.find { it.id == idLong }
-                            if (song != null) {
-                                val trackUri = Uri.parse(song.uriString)
-                                val mediaItem = MediaItem.Builder()
-                                    .setMediaId(song.id.toString())
-                                    .setUri(trackUri)
-                                    .setRequestMetadata(
-                                        MediaItem.RequestMetadata.Builder()
-                                            .setMediaUri(trackUri)
-                                            .build()
-                                    )
-                                    .setMediaMetadata(
-                                        MediaMetadata.Builder()
-                                            .setTitle(song.title)
-                                            .setArtist(song.artist)
-                                            .setAlbumTitle(song.album)
-                                            .setIsPlayable(true)
-                                            .setIsBrowsable(false)
-                                            .build()
-                                    )
-                                    .build()
-                                mediaItems.add(mediaItem)
+                    val items = mutableListOf<MediaItem>()
+                    if (!lastQueueIdsString.isNullOrEmpty()) {
+                        val idStrings = lastQueueIdsString.split(",")
+                        idStrings.forEach { idStr ->
+                            val idLong = idStr.toLongOrNull()
+                            if (idLong != null) {
+                                val song = songsMap[idLong]
+                                if (song != null) {
+                                    val trackUri = Uri.parse(song.uriString)
+                                    val mediaItem = MediaItem.Builder()
+                                        .setMediaId(song.id.toString())
+                                        .setUri(trackUri)
+                                        .setRequestMetadata(
+                                            MediaItem.RequestMetadata.Builder()
+                                                .setMediaUri(trackUri)
+                                                .build()
+                                        )
+                                        .setMediaMetadata(
+                                            MediaMetadata.Builder()
+                                                .setTitle(song.title)
+                                                .setArtist(song.artist)
+                                                .setAlbumTitle(song.album)
+                                                .setIsPlayable(true)
+                                                .setIsBrowsable(false)
+                                                .build()
+                                        )
+                                        .build()
+                                    items.add(mediaItem)
+                                }
                             }
                         }
                     }
-
-                    if (mediaItems.isNotEmpty()) {
-                        player.setMediaItems(mediaItems)
-                        val safeIndex = lastActiveIndex.coerceIn(0, mediaItems.size - 1)
-                        player.seekTo(safeIndex, lastPosition)
-                        player.prepare()
-                        
-                        if (skipToNextWhenRestored) {
-                            skipToNextWhenRestored = false
-                            if (player.hasNextMediaItem()) {
-                                player.seekToNextMediaItem()
-                            }
-                        } else if (skipToPrevWhenRestored) {
-                            skipToPrevWhenRestored = false
-                            if (player.hasPreviousMediaItem()) {
-                                player.seekToPreviousMediaItem()
-                            }
+                    if (items.isEmpty()) {
+                        val song = songsMap[lastSongId]
+                        if (song != null) {
+                            val trackUri = Uri.parse(song.uriString)
+                            val mediaItem = MediaItem.Builder()
+                                .setMediaId(song.id.toString())
+                                .setUri(trackUri)
+                                .setRequestMetadata(
+                                    MediaItem.RequestMetadata.Builder()
+                                        .setMediaUri(trackUri)
+                                        .build()
+                                )
+                                .setMediaMetadata(
+                                    MediaMetadata.Builder()
+                                        .setTitle(song.title)
+                                        .setArtist(song.artist)
+                                        .setAlbumTitle(song.album)
+                                        .setIsPlayable(true)
+                                        .setIsBrowsable(false)
+                                        .build()
+                                )
+                                .build()
+                            items.add(mediaItem)
                         }
-
-                        if (playWhenRestored) {
-                            player.play()
-                            playWhenRestored = false
-                        }
-                        return
                     }
+                    items
                 }
 
-                val song = localAudioFiles.find { it.id == lastSongId }
-                if (song != null) {
-                    val trackUri = Uri.parse(song.uriString)
-                    val mediaItem = MediaItem.Builder()
-                        .setMediaId(song.id.toString())
-                        .setUri(trackUri)
-                        .setRequestMetadata(
-                            MediaItem.RequestMetadata.Builder()
-                                .setMediaUri(trackUri)
-                                .build()
-                        )
-                        .setMediaMetadata(
-                            MediaMetadata.Builder()
-                                .setTitle(song.title)
-                                .setArtist(song.artist)
-                                .setAlbumTitle(song.album)
-                                .setIsPlayable(true)
-                                .setIsBrowsable(false)
-                                .build()
-                        )
-                        .build()
-                    
-                    player.setMediaItem(mediaItem)
-                    player.seekTo(lastPosition)
+                if (mediaItems.isNotEmpty()) {
+                    player.setMediaItems(mediaItems)
+                    val safeIndex = lastActiveIndex.coerceIn(0, mediaItems.size - 1)
+                    player.seekTo(safeIndex, lastPosition)
                     player.prepare()
                     
+                    if (skipToNextWhenRestored) {
+                        skipToNextWhenRestored = false
+                        if (player.hasNextMediaItem()) {
+                            player.seekToNextMediaItem()
+                        }
+                    } else if (skipToPrevWhenRestored) {
+                        skipToPrevWhenRestored = false
+                        if (player.hasPreviousMediaItem()) {
+                            player.seekToPreviousMediaItem()
+                        }
+                    }
+
                     if (playWhenRestored) {
                         player.play()
                         playWhenRestored = false
@@ -681,16 +676,60 @@ class PlaybackService : MediaLibraryService() {
 
         serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val database = com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(this@PlaybackService)
-            val song = database.audioDao().getAllAudioFiles().find { it.id == songId }
-            val gain = song?.replayGain
+            val song = database.audioDao().getAudioFileById(songId)
+            var gain = song?.replayGain
 
             val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
             val normalizeEnabled = settingsPrefs.getBoolean("normalize_sound", false)
 
-            if (normalizeEnabled && gain != null) {
-                val rawFactor = Math.pow(10.0, gain / 20.0).toFloat()
-                currentReplayGainFactor = rawFactor.coerceIn(0.15f, 1.0f)
-                android.util.Log.d("ReplayGain", "Applied ReplayGain: $gain dB, factor: $currentReplayGainFactor for song: ${song?.title}")
+            if (normalizeEnabled) {
+                if (gain == null && song != null) {
+                    try {
+                        val path = getPhysicalPath(this@PlaybackService, song.id, song.uriString)
+                        if (!path.isNullOrBlank()) {
+                            val file = java.io.File(path)
+                            if (file.exists() && file.isFile) {
+                                try {
+                                    org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
+                                } catch (t: Throwable) {}
+                                val audioFile = org.jaudiotagger.audio.AudioFileIO.read(file)
+                                val tag = audioFile.tag
+                                if (tag != null) {
+                                    var gainStr = tag.getFirst("REPLAYGAIN_TRACK_GAIN")
+                                    if (gainStr.isNullOrEmpty()) gainStr = tag.getFirst("replaygain_track_gain")
+                                    if (gainStr.isNullOrEmpty()) gainStr = tag.getFirst("REPLAYGAIN_ALBUM_GAIN")
+                                    if (gainStr.isNullOrEmpty()) gainStr = tag.getFirst("replaygain_album_gain")
+                                    if (gainStr.isNullOrEmpty()) gainStr = tag.getFirst("LOUDNESS")
+                                    if (gainStr.isNullOrEmpty()) gainStr = tag.getFirst("loudness")
+                                    if (!gainStr.isNullOrEmpty()) {
+                                        val cleanGain = gainStr.replace("dB", "").trim()
+                                        gain = cleanGain.toFloatOrNull()
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+
+                    // Save the fetched/resolved gain to database (use 0f as marker for no gain found)
+                    try {
+                        val finalGain = gain ?: 0f
+                        val updatedSong = song.copy(replayGain = finalGain)
+                        database.audioDao().insertAll(listOf(updatedSong))
+                        gain = finalGain
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+
+                if (gain != null && gain != 0f) {
+                    val rawFactor = Math.pow(10.0, gain.toDouble() / 20.0).toFloat()
+                    currentReplayGainFactor = rawFactor.coerceIn(0.15f, 1.0f)
+                    android.util.Log.d("ReplayGain", "Applied ReplayGain: $gain dB, factor: $currentReplayGainFactor for song: ${song?.title}")
+                } else {
+                    currentReplayGainFactor = 1f
+                }
             } else {
                 currentReplayGainFactor = 1f
             }

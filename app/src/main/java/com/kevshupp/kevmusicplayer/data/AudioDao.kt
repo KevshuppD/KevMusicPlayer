@@ -14,6 +14,9 @@ interface AudioDao {
     @Query("SELECT * FROM audio_files ORDER BY title ASC")
     suspend fun getAllAudioFiles(): List<AudioFile>
 
+    @Query("SELECT * FROM audio_files WHERE id = :id LIMIT 1")
+    suspend fun getAudioFileById(id: Long): AudioFile?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(audioFiles: List<AudioFile>)
 

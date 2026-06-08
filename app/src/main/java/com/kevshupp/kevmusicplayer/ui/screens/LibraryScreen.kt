@@ -132,6 +132,12 @@ fun LibraryScreen(
         }
     }
 
+    LaunchedEffect(Unit) {
+        if (audioFiles.isEmpty()) {
+            viewModel?.scanFiles(isManual = false)
+        }
+    }
+
     var songToDelete by remember { mutableStateOf<AudioFile?>(null) }
     var songForPlaylist by remember { mutableStateOf<AudioFile?>(null) }
     var songForTagEditing by remember { mutableStateOf<AudioFile?>(null) }
@@ -451,7 +457,30 @@ fun LibraryScreen(
                             .weight(1f),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(text = getLocalized("No se encontraron archivos de música.", "No music files found."), style = MaterialTheme.typography.bodyLarge)
+                        if (viewModel?.isScanning?.value == true) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    strokeWidth = 3.dp,
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = getLocalized("Buscando música en el dispositivo...", "Scanning device for music..."),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = getLocalized("No se encontraron archivos de música.", "No music files found."),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
                     }
                 } else {
                     Box(

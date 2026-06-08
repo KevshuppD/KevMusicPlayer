@@ -88,42 +88,7 @@ class AudioScanner(private val context: Context) {
                     // Try to get ReplayGain metadata.
                     // Check local DB cache first to avoid extremely slow synchronous physical disk read/write on every startup scan!
                     val cachedFile = existingFiles[id]
-                    var replayGain: Float? = cachedFile?.replayGain
-
-                    if (replayGain == null && dataPath.isNotEmpty()) {
-                        try {
-                            val file = java.io.File(dataPath)
-                            if (file.exists()) {
-                                val audioFile = org.jaudiotagger.audio.AudioFileIO.read(file)
-                                val tag = audioFile.tag
-                                if (tag != null) {
-                                    // Look for track or album replay gain tags
-                                    var gainStr = tag.getFirst("REPLAYGAIN_TRACK_GAIN")
-                                    if (gainStr.isNullOrEmpty()) {
-                                        gainStr = tag.getFirst("replaygain_track_gain")
-                                    }
-                                    if (gainStr.isNullOrEmpty()) {
-                                        gainStr = tag.getFirst("REPLAYGAIN_ALBUM_GAIN")
-                                    }
-                                    if (gainStr.isNullOrEmpty()) {
-                                        gainStr = tag.getFirst("replaygain_album_gain")
-                                    }
-                                    if (gainStr.isNullOrEmpty()) {
-                                        gainStr = tag.getFirst("LOUDNESS")
-                                    }
-                                    if (gainStr.isNullOrEmpty()) {
-                                        gainStr = tag.getFirst("loudness")
-                                    }
-                                    if (!gainStr.isNullOrEmpty()) {
-                                        val cleanGain = gainStr.replace("dB", "").trim()
-                                        replayGain = cleanGain.toFloatOrNull()
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
-                            // Suppress errors during tag scanning to keep scanner robust
-                        }
-                    }
+                    val replayGain: Float? = cachedFile?.replayGain
 
                     audioList.add(
                         AudioFile(
