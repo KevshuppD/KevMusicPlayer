@@ -138,7 +138,7 @@ fun AddSongsToPlaylistDialog(
                                     Text("No hay canciones disponibles.", color = Color.White.copy(alpha = 0.5f), modifier = Modifier.padding(vertical = 16.dp))
                                 }
                             } else {
-                                items(filteredSongs) { song ->
+                                items(filteredSongs, key = { it.id }) { song ->
                                     Card(
                                         onClick = {
                                             viewModel.addSongToPlaylist(playlistName, song.id)
@@ -173,7 +173,7 @@ fun AddSongsToPlaylistDialog(
                                     Text("No hay álbumes disponibles.", color = Color.White.copy(alpha = 0.5f), modifier = Modifier.padding(vertical = 16.dp))
                                 }
                             } else {
-                                items(filteredAlbumKeys) { album ->
+                                items(filteredAlbumKeys, key = { it }) { album ->
                                     val albumSongs = albums[album] ?: emptyList()
                                     val containsAll = albumSongs.all { currentSongIds.contains(it.id) }
                                     Card(
@@ -214,7 +214,7 @@ fun AddSongsToPlaylistDialog(
                                     Text("No hay artistas disponibles.", color = Color.White.copy(alpha = 0.5f), modifier = Modifier.padding(vertical = 16.dp))
                                 }
                             } else {
-                                items(filteredArtistKeys) { artist ->
+                                items(filteredArtistKeys, key = { it }) { artist ->
                                     val artistSongs = artists[artist] ?: emptyList()
                                     val containsAll = artistSongs.all { currentSongIds.contains(it.id) }
                                     Card(
@@ -255,7 +255,7 @@ fun AddSongsToPlaylistDialog(
                                     Text("No hay géneros disponibles.", color = Color.White.copy(alpha = 0.5f), modifier = Modifier.padding(vertical = 16.dp))
                                 }
                             } else {
-                                items(filteredGenreKeys) { genre ->
+                                items(filteredGenreKeys, key = { it }) { genre ->
                                     val genreSongs = genres[genre] ?: emptyList()
                                     val containsAll = genreSongs.all { currentSongIds.contains(it.id) }
                                     Card(
@@ -536,7 +536,7 @@ fun TagEditorDialog(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                             ) {
-                                items(coverResults) { result ->
+                                items(coverResults, key = { it.coverUrl }) { result ->
                                     Card(
                                         shape = RoundedCornerShape(12.dp),
                                         colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f)),
@@ -737,7 +737,7 @@ fun TagEditorDialog(
                 }
 
                 if (searchResults.isNotEmpty()) {
-                    items(searchResults) { result ->
+                    items(searchResults, key = { it.id }) { result ->
                         Card(
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f)),
@@ -1057,7 +1057,7 @@ fun AlbumCoverEditorDialog(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                         ) {
-                            items(coverResults) { result ->
+                            items(coverResults, key = { it.coverUrl }) { result ->
                                 Card(
                                     shape = RoundedCornerShape(12.dp),
                                     colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f)),
@@ -1413,7 +1413,7 @@ fun AlbumEditorDialog(
                                     .fillMaxWidth()
                                     .height(130.dp)
                             ) {
-                                items(coverResults) { result ->
+                                items(coverResults, key = { it.coverUrl }) { result ->
                                     val isSelected = selectedCoverUrl == result.coverUrl
                                     val border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
                                     Card(

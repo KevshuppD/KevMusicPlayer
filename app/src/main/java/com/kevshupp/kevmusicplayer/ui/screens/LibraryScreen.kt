@@ -1168,7 +1168,7 @@ fun LibraryScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
                     ) {
-                        items(list) { name ->
+                        items(list, key = { it }) { name ->
                             Card(
                                 onClick = {
                                     if (isMultiSelectMode) {

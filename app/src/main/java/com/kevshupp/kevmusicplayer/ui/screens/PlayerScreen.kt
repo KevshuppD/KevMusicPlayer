@@ -1793,7 +1793,7 @@ fun PlayerScreen(
                                     .heightIn(max = 200.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                items(searchLyricsResults) { result ->
+                                items(searchLyricsResults, key = { it.id }) { result ->
                                     val isSynced = result.syncedLyrics != null
                                     Card(
                                         shape = RoundedCornerShape(12.dp),

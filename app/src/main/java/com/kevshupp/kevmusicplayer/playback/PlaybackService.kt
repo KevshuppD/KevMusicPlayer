@@ -121,6 +121,20 @@ class PlaybackService : MediaLibraryService() {
         })
 
         val callback = object : MediaLibrarySession.Callback {
+            override fun onConnect(
+                session: MediaSession,
+                controller: MediaSession.ControllerInfo
+            ): MediaSession.ConnectionResult {
+                val connectionResult = super.onConnect(session, controller)
+                val sessionCommands = connectionResult.availableSessionCommands.buildUpon()
+                sessionCommands.add(androidx.media3.session.SessionCommand("ACTION_SKIP_NEXT", android.os.Bundle.EMPTY))
+                sessionCommands.add(androidx.media3.session.SessionCommand("ACTION_SKIP_PREV", android.os.Bundle.EMPTY))
+                return MediaSession.ConnectionResult.accept(
+                    sessionCommands.build(),
+                    connectionResult.availablePlayerCommands
+                )
+            }
+
             override fun onGetLibraryRoot(
                 session: MediaLibrarySession,
                 browser: MediaSession.ControllerInfo,
@@ -591,67 +605,87 @@ class PlaybackService : MediaLibraryService() {
             val prefs = getSharedPreferences("equalizer_prefs", android.content.Context.MODE_PRIVATE)
             
             // Equalizer
-            val eqEnabled = prefs.getBoolean("eq_enabled", false)
-            if (equalizer == null) {
-                equalizer = android.media.audiofx.Equalizer(0, audioSessionId)
+            try {
+                val eqEnabled = prefs.getBoolean("eq_enabled", false)
+                if (equalizer == null) {
+                    equalizer = android.media.audiofx.Equalizer(0, audioSessionId)
+                }
+                equalizer?.enabled = eqEnabled
+                
+                val eq = equalizer
+                if (eq != null && eqEnabled) {
+                    val bandsStr = prefs.getString("eq_bands", null) ?: "0,0,0,0,0"
+                    val bands = bandsStr.split(",").mapNotNull { it.toIntOrNull() }
+                    val numBands = eq.numberOfBands.toInt()
+                    for (i in 0 until minOf(numBands, bands.size)) {
+                        try {
+                            val level = bands[i].coerceIn(eq.bandLevelRange[0].toInt(), eq.bandLevelRange[1].toInt())
+                            eq.setBandLevel(i.toShort(), level.toShort())
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                equalizer = null
             }
-            equalizer?.enabled = eqEnabled
-            
-            val eq = equalizer
-            if (eq != null && eqEnabled) {
-                val bandsStr = prefs.getString("eq_bands", null) ?: "0,0,0,0,0"
-                val bands = bandsStr.split(",").mapNotNull { it.toIntOrNull() }
-                val numBands = eq.numberOfBands.toInt()
-                for (i in 0 until minOf(numBands, bands.size)) {
+
+            // Bass Boost
+            try {
+                val bbEnabled = prefs.getBoolean("bb_enabled", false)
+                val bbStrength = prefs.getInt("bb_strength", 0).toShort()
+                if (bassBoost == null) {
+                    bassBoost = android.media.audiofx.BassBoost(0, audioSessionId)
+                }
+                bassBoost?.enabled = bbEnabled
+                if (bbEnabled) {
+                    bassBoost?.setStrength(bbStrength)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                bassBoost = null
+            }
+
+            // Virtualizer
+            try {
+                val virtEnabled = prefs.getBoolean("virt_enabled", false)
+                val virtStrength = prefs.getInt("virt_strength", 0).toShort()
+                if (virtualizer == null) {
+                    virtualizer = android.media.audiofx.Virtualizer(0, audioSessionId)
+                }
+                virtualizer?.enabled = virtEnabled
+                if (virtEnabled) {
+                    virtualizer?.setStrength(virtStrength)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                virtualizer = null
+            }
+
+            // Loudness Normalization
+            try {
+                val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+                val normalizeEnabled = settingsPrefs.getBoolean("normalize_sound", false)
+                if (loudnessEnhancer == null) {
                     try {
-                        val level = bands[i].coerceIn(eq.bandLevelRange[0].toInt(), eq.bandLevelRange[1].toInt())
-                        eq.setBandLevel(i.toShort(), level.toShort())
+                        loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId)
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
                 }
-            }
-
-            // Bass Boost
-            val bbEnabled = prefs.getBoolean("bb_enabled", false)
-            val bbStrength = prefs.getInt("bb_strength", 0).toShort()
-            if (bassBoost == null) {
-                bassBoost = android.media.audiofx.BassBoost(0, audioSessionId)
-            }
-            bassBoost?.enabled = bbEnabled
-            if (bbEnabled) {
-                bassBoost?.setStrength(bbStrength)
-            }
-
-            // Virtualizer
-            val virtEnabled = prefs.getBoolean("virt_enabled", false)
-            val virtStrength = prefs.getInt("virt_strength", 0).toShort()
-            if (virtualizer == null) {
-                virtualizer = android.media.audiofx.Virtualizer(0, audioSessionId)
-            }
-            virtualizer?.enabled = virtEnabled
-            if (virtEnabled) {
-                virtualizer?.setStrength(virtStrength)
-            }
-
-            // Loudness Normalization
-            val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
-            val normalizeEnabled = settingsPrefs.getBoolean("normalize_sound", false)
-            if (loudnessEnhancer == null) {
                 try {
-                    loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId)
+                    loudnessEnhancer?.enabled = normalizeEnabled
+                    if (normalizeEnabled) {
+                        // Set target gain to 800 mB for dynamic loudness enhancement/leveling
+                        loudnessEnhancer?.setTargetGain(800)
+                    }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
-            }
-            try {
-                loudnessEnhancer?.enabled = normalizeEnabled
-                if (normalizeEnabled) {
-                    // Set target gain to 800 mB for dynamic loudness enhancement/leveling
-                    loudnessEnhancer?.setTargetGain(800)
-                }
             } catch (e: Exception) {
                 e.printStackTrace()
+                loudnessEnhancer = null
             }
         } catch (e: Exception) {
             e.printStackTrace()

@@ -214,6 +214,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     val downloadAllLyricsSuccessCount = mutableStateOf(0)
     val downloadAllLyricsCurrentName = mutableStateOf("")
     val isScanning = mutableStateOf(false)
+    var ignoreSavePlaybackState = false
 
     private val audioScanner = AudioScanner(application)
     private val database = AppDatabase.getDatabase(application)
@@ -227,33 +228,38 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             t.printStackTrace()
         }
 
-        // Instantly load the cached songs from SQLite database to ensure the screen is NEVER empty upon startup!
+        // Instantly load the cached songs from SQLite database in chunks to ensure the screen is NEVER empty upon startup and we avoid RAM spike/freezes!
         viewModelScope.launch {
             try {
-                val cachedFiles = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val cachedEntities = audioDao.getAllAudioFiles()
-                    cachedEntities.map { entity ->
-                        AudioFile(
-                            id = entity.id,
-                            title = entity.title,
-                            artist = entity.artist,
-                            album = entity.album,
-                            genre = entity.genre,
-                            duration = entity.duration,
-                            uriString = entity.uriString,
-                            folderPath = entity.folderPath,
-                            folderName = entity.folderName,
-                            lyrics = entity.lyrics,
-                            translatedLyrics = entity.translatedLyrics,
-                            playCount = entity.playCount,
-                            dateAdded = entity.dateAdded,
-                            lastPlayed = entity.lastPlayed
-                        )
-                    }
+                // 1. Load the first chunk (500 files) for instant rendering
+                val firstChunk = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    audioDao.getAudioFilesPaged(500, 0)
                 }
-                if (cachedFiles.isNotEmpty()) {
+                if (firstChunk.isNotEmpty()) {
                     localAudioFiles.clear()
-                    localAudioFiles.addAll(cachedFiles)
+                    localAudioFiles.addAll(firstChunk)
+                    loadPlaylists()
+                    updateSmartPlaylists()
+                }
+
+                // 2. Load the remaining files in the background in larger pages
+                var offset = firstChunk.size
+                val pageSize = 2000
+                while (true) {
+                    val nextChunk = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        audioDao.getAudioFilesPaged(pageSize, offset)
+                    }
+                    if (nextChunk.isEmpty()) break
+                    
+                    localAudioFiles.addAll(nextChunk)
+                    offset += nextChunk.size
+                    
+                    // Yield or delay slightly to prevent UI thread starvation during rendering
+                    kotlinx.coroutines.yield()
+                }
+                
+                // Final reload of playlists / smart playlists to encompass all newly loaded items
+                if (offset > firstChunk.size) {
                     loadPlaylists()
                     updateSmartPlaylists()
                 }
@@ -264,6 +270,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun connect() {
+        ignoreSavePlaybackState = false
         if (browser.value != null && browser.value?.isConnected == true) {
             if (localAudioFiles.isEmpty()) {
                 scanFiles()
@@ -271,6 +278,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             return
         }
 
+        browser.value?.release()
         browserFuture?.let {
             try {
                 MediaBrowser.releaseFuture(it)
@@ -284,14 +292,22 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             getApplication(),
             ComponentName(getApplication(), PlaybackService::class.java)
         )
-        browserFuture = MediaBrowser.Builder(getApplication(), sessionToken).buildAsync()
+        val future = MediaBrowser.Builder(getApplication(), sessionToken).buildAsync()
+        browserFuture = future
         
-        browserFuture?.addListener({
+        future.addListener({
             try {
-                val connectedBrowser = browserFuture?.get()
+                if (future.isCancelled) return@addListener
+                val connectedBrowser = future.get()
+                
+                if (browserFuture != future) {
+                    connectedBrowser.release()
+                    return@addListener
+                }
+                
                 browser.value = connectedBrowser
 
-                connectedBrowser?.addListener(object : Player.Listener {
+                connectedBrowser.addListener(object : Player.Listener {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         savePlaybackState()
                         fetchLyricsForCurrentSong()
@@ -325,30 +341,48 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }, ContextCompat.getMainExecutor(getApplication()))
     }
 
-    fun savePlaybackState() {
-        val b = browser.value ?: return
-        val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
-        prefs.edit().putBoolean("last_shuffle_enabled", b.shuffleModeEnabled).apply()
+    fun disconnect() {
+        browser.value?.release()
+        browserFuture?.let {
+            try {
+                MediaBrowser.releaseFuture(it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        browser.value = null
+        browserFuture = null
+    }
 
-        val currentItem = b.currentMediaItem ?: return
-        val id = currentItem.mediaId.toLongOrNull() ?: return
+    fun savePlaybackState() {
+        if (ignoreSavePlaybackState) return
+        val b = browser.value ?: return
+        val currentItem = b.currentMediaItem
+        val id = currentItem?.mediaId?.toLongOrNull() ?: -1L
         val position = b.currentPosition
-        
-        // Save the active index and all song IDs in the media item list
         val activeIndex = b.currentMediaItemIndex
-        val mediaIds = mutableListOf<String>()
+        val shuffleModeEnabled = b.shuffleModeEnabled
+        
+        // Fetch media item IDs on the main thread
+        val mediaIds = ArrayList<String>(b.mediaItemCount)
         for (i in 0 until b.mediaItemCount) {
             val item = b.getMediaItemAt(i)
             mediaIds.add(item.mediaId)
         }
-        val mediaIdsString = mediaIds.joinToString(",")
 
-        prefs.edit()
-            .putLong("last_song_id", id)
-            .putLong("last_position", position)
-            .putInt("last_active_index", activeIndex)
-            .putString("last_queue_ids", mediaIdsString)
-            .apply()
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+            val editor = prefs.edit()
+                .putBoolean("last_shuffle_enabled", shuffleModeEnabled)
+            if (id != -1L) {
+                val mediaIdsString = mediaIds.joinToString(",")
+                editor.putLong("last_song_id", id)
+                    .putLong("last_position", position)
+                    .putInt("last_active_index", activeIndex)
+                    .putString("last_queue_ids", mediaIdsString)
+            }
+            editor.apply()
+        }
     }
 
     fun restorePlaybackState() {
@@ -372,72 +406,85 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     attempts++
                 }
 
-                if (!lastQueueIdsString.isNullOrEmpty()) {
-                    val idStrings = lastQueueIdsString.split(",")
-                    val mediaItems = mutableListOf<MediaItem>()
+                if (localAudioFiles.isEmpty()) return@launch
+
+                val (mediaItems, finalActiveIndex) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val songsMap = localAudioFiles.associateBy { it.id }
+                    val items = mutableListOf<MediaItem>()
+                    var adjustedActiveIndex = lastActiveIndex
                     
-                    idStrings.forEach { idStr ->
-                        val idLong = idStr.toLongOrNull()
-                        if (idLong != null) {
-                            val song = localAudioFiles.find { it.id == idLong }
-                            if (song != null) {
-                                val trackUri = Uri.parse(song.uriString)
-                                val mediaItem = MediaItem.Builder()
-                                    .setMediaId(song.id.toString())
-                                    .setUri(trackUri)
-                                    .setRequestMetadata(
-                                        MediaItem.RequestMetadata.Builder()
-                                            .setMediaUri(trackUri)
-                                            .build()
-                                    )
-                                    .setMediaMetadata(
-                                        MediaMetadata.Builder()
-                                            .setTitle(song.title)
-                                            .setArtist(song.artist)
-                                            .setAlbumTitle(song.album)
-                                            .setIsPlayable(true)
-                                            .setIsBrowsable(false)
-                                            .build()
-                                    )
-                                    .build()
-                                mediaItems.add(mediaItem)
+                    if (!lastQueueIdsString.isNullOrEmpty()) {
+                        var idStrings = lastQueueIdsString.split(",")
+                        if (idStrings.size > 1500) {
+                            val start = (lastActiveIndex - 750).coerceAtLeast(0)
+                            val end = (start + 1500).coerceAtMost(idStrings.size)
+                            val adjustedStart = (end - 1500).coerceAtLeast(0)
+                            idStrings = idStrings.subList(adjustedStart, end)
+                            adjustedActiveIndex = lastActiveIndex - adjustedStart
+                        }
+                        idStrings.forEach { idStr ->
+                            val idLong = idStr.toLongOrNull()
+                            if (idLong != null) {
+                                val song = songsMap[idLong]
+                                if (song != null) {
+                                    val trackUri = Uri.parse(song.uriString)
+                                    val mediaItem = MediaItem.Builder()
+                                        .setMediaId(song.id.toString())
+                                        .setUri(trackUri)
+                                        .setRequestMetadata(
+                                            MediaItem.RequestMetadata.Builder()
+                                                .setMediaUri(trackUri)
+                                                .build()
+                                        )
+                                        .setMediaMetadata(
+                                            MediaMetadata.Builder()
+                                                .setTitle(song.title)
+                                                .setArtist(song.artist)
+                                                .setAlbumTitle(song.album)
+                                                .setIsPlayable(true)
+                                                .setIsBrowsable(false)
+                                                .build()
+                                        )
+                                        .build()
+                                    items.add(mediaItem)
+                                }
                             }
                         }
                     }
 
-                    if (mediaItems.isNotEmpty()) {
-                        b.setMediaItems(mediaItems)
-                        val safeIndex = lastActiveIndex.coerceIn(0, mediaItems.size - 1)
-                        b.seekTo(safeIndex, lastPosition)
-                        b.prepare()
-                        return@launch
+                    if (items.isEmpty()) {
+                        val song = songsMap[lastSongId]
+                        if (song != null) {
+                            val trackUri = Uri.parse(song.uriString)
+                            val mediaItem = MediaItem.Builder()
+                                .setMediaId(song.id.toString())
+                                .setUri(trackUri)
+                                .setRequestMetadata(
+                                    MediaItem.RequestMetadata.Builder()
+                                        .setMediaUri(trackUri)
+                                        .build()
+                                )
+                                .setMediaMetadata(
+                                    MediaMetadata.Builder()
+                                        .setTitle(song.title)
+                                        .setArtist(song.artist)
+                                        .setAlbumTitle(song.album)
+                                        .setIsPlayable(true)
+                                        .setIsBrowsable(false)
+                                        .build()
+                                )
+                                .build()
+                            items.add(mediaItem)
+                            adjustedActiveIndex = 0
+                        }
                     }
+                    items to adjustedActiveIndex
                 }
 
-                val song = localAudioFiles.find { it.id == lastSongId }
-                if (song != null) {
-                    val trackUri = Uri.parse(song.uriString)
-                    val mediaItem = MediaItem.Builder()
-                        .setMediaId(song.id.toString())
-                        .setUri(trackUri)
-                        .setRequestMetadata(
-                            MediaItem.RequestMetadata.Builder()
-                                .setMediaUri(trackUri)
-                                .build()
-                        )
-                        .setMediaMetadata(
-                            MediaMetadata.Builder()
-                                .setTitle(song.title)
-                                .setArtist(song.artist)
-                                .setAlbumTitle(song.album)
-                                .setIsPlayable(true)
-                                .setIsBrowsable(false)
-                                .build()
-                        )
-                        .build()
-                    
-                    b.setMediaItem(mediaItem)
-                    b.seekTo(lastPosition)
+                if (mediaItems.isNotEmpty()) {
+                    b.setMediaItems(mediaItems)
+                    val safeIndex = finalActiveIndex.coerceIn(0, mediaItems.size - 1)
+                    b.seekTo(safeIndex, lastPosition)
                     b.prepare()
                 }
             }
@@ -459,9 +506,13 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
                 val song = localAudioFiles.find { it.id == id } ?: return@launch
                 
-                // 1. Check local/embedded sources first (LRC file next to it or embedded tag)
-                val localLyrics = readLocalLrcOrEmbedded(context, song)
-                val localTranslation = readLocalTranslatedLrcOrEmbedded(context, song)
+                // 1. Check local/embedded sources first (LRC file next to it or embedded tag) on Dispatchers.IO
+                val localLyrics = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    readLocalLrcOrEmbedded(context, song)
+                }
+                val localTranslation = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    readLocalTranslatedLrcOrEmbedded(context, song)
+                }
                 if (!localTranslation.isNullOrBlank() && song.translatedLyrics != localTranslation) {
                     updateSongTranslatedLyrics(id, localTranslation)
                 }
@@ -547,7 +598,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         file.copy(
                             lyrics = existing?.lyrics ?: file.lyrics,
                             translatedLyrics = existing?.translatedLyrics ?: file.translatedLyrics,
-                            playCount = existing?.playCount ?: 0
+                            playCount = existing?.playCount ?: 0,
+                            lastPlayed = existing?.lastPlayed ?: 0L,
+                            replayGain = existing?.replayGain ?: file.replayGain
                         )
                     }
                     
@@ -561,16 +614,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         audioDao.deleteAll()
                     }
                     
-                    // 4. Return updated files with restored lyrics details
-                    filteredScanned.map { file ->
-                        val existing = existingEntities[file.id]
-                        file.copy(
-                            lyrics = existing?.lyrics,
-                            translatedLyrics = existing?.translatedLyrics,
-                            playCount = existing?.playCount ?: 0,
-                            lastPlayed = existing?.lastPlayed ?: 0L
-                        )
-                    }
+                    entities
                 }
 
                 if (updatedFilesList != null) {
@@ -590,8 +634,21 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun playFile(file: AudioFile, customQueue: List<AudioFile>? = null) {
         val b = browser.value ?: return
         
-        val queue = customQueue ?: localAudioFiles
-        val index = queue.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
+        val fullQueue = customQueue ?: localAudioFiles
+        val fullIndex = fullQueue.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
+        
+        // Limit queue size to 1500 items to avoid IPC TransactionTooLargeException
+        val queueLimit = 1500
+        val (queue, index) = if (fullQueue.size > queueLimit) {
+            val half = queueLimit / 2
+            val start = (fullIndex - half).coerceAtLeast(0)
+            val end = (start + queueLimit).coerceAtMost(fullQueue.size)
+            val adjustedStart = (end - queueLimit).coerceAtLeast(0)
+            fullQueue.subList(adjustedStart, end) to (fullIndex - adjustedStart)
+        } else {
+            fullQueue to fullIndex
+        }
+
         val mediaItems = queue.map { audioFile ->
             val trackUri = Uri.parse(audioFile.uriString)
             MediaItem.Builder()
@@ -994,13 +1051,19 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     stream.bufferedReader().use { it.readText() }
                 }
                 val json = JSONObject(jsonStr)
+                var importedLanguage: String? = null
 
                 // 1. Restore settings
                 if (json.has("settings")) {
                     val settingsJson = json.getJSONObject("settings")
                     val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
                     val edit = settingsPrefs.edit()
-                    if (settingsJson.has("language")) edit.putString("language", settingsJson.getString("language"))
+                    edit.putBoolean("is_first_run", false)
+                    if (settingsJson.has("language")) {
+                        val lang = settingsJson.getString("language")
+                        edit.putString("language", lang)
+                        importedLanguage = lang
+                    }
                     if (settingsJson.has("app_theme")) edit.putString("app_theme", settingsJson.getString("app_theme"))
                     if (settingsJson.has("refresh_rate")) edit.putString("refresh_rate", settingsJson.getString("refresh_rate"))
                     if (settingsJson.has("disable_animations")) edit.putBoolean("disable_animations", settingsJson.getBoolean("disable_animations"))
@@ -1132,10 +1195,48 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 withContext(Dispatchers.Main) {
+                    if (importedLanguage != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        try {
+                            val localeManager = context.getSystemService(android.app.LocaleManager::class.java)
+                            localeManager?.applicationLocales = android.os.LocaleList.forLanguageTags(importedLanguage)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
                     localAudioFiles.clear()
                     localAudioFiles.addAll(updatedFiles)
                     loadPlaylists() // Reload playlists state instantly!
                     updateSmartPlaylists() // Reload smart playlists state instantly!
+
+                    ignoreSavePlaybackState = true
+
+                    // IMPORTANTE: Limpiar preferencias de sesión de audio para evitar que el servicio 
+                    // restaure una cola con IDs obsoletos o inconsistentes tras la restauración.
+                    val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
+                    playbackPrefs.edit()
+                        .remove("last_song_id")
+                        .remove("last_queue_ids")
+                        .remove("last_active_index")
+                        .apply()
+
+                    browser.value?.clearMediaItems()
+                    browser.value?.stop()
+                    browser.value?.release()
+
+                    browserFuture?.let {
+                        try {
+                            MediaBrowser.releaseFuture(it)
+                        } catch (ex: Exception) {
+                            ex.printStackTrace()
+                        }
+                    }
+                    browserFuture = null
+                    browser.value = null
+                    
+                    val serviceIntent = android.content.Intent(context, com.kevshupp.kevmusicplayer.playback.PlaybackService::class.java)
+                    context.stopService(serviceIntent)
+
+                    kotlinx.coroutines.delay(800)
                     onSuccess()
                 }
             } catch (e: Exception) {
@@ -1277,44 +1378,62 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun loadPlaylists() {
-        playlists.clear()
-        playlistCovers.clear()
-        val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
-        val names = prefs.getStringSet("playlist_names", emptySet()) ?: emptySet()
-        names.forEach { name ->
-            val idsStr = prefs.getString("playlist_$name", "") ?: ""
-            if (idsStr.isNotBlank()) {
-                val ids = idsStr.split(",").mapNotNull { it.toLongOrNull() }
-                val songs = ids.mapNotNull { id -> localAudioFiles.find { it.id == id } }
-                playlists[name] = songs
-            } else {
-                playlists[name] = emptyList()
-            }
+        viewModelScope.launch {
+            val localFilesCopy = ArrayList(localAudioFiles)
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val tempPlaylists = mutableMapOf<String, List<AudioFile>>()
+                val tempCovers = mutableMapOf<String, String>()
+                val tempConfigs = mutableListOf<SmartPlaylistConfig>()
+                
+                val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
+                val names = prefs.getStringSet("playlist_names", emptySet()) ?: emptySet()
+                val songsMap = localFilesCopy.associateBy { it.id }
+                
+                names.forEach { name ->
+                    val idsStr = prefs.getString("playlist_$name", "") ?: ""
+                    if (idsStr.isNotBlank()) {
+                        val ids = idsStr.split(",").mapNotNull { it.toLongOrNull() }
+                        val songs = ids.mapNotNull { id -> songsMap[id] }
+                        tempPlaylists[name] = songs
+                    } else {
+                        tempPlaylists[name] = emptyList()
+                    }
 
-            val cover = prefs.getString("playlist_cover_$name", null)
-            if (cover != null) {
-                playlistCovers[name] = cover
-            }
-        }
-
-        smartPlaylistConfigs.clear()
-        val smartNames = prefs.getStringSet("smart_playlist_names", emptySet()) ?: emptySet()
-        smartNames.forEach { name ->
-            val jsonString = prefs.getString("smart_playlist_config_$name", null)
-            if (jsonString != null) {
-                try {
-                    val json = JSONObject(jsonString)
-                    val rule = SmartPlaylistRule.valueOf(json.getString("rule"))
-                    val limit = json.getInt("limit")
-                    val isAdvanced = json.optBoolean("isAdvanced", false)
-                    val advancedRule = if (isAdvanced && json.has("advancedRule")) {
-                        SmartRuleNode.fromJson(json.getJSONObject("advancedRule"))
-                    } else null
-                    smartPlaylistConfigs.add(SmartPlaylistConfig(name, rule, limit, isAdvanced, advancedRule))
-                } catch (e: Exception) {
-                    e.printStackTrace()
+                    val cover = prefs.getString("playlist_cover_$name", null)
+                    if (cover != null) {
+                        tempCovers[name] = cover
+                    }
                 }
+
+                val smartNames = prefs.getStringSet("smart_playlist_names", emptySet()) ?: emptySet()
+                smartNames.forEach { name ->
+                    val jsonString = prefs.getString("smart_playlist_config_$name", null)
+                    if (jsonString != null) {
+                        try {
+                            val json = JSONObject(jsonString)
+                            val rule = SmartPlaylistRule.valueOf(json.getString("rule"))
+                            val limit = json.getInt("limit")
+                            val isAdvanced = json.optBoolean("isAdvanced", false)
+                            val advancedRule = if (isAdvanced && json.has("advancedRule")) {
+                                SmartRuleNode.fromJson(json.getJSONObject("advancedRule"))
+                            } else null
+                            tempConfigs.add(SmartPlaylistConfig(name, rule, limit, isAdvanced, advancedRule))
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+                Triple(tempPlaylists, tempCovers, tempConfigs)
             }
+            
+            playlists.clear()
+            playlists.putAll(result.first)
+            playlistCovers.clear()
+            playlistCovers.putAll(result.second)
+            smartPlaylistConfigs.clear()
+            smartPlaylistConfigs.addAll(result.third)
+            
+            updateSmartPlaylists()
         }
     }
 
@@ -1472,8 +1591,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             )
             .build()
         
-        val nextIndex = b.currentMediaItemIndex + 1
-        if (nextIndex <= b.mediaItemCount) {
+        val currentIndex = b.currentMediaItemIndex
+        val nextIndex = if (currentIndex < 0) 0 else currentIndex + 1
+
+        if (nextIndex < b.mediaItemCount) {
             b.addMediaItem(nextIndex, mediaItem)
         } else {
             b.addMediaItem(mediaItem)
@@ -2124,6 +2245,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     override fun onCleared() {
         super.onCleared()
+        browser.value?.release()
         browserFuture?.let { MediaBrowser.releaseFuture(it) }
         browser.value = null
     }

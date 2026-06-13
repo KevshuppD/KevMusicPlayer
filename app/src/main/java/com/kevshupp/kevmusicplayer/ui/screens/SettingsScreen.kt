@@ -58,6 +58,7 @@ fun SettingsScreen(
     onSortByChanged: (String) -> Unit,
     onRescan: () -> Unit,
     onBack: () -> Unit,
+    viewModel: com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -69,7 +70,7 @@ fun SettingsScreen(
     val settingsPrefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
     var selectedLanguage by remember {
         val systemLang = java.util.Locale.getDefault().language
-        val defaultLang = if (systemLang in listOf("es", "en", "fr", "pt")) systemLang else "en"
+        val defaultLang = if (systemLang in listOf("es", "en", "fr", "pt")) systemLang else "es"
         mutableStateOf(settingsPrefs.getString("language", defaultLang) ?: defaultLang)
     }
 
@@ -107,8 +108,6 @@ fun SettingsScreen(
             delay(2000)
         }
     }
-
-    val viewModel: com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 
     var isRenaming by remember { mutableStateOf(false) }
     var renamingCurrent by remember { mutableStateOf(0) }
@@ -167,7 +166,7 @@ fun SettingsScreen(
                         inputStream = inputStream,
                         onSuccess = {
                             android.widget.Toast.makeText(context, getLocalized("Copia de seguridad restaurada con éxito", "Backup restored successfully"), android.widget.Toast.LENGTH_LONG).show()
-                            (context as? Activity)?.recreate()
+                            viewModel.connect()
                         },
                         onError = { error ->
                             android.widget.Toast.makeText(context, "${getLocalized("Error al restaurar:", "Failed to restore:")} ${error.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()

@@ -218,7 +218,7 @@ fun ScrollingLyricsView(
                 contentPadding = PaddingValues(top = 150.dp, bottom = 300.dp, start = 24.dp, end = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(28.dp)
             ) {
-                itemsIndexed(lyricLines) { index, line ->
+                itemsIndexed(lyricLines, key = { index, line -> "${line.timeMs}_$index" }) { index, line ->
                     val isActive = index == activeIndex
                     val translatedText = translatedLines?.get(line.timeMs)
 

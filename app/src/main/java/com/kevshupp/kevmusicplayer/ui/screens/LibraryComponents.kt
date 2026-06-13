@@ -596,7 +596,7 @@ fun AlbumGridView(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize()
     ) {
-        items(albums.keys.toList()) { albumName ->
+        items(albums.keys.toList(), key = { it }) { albumName ->
             val albumSongs = albums[albumName] ?: emptyList()
             Card(
                 onClick = { onAlbumClick(albumName) },
@@ -673,7 +673,7 @@ fun ArtistListView(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(artists.keys.toList()) { artistName ->
+        items(artists.keys.toList(), key = { it }) { artistName ->
             val artistSongs = artists[artistName] ?: emptyList()
             Row(
                 modifier = Modifier
@@ -738,7 +738,7 @@ fun GenreGridView(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize()
     ) {
-        items(genres.keys.toList()) { genreName ->
+        items(genres.keys.toList(), key = { it }) { genreName ->
             val genreSongs = genres[genreName] ?: emptyList()
             Card(
                 onClick = { onGenreClick(genreName) },
@@ -922,7 +922,7 @@ fun FolderGridView(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize()
     ) {
-        items(folders.keys.toList()) { folderName ->
+        items(folders.keys.toList(), key = { it }) { folderName ->
             val folderSongs = folders[folderName] ?: emptyList()
             Card(
                 onClick = { onFolderClick(folderName) },
@@ -1561,7 +1561,7 @@ fun PlaylistGridView(
             }
         }
 
-        items(playlists.keys.toList()) { name ->
+        items(playlists.keys.toList(), key = { it }) { name ->
             val listSongs = playlists[name] ?: emptyList()
             val coverPath = playlistCovers[name]
             val isSmart = viewModel?.smartPlaylists?.containsKey(name) == true || name.startsWith("Recomendaciones")

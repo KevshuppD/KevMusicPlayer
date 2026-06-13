@@ -10,9 +10,6 @@ class AudioScanner(private val context: Context) {
 
     suspend fun scanAudioFiles(existingFiles: Map<Long, AudioFile> = emptyMap()): List<AudioFile>? = withContext(Dispatchers.IO) {
         val audioList = mutableListOf<AudioFile>()
-        
-        // Batch query all genres first for blazing fast performance
-        val genresMap = getAllGenresMap()
 
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
@@ -21,7 +18,8 @@ class AudioScanner(private val context: Context) {
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.DATA,
-            MediaStore.Audio.Media.DATE_ADDED
+            MediaStore.Audio.Media.DATE_ADDED,
+            MediaStore.Audio.Media.GENRE
         )
 
         // Query ALL audio files on the device (selection = null) to ensure absolutely NO songs are missed
@@ -44,6 +42,7 @@ class AudioScanner(private val context: Context) {
                 val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
                 val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
                 val dateAddedColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
+                val genreColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.GENRE)
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idColumn)
@@ -82,8 +81,8 @@ class AudioScanner(private val context: Context) {
                         id
                     )
 
-                    // Get genre from our pre-cached map (O(1) lookup!)
-                    val genre = genresMap[id] ?: "Unknown Genre"
+                    // Get genre directly from MediaStore column
+                    val genre = cursor.getString(genreColumn) ?: "Unknown Genre"
 
                     // Try to get ReplayGain metadata.
                     // Check local DB cache first to avoid extremely slow synchronous physical disk read/write on every startup scan!
@@ -112,50 +111,5 @@ class AudioScanner(private val context: Context) {
             return@withContext null
         }
         return@withContext audioList
-    }
-
-    private fun getAllGenresMap(): Map<Long, String> {
-        val genreMap = mutableMapOf<Long, String>()
-        try {
-            val genresProjection = arrayOf(
-                MediaStore.Audio.Genres._ID,
-                MediaStore.Audio.Genres.NAME
-            )
-            context.contentResolver.query(
-                MediaStore.Audio.Genres.EXTERNAL_CONTENT_URI,
-                genresProjection,
-                null,
-                null,
-                null
-            )?.use { genresCursor ->
-                val genreIdColumn = genresCursor.getColumnIndexOrThrow(MediaStore.Audio.Genres._ID)
-                val genreNameColumn = genresCursor.getColumnIndexOrThrow(MediaStore.Audio.Genres.NAME)
-                
-                while (genresCursor.moveToNext()) {
-                    val genreId = genresCursor.getLong(genreIdColumn)
-                    val genreName = genresCursor.getString(genreNameColumn) ?: continue
-                    
-                    val membersUri = MediaStore.Audio.Genres.Members.getContentUri("external", genreId)
-                    val membersProjection = arrayOf(MediaStore.Audio.Genres.Members.AUDIO_ID)
-                    
-                    context.contentResolver.query(
-                        membersUri,
-                        membersProjection,
-                        null,
-                        null,
-                        null
-                    )?.use { membersCursor ->
-                        val audioIdColumn = membersCursor.getColumnIndexOrThrow(MediaStore.Audio.Genres.Members.AUDIO_ID)
-                        while (membersCursor.moveToNext()) {
-                            val audioId = membersCursor.getLong(audioIdColumn)
-                            genreMap[audioId] = genreName
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return genreMap
     }
 }

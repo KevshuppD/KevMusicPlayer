@@ -294,6 +294,38 @@ fun GeneralSettingsSection(
                         }
                     }
                 }
+
+                HorizontalDivider(color = settingsDividerColor(), modifier = Modifier.padding(vertical = 12.dp))
+
+                var visualizerEnabled by remember { mutableStateOf(settingsPrefs.getBoolean("show_visualizer", false)) }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Visualizador de Audio", "Audio Visualizer"),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Muestra barras animadas en el reproductor al ritmo de la música",
+                                "Show animated bars in the player following the music beat"
+                            ),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                    Switch(
+                        checked = visualizerEnabled,
+                        onCheckedChange = { checked ->
+                            visualizerEnabled = checked
+                            settingsPrefs.edit().putBoolean("show_visualizer", checked).apply()
+                        }
+                    )
+                }
             }
         }
     }
@@ -320,8 +352,8 @@ fun GeneralSettingsSection(
         ) {
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 val languages = listOf(
-                    "en" to R.string.language_english,
-                    "es" to R.string.language_spanish
+                    "es" to R.string.language_spanish,
+                    "en" to R.string.language_english
                 )
                 languages.forEachIndexed { idx, (tag, resId) ->
                     Row(
@@ -1991,7 +2023,7 @@ fun LibrarySettingsSection(
                                                         inputStream = inputStream,
                                                         onSuccess = {
                                                             android.widget.Toast.makeText(context, getLocalized("Copia de seguridad restaurada con éxito", "Backup restored successfully"), android.widget.Toast.LENGTH_LONG).show()
-                                                            (context as? Activity)?.recreate()
+                                                            viewModel.connect()
                                                         },
                                                         onError = { error ->
                                                             android.widget.Toast.makeText(context, "${getLocalized("Error al restaurar:", "Failed to restore:")} ${error.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
@@ -2677,7 +2709,7 @@ fun AudioSettingsSection(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp)
                 ) {
-                    items(presets.size) { index ->
+                    items(presets.size, key = { index -> presets[index].first }) { index ->
                         val (tag, name, values) = presets[index]
                         val isPresetSelected = selectedPreset == tag
                         Box(
