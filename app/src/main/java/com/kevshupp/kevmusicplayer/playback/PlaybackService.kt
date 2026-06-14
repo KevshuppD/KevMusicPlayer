@@ -20,6 +20,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import com.kevshupp.kevmusicplayer.widget.MusicWidget
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -75,6 +78,13 @@ class PlaybackService : MediaLibraryService() {
                 android.util.Log.d("WidgetDebug", "Transition to: $title - $artist, uri: $uriString")
                 updateWidgetState(title, artist, player.isPlaying, uriString)
                 applyReplayGain(mediaItem)
+
+                // Force recreation of audio effects on track transition to prevent hardware silence issues
+                val sessionId = player.audioSessionId
+                if (sessionId != 0) {
+                    currentAudioSessionId = 0
+                    setupAudioEffects(sessionId)
+                }
             }
 
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
@@ -223,6 +233,9 @@ class PlaybackService : MediaLibraryService() {
         } else {
             registerReceiver(bluetoothReceiver, filter)
         }
+
+        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+        audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
     }
 
     private fun updateWidgetState(title: String, artist: String, isPlaying: Boolean, uriString: String? = null) {
@@ -319,14 +332,17 @@ class PlaybackService : MediaLibraryService() {
             val lastActiveIndex = prefs.getInt("last_active_index", 0)
             val lastQueueIdsString = prefs.getString("last_queue_ids", null)
 
-            if (lastSongId != -1L) {
-                val mediaItems = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val database = com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(this@PlaybackService)
-                    val audioDao = database.audioDao()
-                    val localAudioFiles = audioDao.getAllAudioFiles()
-                    val songsMap = localAudioFiles.associateBy { it.id }
-                    
-                    val items = mutableListOf<MediaItem>()
+            val (mediaItems, targetIndex, targetPosition) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val database = com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(this@PlaybackService)
+                val audioDao = database.audioDao()
+                val localAudioFiles = audioDao.getAllAudioFiles()
+                val songsMap = localAudioFiles.associateBy { it.id }
+                
+                val items = mutableListOf<MediaItem>()
+                var computedIndex = lastActiveIndex
+                var computedPosition = lastPosition
+
+                if (lastSongId != -1L) {
                     if (!lastQueueIdsString.isNullOrEmpty()) {
                         val idStrings = lastQueueIdsString.split(",")
                         idStrings.forEach { idStr ->
@@ -381,33 +397,65 @@ class PlaybackService : MediaLibraryService() {
                                 )
                                 .build()
                             items.add(mediaItem)
+                            computedIndex = 0
                         }
                     }
-                    items
                 }
 
-                if (mediaItems.isNotEmpty()) {
-                    player.setMediaItems(mediaItems)
-                    val safeIndex = lastActiveIndex.coerceIn(0, mediaItems.size - 1)
-                    player.seekTo(safeIndex, lastPosition)
-                    player.prepare()
-                    
-                    if (skipToNextWhenRestored) {
-                        skipToNextWhenRestored = false
-                        if (player.hasNextMediaItem()) {
-                            player.seekToNextMediaItem()
-                        }
-                    } else if (skipToPrevWhenRestored) {
-                        skipToPrevWhenRestored = false
-                        if (player.hasPreviousMediaItem()) {
-                            player.seekToPreviousMediaItem()
-                        }
+                // Fallback: If nothing was restored or lastSongId was -1, but we have files in database,
+                // load all songs and shuffle them, choosing index 0 to start playback!
+                if (items.isEmpty() && localAudioFiles.isNotEmpty()) {
+                    val shuffledFiles = localAudioFiles.shuffled()
+                    shuffledFiles.forEach { song ->
+                        val trackUri = Uri.parse(song.uriString)
+                        val mediaItem = MediaItem.Builder()
+                            .setMediaId(song.id.toString())
+                            .setUri(trackUri)
+                            .setRequestMetadata(
+                                MediaItem.RequestMetadata.Builder()
+                                    .setMediaUri(trackUri)
+                                    .build()
+                            )
+                            .setMediaMetadata(
+                                MediaMetadata.Builder()
+                                    .setTitle(song.title)
+                                    .setArtist(song.artist)
+                                    .setAlbumTitle(song.album)
+                                    .setIsPlayable(true)
+                                    .setIsBrowsable(false)
+                                    .build()
+                            )
+                            .build()
+                        items.add(mediaItem)
                     }
+                    computedIndex = 0
+                    computedPosition = 0L
+                }
 
-                    if (playWhenRestored) {
-                        player.play()
-                        playWhenRestored = false
+                Triple(items, computedIndex, computedPosition)
+            }
+
+            if (mediaItems.isNotEmpty()) {
+                player.setMediaItems(mediaItems)
+                val safeIndex = targetIndex.coerceIn(0, mediaItems.size - 1)
+                player.seekTo(safeIndex, targetPosition)
+                player.prepare()
+                
+                if (skipToNextWhenRestored) {
+                    skipToNextWhenRestored = false
+                    if (player.hasNextMediaItem()) {
+                        player.seekToNextMediaItem()
                     }
+                } else if (skipToPrevWhenRestored) {
+                    skipToPrevWhenRestored = false
+                    if (player.hasPreviousMediaItem()) {
+                        player.seekToPreviousMediaItem()
+                    }
+                }
+
+                if (playWhenRestored) {
+                    player.play()
+                    playWhenRestored = false
                 }
             }
         } finally {
@@ -415,9 +463,42 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    private fun createNotificationChannelIfNeeded() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val notificationManager = getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            if (notificationManager.getNotificationChannel(CHANNEL_ID) == null) {
+                val channel = android.app.NotificationChannel(
+                    CHANNEL_ID,
+                    getString(R.string.playback_notification_channel_name),
+                    android.app.NotificationManager.IMPORTANCE_LOW
+                )
+                notificationManager.createNotificationChannel(channel)
+            }
+        }
+    }
+
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
-        val result = super.onStartCommand(intent, flags, startId)
         val action = intent?.action
+        if (action != null) {
+            if (action == "com.kevshupp.kevmusicplayer.action.PLAY_PAUSE" ||
+                action == "com.kevshupp.kevmusicplayer.action.NEXT" ||
+                action == "com.kevshupp.kevmusicplayer.action.PREVIOUS") {
+                try {
+                    createNotificationChannelIfNeeded()
+                    val notification = androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
+                        .setSmallIcon(android.R.drawable.ic_media_play)
+                        .setContentTitle("KevMusicPlayer")
+                        .setContentText("Cargando reproductor...")
+                        .setOngoing(true)
+                        .build()
+                    startForeground(1001, notification)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+
+        val result = super.onStartCommand(intent, flags, startId)
         if (action != null) {
             val player = mediaLibrarySession?.player
             if (player != null) {
@@ -522,6 +603,12 @@ class PlaybackService : MediaLibraryService() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        try {
+            val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+            audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         super.onDestroy()
     }
 
@@ -558,6 +645,26 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
+        }
+    }
+
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+            triggerAudioEffectsRecreation()
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+            triggerAudioEffectsRecreation()
+        }
+    }
+
+    private fun triggerAudioEffectsRecreation() {
+        val player = mediaLibrarySession?.player as? ExoPlayer
+        val sessionId = player?.audioSessionId ?: 0
+        if (sessionId != 0) {
+            android.util.Log.d("PlaybackService", "Audio routing changed. Recreating audio effects for session: $sessionId")
+            currentAudioSessionId = 0
+            setupAudioEffects(sessionId)
         }
     }
 
@@ -770,7 +877,7 @@ class PlaybackService : MediaLibraryService() {
 
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                 val player = mediaLibrarySession?.player as? ExoPlayer
-                if (player != null && !isFadingIn && (fadeJob == null || !fadeJob!!.isActive)) {
+                if (player != null && !isFadingIn) {
                     player.volume = currentReplayGainFactor
                 }
             }
@@ -813,7 +920,7 @@ class PlaybackService : MediaLibraryService() {
                             fadeNewTrackIn(player, crossfadeMs)
                         }
                     } else {
-                        if (player.volume < currentReplayGainFactor && !isFadingIn) {
+                        if (player.volume != currentReplayGainFactor && !isFadingIn) {
                             player.volume = currentReplayGainFactor
                         }
                     }
@@ -826,16 +933,19 @@ class PlaybackService : MediaLibraryService() {
         fadeInJob?.cancel()
         isFadingIn = true
         fadeInJob = serviceScope.launch {
-            player.volume = 0f
-            val steps = 20
-            val delayMs = (crossfadeMs / steps).coerceAtLeast(10L)
-            for (i in 1..steps) {
-                kotlinx.coroutines.delay(delayMs)
-                if (!player.isPlaying) break
-                player.volume = (i.toFloat() / steps) * currentReplayGainFactor
+            try {
+                player.volume = 0f
+                val steps = 20
+                val delayMs = (crossfadeMs / steps).coerceAtLeast(10L)
+                for (i in 1..steps) {
+                    kotlinx.coroutines.delay(delayMs)
+                    if (!player.isPlaying) break
+                    player.volume = (i.toFloat() / steps) * currentReplayGainFactor
+                }
+                player.volume = currentReplayGainFactor
+            } finally {
+                isFadingIn = false
             }
-            player.volume = currentReplayGainFactor
-            isFadingIn = false
         }
     }
 

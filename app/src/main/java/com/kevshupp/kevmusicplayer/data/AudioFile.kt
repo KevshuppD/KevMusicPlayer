@@ -22,7 +22,8 @@ data class AudioFile(
     val playCount: Int = 0,
     val dateAdded: Long = 0L,
     val lastPlayed: Long = 0L,
-    val replayGain: Float? = null
+    val replayGain: Float? = null,
+    val year: String = ""
 ) {
     val uri: Uri get() = Uri.parse(uriString)
 }

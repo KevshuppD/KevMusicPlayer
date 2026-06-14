@@ -76,9 +76,6 @@ data class ConditionNode(
     val operator: RuleOperator,
     val value: String
 ) : SmartRuleNode() {
-    companion object {
-        val songYearCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
-    }
 
     override fun evaluate(context: android.content.Context, song: AudioFile): Boolean {
         return try {
@@ -87,30 +84,7 @@ data class ConditionNode(
                 RuleField.ARTIST -> song.artist
                 RuleField.ALBUM -> song.album
                 RuleField.GENRE -> song.genre ?: ""
-                RuleField.YEAR -> {
-                    val cached = songYearCache[song.id]
-                    if (cached != null) {
-                        cached
-                    } else {
-                        val yearVal = try {
-                            val path = getPhysicalPath(context, song.id, song.uriString)
-                            if (!path.isNullOrBlank()) {
-                                val f = File(path)
-                                if (f.exists() && f.isFile) {
-                                    val audioFile = AudioFileIO.read(f)
-                                    val tag = audioFile.tag
-                                    val yearStr = tag?.getFirst(FieldKey.YEAR) ?: ""
-                                    val yearMatch = Regex("\\d{4}").find(yearStr)
-                                    yearMatch?.value ?: yearStr
-                                } else ""
-                            } else ""
-                        } catch (e: Exception) {
-                            ""
-                        }
-                        songYearCache[song.id] = yearVal
-                        yearVal
-                    }
-                }
+                RuleField.YEAR -> song.year
                 RuleField.DURATION_SECONDS -> (song.duration / 1000).toString()
                 RuleField.PLAY_COUNT -> song.playCount.toString()
                 RuleField.LAST_PLAYED_DAYS -> {
@@ -1175,24 +1149,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
                 // Reload localAudioFiles from database to sync current in-memory lists instantly!
                 val allEntities = audioDao.getAllAudioFiles()
-                val updatedFiles = allEntities.map { entity ->
-                    AudioFile(
-                        id = entity.id,
-                        title = entity.title,
-                        artist = entity.artist,
-                        album = entity.album,
-                        genre = entity.genre,
-                        duration = entity.duration,
-                        uriString = entity.uriString,
-                        folderPath = entity.folderPath,
-                        folderName = entity.folderName,
-                        lyrics = entity.lyrics,
-                        translatedLyrics = entity.translatedLyrics,
-                        playCount = entity.playCount,
-                        dateAdded = entity.dateAdded,
-                        lastPlayed = entity.lastPlayed
-                    )
-                }
+                val updatedFiles = allEntities
 
                 withContext(Dispatchers.Main) {
                     if (importedLanguage != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {

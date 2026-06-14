@@ -123,14 +123,26 @@ fun PlayerScreen(
     var isTranslating by remember { mutableStateOf(false) }
     var showTranslation by remember { mutableStateOf(true) }
 
-    LaunchedEffect(currentSongFile?.id, currentSongFile?.translatedLyrics) {
+    var lastSongId by remember { mutableStateOf<Long?>(null) }
+    var lastLyricsText by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(currentSongFile?.id, lyricsText, currentSongFile?.translatedLyrics) {
+        val songId = currentSongFile?.id
         val cached = currentSongFile?.translatedLyrics
-        translatedLyricLines = if (!cached.isNullOrBlank()) {
-            LyricsRepository.deserializeTranslations(cached)
+        if (songId != lastSongId || lyricsText != lastLyricsText) {
+            lastSongId = songId
+            lastLyricsText = lyricsText
+            translatedLyricLines = if (!cached.isNullOrBlank()) {
+                LyricsRepository.deserializeTranslations(cached)
+            } else {
+                null
+            }
+            showTranslation = true
         } else {
-            null
+            if (!cached.isNullOrBlank()) {
+                translatedLyricLines = LyricsRepository.deserializeTranslations(cached)
+            }
         }
-        showTranslation = true
     }
 
     LaunchedEffect(playerState.currentSong?.mediaId) {
@@ -546,6 +558,7 @@ fun PlayerScreen(
                         }
                     }
                     translatedLyricLines = results
+                    showTranslation = true
                     android.util.Log.d("KevTranslation", "Translation completed successfully. Total translated lines stored: ${results.size}")
                     // Persist to database cache!
                     if (currentSongFile != null && viewModel != null && results.isNotEmpty()) {

@@ -19,7 +19,8 @@ class AudioScanner(private val context: Context) {
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.DATA,
             MediaStore.Audio.Media.DATE_ADDED,
-            MediaStore.Audio.Media.GENRE
+            MediaStore.Audio.Media.GENRE,
+            MediaStore.Audio.Media.YEAR
         )
 
         // Query ALL audio files on the device (selection = null) to ensure absolutely NO songs are missed
@@ -43,6 +44,7 @@ class AudioScanner(private val context: Context) {
                 val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
                 val dateAddedColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
                 val genreColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.GENRE)
+                val yearColumn = cursor.getColumnIndex(MediaStore.Audio.Media.YEAR)
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idColumn)
@@ -84,6 +86,10 @@ class AudioScanner(private val context: Context) {
                     // Get genre directly from MediaStore column
                     val genre = cursor.getString(genreColumn) ?: "Unknown Genre"
 
+                    // Extract year from MediaStore
+                    val yearVal = if (yearColumn != -1) cursor.getInt(yearColumn) else 0
+                    val year = if (yearVal > 0) yearVal.toString() else ""
+
                     // Try to get ReplayGain metadata.
                     // Check local DB cache first to avoid extremely slow synchronous physical disk read/write on every startup scan!
                     val cachedFile = existingFiles[id]
@@ -101,7 +107,8 @@ class AudioScanner(private val context: Context) {
                             folderPath = folderPath,
                             folderName = folderName,
                             dateAdded = dateAddedMs,
-                            replayGain = replayGain
+                            replayGain = replayGain,
+                            year = year
                         )
                     )
                 }
