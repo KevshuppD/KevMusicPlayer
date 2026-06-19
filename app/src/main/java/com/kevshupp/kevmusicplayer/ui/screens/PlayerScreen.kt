@@ -91,6 +91,29 @@ fun PlayerScreen(
         return
     }
 
+    if (player.mediaItemCount == 0) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(48.dp)
+            )
+        }
+        LaunchedEffect(player.mediaItemCount) {
+            if (player.mediaItemCount == 0) {
+                kotlinx.coroutines.delay(200)
+                if (player.mediaItemCount == 0) {
+                    onBack()
+                }
+            }
+        }
+        return
+    }
+
     val playerState = rememberPlayerState(player)
     var showMoreOptions by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
@@ -478,6 +501,7 @@ fun PlayerScreen(
                                 android.util.Log.d("KevTranslation", "Google Translate successful! Skipping MyMemory fallback.")
                             }
                         } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
                             android.util.Log.e("KevTranslation", "Google Translate failed/timed out: ${e.message}")
                             e.printStackTrace()
                             com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
@@ -528,6 +552,7 @@ fun PlayerScreen(
                                         }
                                     }
                                 } catch (e: Exception) {
+                                    if (e is kotlinx.coroutines.CancellationException) throw e
                                     android.util.Log.e("KevTranslation", "MyMemory Batch $batchIdx failed: ${e.message}")
                                     com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                                         "Translation_MyMemory_Batch",
@@ -556,6 +581,7 @@ fun PlayerScreen(
                                                 }
                                             }
                                         } catch (e: Exception) {
+                                            if (e is kotlinx.coroutines.CancellationException) throw e
                                             e.printStackTrace()
                                             com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                                                 "Translation_MyMemory_Fallback",
@@ -582,6 +608,7 @@ fun PlayerScreen(
                         android.util.Log.d("KevTranslation", "Translations cached to local DB for song ID: ${currentSongFile.id}")
                     }
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     android.util.Log.e("KevTranslation", "Outer try-catch failure: ${e.message}")
                     e.printStackTrace()
                     com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(

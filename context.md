@@ -86,6 +86,9 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
 ### H. Sistema de Telemetría y Registro de Errores
 - **`TelemetryLogger`**:
   - Mapea de manera local errores críticos de inicialización y reproducción de `PlaybackService`, excepciones de codificadores/decriptores de ExoPlayer (`onPlayerError`), y fallos de inicialización del ecualizador/audio effects nativos de Android.
+  - **Detección Expandida (v1.2.5):** Ahora captura fallos de red y de parseo de JSON en las APIs de traducción de letras (Google Translate y MyMemory fallback), errores de E/S física o base de datos en el cálculo de ReplayGain, excepciones críticas al importar o exportar copias de seguridad de la aplicación, fallos al inicializar o liberar la conexión de `MediaBrowser`, y errores en el parseo de directorios excluidos o de carga inicial de SQLite en Room.
+  - **Manejo Global de Corrutinas:** Proporciona un `CoroutineExceptionHandler` integrado que captura y registra de forma centralizada cualquier excepción no controlada en hilos o ámbitos asíncronos (como el de `PlaybackService`).
+  - **API sin Contexto:** Cuenta con sobrecargas de registro estáticas que infieren el contexto global de la aplicación (`KevMusicPlayerApplication.instance`), lo que facilita la instrumentación limpia del código desde clases utilitarias o repositorios.
   - Almacena de forma persistente las trazas de error con marcas de tiempo en el archivo `telemetry_errors.log` dentro del directorio de almacenamiento privado de la aplicación (`filesDir`), si el usuario lo habilita en la configuración.
   - Ofrece una interfaz de usuario integrada para visualizar los logs en tiempo real, vaciar el registro y copiar el volcado de errores formateados al portapapeles para su fácil diagnóstico y resolución por parte del equipo de soporte.
 

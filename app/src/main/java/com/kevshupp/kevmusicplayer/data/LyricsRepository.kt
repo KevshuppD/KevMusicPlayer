@@ -99,6 +99,7 @@ object LyricsRepository {
                     }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 e.printStackTrace()
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     KevMusicPlayerApplication.instance,
@@ -145,6 +146,7 @@ object LyricsRepository {
                     }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 e.printStackTrace()
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     KevMusicPlayerApplication.instance,
@@ -212,6 +214,7 @@ object LyricsRepository {
                     }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 e.printStackTrace()
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     KevMusicPlayerApplication.instance,
@@ -234,6 +237,7 @@ object LyricsRepository {
                     } else null
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 e.printStackTrace()
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     KevMusicPlayerApplication.instance,

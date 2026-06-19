@@ -259,42 +259,54 @@ class PlaybackService : MediaLibraryService() {
                     val retriever = android.media.MediaMetadataRetriever()
                     var success = false
                     try {
-                        retriever.setDataSource(this@PlaybackService, Uri.parse(uriString))
-                        val picture = retriever.embeddedPicture
-                        if (picture != null) {
-                            val opts = android.graphics.BitmapFactory.Options().apply {
-                                inJustDecodeBounds = true
+                        var isUriReadable = false
+                        try {
+                            contentResolver.openAssetFileDescriptor(Uri.parse(uriString), "r")?.use {
+                                isUriReadable = true
                             }
-                            android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, opts)
-                            
-                            val targetSize = 200
-                            var sampleSize = 1
-                            val largestDim = maxOf(opts.outWidth, opts.outHeight)
-                            if (largestDim > targetSize) {
-                                sampleSize = Math.round(largestDim.toFloat() / targetSize)
-                            }
-                            
-                            val decodeOpts = android.graphics.BitmapFactory.Options().apply {
-                                inSampleSize = sampleSize
-                            }
-                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, decodeOpts)
-                            if (bitmap != null) {
-                                val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, targetSize, targetSize, true)
-                                val tmpFile = java.io.File(cacheDir, "current_widget_art_tmp.png")
-                                java.io.FileOutputStream(tmpFile).use { out ->
-                                    scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
+                        } catch (e: Exception) {
+                            // File not found or not readable
+                        }
+
+                        if (isUriReadable) {
+                            retriever.setDataSource(this@PlaybackService, Uri.parse(uriString))
+                            val picture = retriever.embeddedPicture
+                            if (picture != null) {
+                                val opts = android.graphics.BitmapFactory.Options().apply {
+                                    inJustDecodeBounds = true
                                 }
-                                if (tmpFile.exists()) {
-                                    tmpFile.renameTo(artFile)
+                                android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, opts)
+                                
+                                val targetSize = 200
+                                var sampleSize = 1
+                                val largestDim = maxOf(opts.outWidth, opts.outHeight)
+                                if (largestDim > targetSize) {
+                                    sampleSize = Math.round(largestDim.toFloat() / targetSize)
                                 }
-                                if (scaledBitmap != bitmap) {
-                                    bitmap.recycle()
+                                
+                                val decodeOpts = android.graphics.BitmapFactory.Options().apply {
+                                    inSampleSize = sampleSize
                                 }
-                                scaledBitmap.recycle()
-                                success = true
+                                val bitmap = android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, decodeOpts)
+                                if (bitmap != null) {
+                                    val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, targetSize, targetSize, true)
+                                    val tmpFile = java.io.File(cacheDir, "current_widget_art_tmp.png")
+                                    java.io.FileOutputStream(tmpFile).use { out ->
+                                        scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
+                                    }
+                                    if (tmpFile.exists()) {
+                                        tmpFile.renameTo(artFile)
+                                    }
+                                    if (scaledBitmap != bitmap) {
+                                        bitmap.recycle()
+                                    }
+                                    scaledBitmap.recycle()
+                                    success = true
+                                }
                             }
                         }
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         e.printStackTrace()
                         com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                             this@PlaybackService,
@@ -822,7 +834,7 @@ class PlaybackService : MediaLibraryService() {
                         loudnessEnhancer?.setTargetGain(800)
                     } catch (e: Exception) {
                         e.printStackTrace()
-                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(this, "AudioEffects_Loudness_Gain", "Failed to set target gain on LoudnessEnhancer", e)
+                        android.util.Log.w("PlaybackService", "Failed to set target gain on LoudnessEnhancer: ${e.message}")
                     }
                 } else {
                     try { loudnessEnhancer?.release() } catch (e: Exception) {}
