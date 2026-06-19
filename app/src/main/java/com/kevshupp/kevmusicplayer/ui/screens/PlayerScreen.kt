@@ -480,6 +480,11 @@ fun PlayerScreen(
                         } catch (e: Exception) {
                             android.util.Log.e("KevTranslation", "Google Translate failed/timed out: ${e.message}")
                             e.printStackTrace()
+                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                                "Translation_Google",
+                                "Google Translate failed/timed out",
+                                e
+                            )
                         }
                         
                         // 2. Fall back to MyMemory ONLY if Google Translate failed!
@@ -524,6 +529,11 @@ fun PlayerScreen(
                                     }
                                 } catch (e: Exception) {
                                     android.util.Log.e("KevTranslation", "MyMemory Batch $batchIdx failed: ${e.message}")
+                                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                                        "Translation_MyMemory_Batch",
+                                        "MyMemory Batch $batchIdx failed",
+                                        e
+                                    )
                                 }
                                 
                                 if (!success && !hitRateLimit) {
@@ -547,6 +557,11 @@ fun PlayerScreen(
                                             }
                                         } catch (e: Exception) {
                                             e.printStackTrace()
+                                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                                                "Translation_MyMemory_Fallback",
+                                                "MyMemory single line fallback failed for line indexing",
+                                                e
+                                            )
                                         }
                                     }
                                 }
@@ -569,6 +584,11 @@ fun PlayerScreen(
                 } catch (e: Exception) {
                     android.util.Log.e("KevTranslation", "Outer try-catch failure: ${e.message}")
                     e.printStackTrace()
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                        "Translation_Outer",
+                        "Outer translation task failed",
+                        e
+                    )
                     withContext(Dispatchers.Main) {
                         val msg = if (e.message == "rate_limit_429") {
                             getLocalized(

@@ -115,6 +115,7 @@ fun SettingsScreen(
     var renamingCurrentName by remember { mutableStateOf("") }
 
     var showFolderList by remember { mutableStateOf(false) }
+    var showDuplicateFinder by remember { mutableStateOf(false) }
     val deviceFolders = remember { viewModel.getAllDeviceFolders(context) }
     var excludedFolders by remember { mutableStateOf(viewModel.getExcludedFolders()) }
 
@@ -498,7 +499,8 @@ fun SettingsScreen(
                                 setShowFolderList = { showFolderList = it },
                                 deviceFolders = deviceFolders,
                                 excludedFolders = excludedFolders,
-                                setExcludedFolders = { excludedFolders = it }
+                                setExcludedFolders = { excludedFolders = it },
+                                onFindDuplicates = { showDuplicateFinder = true }
                             )
                         }
                         "about" -> {
@@ -512,5 +514,12 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    if (showDuplicateFinder) {
+        DuplicateFinderDialog(
+            viewModel = viewModel,
+            onDismiss = { showDuplicateFinder = false }
+        )
     }
 }

@@ -12,13 +12,8 @@
 #   public *;
 #}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
-
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Preserve the line number information and source files for debugging release stack traces
+-keepattributes SourceFile,LineNumberTable
 
 # Keep Room entities, DAOs, databases, and serialization models
 -keep class com.kevshupp.kevmusicplayer.data.** { *; }
@@ -40,6 +35,10 @@
 -dontwarn javax.swing.**
 -dontwarn java.awt.**
 -dontwarn javax.imageio.**
+
+# Keep jaudiotagger library classes, interfaces, and all members (especially reflection-instantiated constructors)
+-keep class org.jaudiotagger.** { *; }
+-keep interface org.jaudiotagger.** { *; }
 
 # OkHttp3 Platform and TLS Rules for secure HTTPS network requests in release mode
 -keepattributes Signature, InnerClasses, AnnotationDefault, EnclosingMethod

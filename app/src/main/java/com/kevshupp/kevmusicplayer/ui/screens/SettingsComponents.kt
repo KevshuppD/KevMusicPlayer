@@ -671,6 +671,176 @@ fun SystemSettingsSection(
                         }
                     )
                 }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+
+                // 4. Telemetry Switch
+                var telemetryEnabled by remember { mutableStateOf(com.kevshupp.kevmusicplayer.data.TelemetryLogger.isEnabled(context)) }
+                var showTelemetryDialog by remember { mutableStateOf(false) }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.BugReport,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(14.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Registro de Errores", "Error Telemetry"),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Guarda localmente los fallos y errores de audio para facilitar su análisis y solución.",
+                                "Save local audio playback errors and exceptions to help diagnose and resolve issues."
+                            ),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+
+                    Switch(
+                        checked = telemetryEnabled,
+                        onCheckedChange = { checked ->
+                            telemetryEnabled = checked
+                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.setEnabled(context, checked)
+                        }
+                    )
+                }
+
+                if (telemetryEnabled) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(start = 54.dp)
+                    ) {
+                        Button(
+                            onClick = { showTelemetryDialog = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                contentColor = MaterialTheme.colorScheme.primary
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f).height(36.dp)
+                        ) {
+                            Icon(Icons.Rounded.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(getLocalized("Ver Registro", "View Log"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = {
+                                com.kevshupp.kevmusicplayer.data.TelemetryLogger.clearLogs(context)
+                                android.widget.Toast.makeText(context, getLocalized("Registro limpiado", "Log cleared"), android.widget.Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f).height(36.dp)
+                        ) {
+                            Icon(Icons.Rounded.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(getLocalized("Limpiar", "Clear Log"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                if (showTelemetryDialog) {
+                    val logs = remember(showTelemetryDialog) { com.kevshupp.kevmusicplayer.data.TelemetryLogger.getLogs(context) }
+                    AlertDialog(
+                        onDismissRequest = { showTelemetryDialog = false },
+                        title = {
+                            Text(
+                                text = getLocalized("Registro de Errores de la App", "App Error Log"),
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        text = {
+                            Column {
+                                Text(
+                                    text = getLocalized(
+                                        "Copia este registro y pégalo en el chat para que el asistente pueda analizar y corregir los problemas.",
+                                        "Copy this log and paste it into the chat so the assistant can analyze and fix the issues."
+                                    ),
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                                Card(
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.4f)),
+                                    modifier = Modifier.fillMaxWidth().height(250.dp)
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                                        if (logs.isBlank()) {
+                                            Text(
+                                                text = getLocalized("El registro está vacío.", "The log is empty."),
+                                                color = Color.White.copy(alpha = 0.4f),
+                                                fontSize = 12.sp,
+                                                modifier = Modifier.align(Alignment.Center)
+                                            )
+                                        } else {
+                                            val scroll = rememberScrollState()
+                                            Text(
+                                                text = logs,
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                modifier = Modifier.fillMaxSize().verticalScroll(scroll)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    if (logs.isNotBlank()) {
+                                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                        val clip = android.content.ClipData.newPlainText("Telemetry Log", logs)
+                                        clipboard.setPrimaryClip(clip)
+                                        android.widget.Toast.makeText(context, getLocalized("Copiado al portapapeles", "Copied to clipboard"), android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                enabled = logs.isNotBlank(),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.Black)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(getLocalized("Copiar", "Copy"), color = Color.Black, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showTelemetryDialog = false }) {
+                                Text(getLocalized("Cerrar", "Close"), color = Color.White.copy(alpha = 0.6f))
+                            }
+                        },
+                        containerColor = Color(0xFF161829),
+                        titleContentColor = Color.White,
+                        textContentColor = Color.White
+                    )
+                }
             }
         }
     }
@@ -1277,7 +1447,8 @@ fun LibrarySettingsSection(
     setShowFolderList: (Boolean) -> Unit,
     deviceFolders: List<String>,
     excludedFolders: List<String>,
-    setExcludedFolders: (List<String>) -> Unit
+    setExcludedFolders: (List<String>) -> Unit,
+    onFindDuplicates: () -> Unit
 ) {
     // 1. Visible Navigation Categories Section (Drag-to-Reorder)
     Column {
@@ -1734,6 +1905,60 @@ fun LibrarySettingsSection(
                         color = MaterialTheme.colorScheme.onPrimary
                     )
                 }
+            }
+
+            // Duplicate Finder Section
+            HorizontalDivider(
+                color = settingsDividerColor(),
+                modifier = Modifier.padding(vertical = 16.dp)
+            )
+
+            Text(
+                text = getLocalized("BUSCADOR DE DUPLICADOS", "DUPLICATE FINDER"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.align(Alignment.Start)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = getLocalized(
+                    "Busca y elimina canciones duplicadas en tu almacenamiento para liberar espacio.",
+                    "Search and delete duplicate songs on your storage to free up space."
+                ),
+                fontSize = 12.sp,
+                color = settingsTextMutedColor(),
+                modifier = Modifier.align(Alignment.Start)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = onFindDuplicates,
+                enabled = !isScanning && !isRenaming,
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.DeleteSweep,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = getLocalized("Buscar Canciones Duplicadas", "Search Duplicate Songs"),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
             }
 
             // Excluded Folders Section

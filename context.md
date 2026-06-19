@@ -73,6 +73,22 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
   2. Borrado completo de las preferencias de sesión del player (`playback_prefs`) que guarden rutas o índices obsoletos.
   3. Cierre y re-conexión limpia del cliente `MediaBrowser` usando `viewModel.connect()` reactivamente sin forzar una recreación de la actividad (`Activity.recreate()`).
 
+### G. Buscador y Eliminador de Música Duplicada
+- **Algoritmo de Identificación Bifásico:**
+  - *Fase 1 (Sufijos del mismo directorio):* Escanea carpetas locales y agrupa canciones descartando sufijos como `(1)`, `(2)`, `_1` y `- Copia` de sus nombres de archivos físicos para detectar clones redundantes.
+  - *Fase 2 (Metadatos e igual duración):* Para canciones en distintos directorios, las asocia por coincidencia de título y artista, acotando la búsqueda a duraciones que no difieran en más de 3 segundos para evitar falsos positivos.
+  - *Conservación Inteligente:* El sistema determina de forma autónoma el archivo "original" para preservar, priorizando la ausencia de sufijos numéricos, la fecha de creación más antigua en el dispositivo, y la ruta física más corta.
+- **Borrado Masivo y Sincronizado (`deleteSongs`):**
+  - Ejecuta la eliminación física (`File.delete()`) en hilos IO (`Dispatchers.IO`) para evitar bloqueos del hilo de interfaz (ANRs).
+  - Remueve los archivos eliminados del `ContentResolver` de Android y los borra de la caché de la base de datos Room.
+  - Se sincroniza activamente con ExoPlayer y las colas de reproducción para detener o avanzar la reproducción si la canción que está sonando ha sido marcada para borrado.
+
+### H. Sistema de Telemetría y Registro de Errores
+- **`TelemetryLogger`**:
+  - Mapea de manera local errores críticos de inicialización y reproducción de `PlaybackService`, excepciones de codificadores/decriptores de ExoPlayer (`onPlayerError`), y fallos de inicialización del ecualizador/audio effects nativos de Android.
+  - Almacena de forma persistente las trazas de error con marcas de tiempo en el archivo `telemetry_errors.log` dentro del directorio de almacenamiento privado de la aplicación (`filesDir`), si el usuario lo habilita en la configuración.
+  - Ofrece una interfaz de usuario integrada para visualizar los logs en tiempo real, vaciar el registro y copiar el volcado de errores formateados al portapapeles para su fácil diagnóstico y resolución por parte del equipo de soporte.
+
 ---
 
 ## 3. Esquema y Definición de Datos (Room Database)

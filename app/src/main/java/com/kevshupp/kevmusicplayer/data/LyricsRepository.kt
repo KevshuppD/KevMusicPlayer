@@ -7,6 +7,7 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import com.kevshupp.kevmusicplayer.KevMusicPlayerApplication
 
 data class LyricLine(
     val timeMs: Long,
@@ -99,6 +100,12 @@ object LyricsRepository {
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    KevMusicPlayerApplication.instance,
+                    "LyricsSearch",
+                    "Failed search from LrcLib for $artist - $title",
+                    e
+                )
             }
             // Prioritize results that have synced lyrics
             list.sortedWith(compareByDescending<LrcLibSearchResult> { it.syncedLyrics != null }
@@ -139,6 +146,12 @@ object LyricsRepository {
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    KevMusicPlayerApplication.instance,
+                    "LyricsFetch",
+                    "Failed fetch from LrcLib for $artist - $title",
+                    e
+                )
             }
             null
         }
@@ -200,6 +213,12 @@ object LyricsRepository {
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    KevMusicPlayerApplication.instance,
+                    "CoverSearch",
+                    "Failed search from iTunes for $query",
+                    e
+                )
             }
             list
         }
@@ -216,6 +235,12 @@ object LyricsRepository {
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    KevMusicPlayerApplication.instance,
+                    "CoverDownload",
+                    "Failed download from $url",
+                    e
+                )
                 null
             }
         }

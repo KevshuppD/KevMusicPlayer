@@ -115,6 +115,12 @@ class AudioScanner(private val context: Context) {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context,
+                "AudioScanner",
+                "Failed to scan audio files from MediaStore",
+                e
+            )
             return@withContext null
         }
         return@withContext audioList

@@ -30,6 +30,13 @@ import java.io.InputStream
 import java.io.OutputStream
 import android.content.Context
 
+private val REGEX_SUFFIX_PARENTHESIS = Regex("\\s*\\(\\d+\\)\\.[a-zA-Z0-9]+$")
+private val REGEX_SUFFIX_COPIA = Regex("\\s*-\\s*[Cc]opia\\.[a-zA-Z0-9]+$")
+private val REGEX_SUFFIX_UNDERSCORE = Regex("\\s*_\\d+\\.[a-zA-Z0-9]+$")
+
+private val REGEX_CLEAN_PARENTHESIS = Regex("\\s*\\(\\d+\\)$")
+private val REGEX_CLEAN_COPIA = Regex("\\s*-\\s*[Cc]opia$")
+private val REGEX_CLEAN_UNDERSCORE = Regex("\\s*_\\d+$")
 
 enum class SmartPlaylistRule {
     MOST_PLAYED, RECENTLY_ADDED, PLAYBACK_HISTORY, LONGEST_SONGS, SHORTEST_SONGS, NEVER_PLAYED, RANDOM_MIX
@@ -239,6 +246,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    "Init_Database_Load",
+                    "Failed to load cached audio files from Room DB on startup",
+                    e
+                )
             }
         }
     }
@@ -311,6 +323,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 scanFiles()
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    "MediaBrowser_Connect",
+                    "Failed to initialize MediaBrowser connection",
+                    e
+                )
             }
         }, ContextCompat.getMainExecutor(getApplication()))
     }
@@ -322,6 +339,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 MediaBrowser.releaseFuture(it)
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    "MediaBrowser_Disconnect",
+                    "Failed to release MediaBrowser future",
+                    e
+                )
             }
         }
         browser.value = null
@@ -522,6 +544,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    getApplication<android.app.Application>(),
+                    "BackgroundLyricsFetch",
+                    "Failed to fetch lyrics in background for songId $id",
+                    e
+                )
             }
         }
     }
@@ -549,6 +577,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         val jsonArray = org.json.JSONArray(excludedJson)
                         (0 until jsonArray.length()).map { jsonArray.getString(it) }
                     } catch (e: Exception) {
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                            "Excluded_Folders_Parse",
+                            "Failed to parse excluded folders JSON",
+                            e
+                        )
                         emptyList<String>()
                     }
 
@@ -599,6 +632,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    getApplication<android.app.Application>(),
+                    "LibraryScan",
+                    "Scan failed",
+                    e
+                )
             } finally {
                 isScanning.value = false
             }
@@ -1006,6 +1045,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    "Backup_Export",
+                    "Failed to export settings/playlists backup JSON",
+                    e
+                )
                 withContext(Dispatchers.Main) {
                     onError(e)
                 }
@@ -1198,6 +1242,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    "Backup_Import",
+                    "Failed to import/restore settings/playlists backup JSON",
+                    e
+                )
                 withContext(Dispatchers.Main) {
                     onError(e)
                 }
@@ -1717,6 +1766,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             tag.setField(artwork)
                         } catch (e: Throwable) {
                             e.printStackTrace()
+                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "MetadataArtwork", "Failed to set artwork field for songId $songId", e)
                         }
                     }
                     audioFile.tag = tag
@@ -1781,8 +1831,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     onSuccess()
                 }
             } catch (e: Throwable) {
+                val ex = if (e is Exception) e else Exception(e)
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "MetadataUpdate", "Failed to update song metadata for songId $songId", ex)
                 withContext(Dispatchers.Main) {
-                    onError(if (e is Exception) e else Exception(e))
+                    onError(ex)
                 }
             }
         }
@@ -1810,8 +1862,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     throw Exception("No songs found in album $albumName")
                 }
 
+                var successCount = 0
+                var failCount = 0
                 for (song in songsInAlbum) {
-                    writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
+                    val success = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
                         val tag = audioFile.getTagOrCreateAndSetDefault()
                         try {
                             tag.deleteArtworkField()
@@ -1839,12 +1893,29 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             tag.setField(artwork)
                         } catch (e: Throwable) {
                             e.printStackTrace()
+                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumCoverArtwork", "Failed to set artwork field in updateAlbumCover for songId ${song.id}", e)
                         }
                         audioFile.tag = tag
                     }
 
-                    // Update in-memory artwork cache
-                    com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, coverBytes)
+                    if (success) {
+                        successCount++
+                        // Update in-memory artwork cache
+                        com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, coverBytes)
+                    } else {
+                        failCount++
+                    }
+                }
+
+                if (failCount > 0) {
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                        context, "AlbumCoverUpdate",
+                        "Failed to update cover for $failCount out of ${songsInAlbum.size} songs in album $albumName"
+                    )
+                }
+
+                if (successCount == 0 && songsInAlbum.isNotEmpty()) {
+                    throw Exception("Failed to write cover art to any songs in the album")
                 }
 
                 // Force UI update by refreshing the localAudioFiles in-memory list
@@ -1881,8 +1952,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     onSuccess()
                 }
             } catch (e: Throwable) {
+                val ex = if (e is Exception) e else Exception(e)
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumCoverUpdate", "Failed to update album cover for $albumName", ex)
                 withContext(Dispatchers.Main) {
-                    onError(if (e is Exception) e else Exception(e))
+                    onError(ex)
                 }
             }
         }
@@ -1913,8 +1986,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 // 1. Write tags physically for each song
+                var successCount = 0
+                var failCount = 0
                 for (song in songsInAlbum) {
-                    writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
+                    val success = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
                         val tag = audioFile.getTagOrCreateAndSetDefault()
                         tag.setField(FieldKey.ALBUM, newAlbumName)
                         if (newArtist.isNotBlank()) {
@@ -1947,15 +2022,32 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                 tag.setField(artwork)
                             } catch (e: Throwable) {
                                 e.printStackTrace()
+                                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumMetadataArtwork", "Failed to set artwork field in updateAlbumMetadata for songId ${song.id}", e)
                             }
                         }
                         audioFile.tag = tag
                     }
 
-                    // Update in-memory artwork cache if new cover provided
-                    if (coverBytes != null) {
-                        com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, coverBytes)
+                    if (success) {
+                        successCount++
+                        // Update in-memory artwork cache if new cover provided
+                        if (coverBytes != null) {
+                            com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, coverBytes)
+                        }
+                    } else {
+                        failCount++
                     }
+                }
+
+                if (failCount > 0) {
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                        context, "AlbumMetadataUpdate",
+                        "Failed to update metadata for $failCount out of ${songsInAlbum.size} songs in album $oldAlbumName"
+                    )
+                }
+
+                if (successCount == 0 && songsInAlbum.isNotEmpty()) {
+                    throw Exception("Failed to write metadata to any songs in the album")
                 }
 
                 // 2. Update Room database entries
@@ -2017,8 +2109,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     onSuccess()
                 }
             } catch (e: Throwable) {
+                val ex = if (e is Exception) e else Exception(e)
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumMetadataUpdate", "Failed to update album metadata for $oldAlbumName", ex)
                 withContext(Dispatchers.Main) {
-                    onError(if (e is Exception) e else Exception(e))
+                    onError(ex)
                 }
             }
         }
@@ -2200,6 +2294,265 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         return list.sorted()
     }
 
+    suspend fun findDuplicates(context: android.content.Context): List<DuplicateGroup> = withContext(Dispatchers.IO) {
+        val groups = mutableListOf<DuplicateGroup>()
+        val localFilesCopy = ArrayList(localAudioFiles)
+        if (localFilesCopy.isEmpty()) return@withContext emptyList()
+        
+        val pathMap = mutableMapOf<Long, String>()
+        val sizeMap = mutableMapOf<Long, Long>()
+        try {
+            val projection = arrayOf(
+                android.provider.MediaStore.Audio.Media._ID,
+                android.provider.MediaStore.Audio.Media.DATA,
+                android.provider.MediaStore.Audio.Media.SIZE
+            )
+            context.contentResolver.query(
+                android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media._ID)
+                val dataCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.DATA)
+                val sizeCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.SIZE)
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idCol)
+                    val data = cursor.getString(dataCol)
+                    val size = cursor.getLong(sizeCol)
+                    if (!data.isNullOrEmpty()) {
+                        pathMap[id] = data
+                        sizeMap[id] = size
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        
+        localFilesCopy.forEach { file ->
+            val path = pathMap[file.id]
+            if (path != null && sizeMap[file.id] == null) {
+                try {
+                    val f = java.io.File(path)
+                    if (f.exists()) {
+                        sizeMap[file.id] = f.length()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+
+        val processedIds = mutableSetOf<Long>()
+
+        val folderGroups = localFilesCopy.groupBy { file ->
+            val path = pathMap[file.id] ?: ""
+            val parentPath = if (path.isNotEmpty()) java.io.File(path).parent ?: "" else file.folderPath
+            val name = if (path.isNotEmpty()) java.io.File(path).name else file.title
+            val cleanName = cleanFilename(name).lowercase()
+            Pair(parentPath.lowercase(), cleanName)
+        }
+
+        folderGroups.forEach { (_, files) ->
+            if (files.size > 1) {
+                val sorted = files.sortedWith(compareBy<AudioFile> { file ->
+                    val path = pathMap[file.id] ?: ""
+                    val name = java.io.File(path).name
+                    val hasSuffix = name.contains(REGEX_SUFFIX_PARENTHESIS) || 
+                                    name.contains(REGEX_SUFFIX_COPIA) ||
+                                    name.contains(REGEX_SUFFIX_UNDERSCORE)
+                    if (hasSuffix) 1 else 0
+                }.thenBy { it.dateAdded }
+                 .thenBy { (pathMap[it.id] ?: "").length })
+
+                val originalFile = sorted.first()
+                val originalPath = pathMap[originalFile.id] ?: ""
+                val originalSize = sizeMap[originalFile.id] ?: 0L
+
+                val duplicateItems = sorted.drop(1).map { file ->
+                    val path = pathMap[file.id] ?: ""
+                    val size = sizeMap[file.id] ?: 0L
+                    processedIds.add(file.id)
+                    DuplicateItem(file, path, size)
+                }
+
+                processedIds.add(originalFile.id)
+
+                groups.add(
+                    DuplicateGroup(
+                        original = DuplicateItem(originalFile, originalPath, originalSize),
+                        duplicates = duplicateItems
+                    )
+                )
+            }
+        }
+
+        val remainingFiles = localFilesCopy.filter { !processedIds.contains(it.id) }
+        val metaGroups = remainingFiles.groupBy { file ->
+            val t = file.title.trim().lowercase()
+            val a = file.artist.trim().lowercase()
+            Pair(t, a)
+        }
+
+        metaGroups.forEach { (metaKey, files) ->
+            val title = metaKey.first
+            val artist = metaKey.second
+            
+            val isUnknown = title.isBlank() || title.contains("unknown") ||
+                            artist.isBlank() || artist.contains("unknown")
+            
+            if (!isUnknown && files.size > 1) {
+                val partitions = mutableListOf<MutableList<AudioFile>>()
+                files.forEach { file ->
+                    var added = false
+                    for (part in partitions) {
+                        val representative = part.first()
+                        if (Math.abs(representative.duration - file.duration) <= 3000) {
+                            part.add(file)
+                            added = true
+                            break
+                        }
+                    }
+                    if (!added) {
+                        partitions.add(mutableListOf(file))
+                    }
+                }
+
+                partitions.forEach { part ->
+                    if (part.size > 1) {
+                        val sorted = part.sortedWith(compareBy<AudioFile> { file ->
+                            val path = pathMap[file.id] ?: ""
+                            val name = java.io.File(path).name
+                            val hasSuffix = name.contains(REGEX_SUFFIX_PARENTHESIS) || 
+                                            name.contains(REGEX_SUFFIX_COPIA) ||
+                                            name.contains(REGEX_SUFFIX_UNDERSCORE)
+                            if (hasSuffix) 1 else 0
+                        }.thenBy { it.dateAdded }
+                         .thenBy { (pathMap[it.id] ?: "").length })
+
+                        val originalFile = sorted.first()
+                        val originalPath = pathMap[originalFile.id] ?: ""
+                        val originalSize = sizeMap[originalFile.id] ?: 0L
+
+                        val duplicateItems = sorted.drop(1).map { file ->
+                            val path = pathMap[file.id] ?: ""
+                            val size = sizeMap[file.id] ?: 0L
+                            DuplicateItem(file, path, size)
+                        }
+
+                        groups.add(
+                            DuplicateGroup(
+                                original = DuplicateItem(originalFile, originalPath, originalSize),
+                                duplicates = duplicateItems
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        return@withContext groups
+    }
+
+    private fun cleanFilename(filename: String): String {
+        val nameWithoutExt = filename.substringBeforeLast(".")
+        return nameWithoutExt
+            .replace(REGEX_CLEAN_PARENTHESIS, "")
+            .replace(REGEX_CLEAN_COPIA, "")
+            .replace(REGEX_CLEAN_UNDERSCORE, "")
+            .trim()
+    }
+
+    fun deleteSongs(context: android.content.Context, songIds: List<Long>, onComplete: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                val playingId = browser.value?.currentMediaItem?.mediaId
+                val isPlayingDeleted = playingId != null && songIds.contains(playingId.toLongOrNull() ?: -1L)
+                if (isPlayingDeleted) {
+                    val b = browser.value
+                    if (b != null) {
+                        if (b.hasNextMediaItem()) {
+                            b.seekToNext()
+                        } else if (b.hasPreviousMediaItem()) {
+                            b.seekToPrevious()
+                        } else {
+                            b.stop()
+                        }
+                    }
+                }
+
+                songIds.forEach { songId ->
+                    val song = localAudioFiles.find { it.id == songId } ?: return@forEach
+                    
+                    var path: String? = null
+                    try {
+                        val uri = Uri.parse(song.uriString)
+                        path = if (uri.scheme == "file") {
+                            uri.path
+                        } else if (uri.scheme == "content") {
+                            val projection = arrayOf(android.provider.MediaStore.Audio.Media.DATA)
+                            val cursor = context.contentResolver.query(uri, projection, null, null, null)
+                            val dataPath = cursor?.use {
+                                if (it.moveToFirst()) {
+                                    val columnIndex = it.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.DATA)
+                                    it.getString(columnIndex)
+                                } else null
+                            }
+                            dataPath
+                        } else {
+                            song.uriString
+                        }
+                        
+                        if (!path.isNullOrEmpty()) {
+                            val file = java.io.File(path)
+                            if (file.exists()) {
+                                file.delete()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                            context,
+                            "FileDelete",
+                            "Failed to physically delete file for songId $songId (path: $path)",
+                            e
+                        )
+                    }
+                    
+                    try {
+                        val uri = Uri.parse(song.uriString)
+                        context.contentResolver.delete(uri, null, null)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                            context,
+                            "ContentResolverDelete",
+                            "Failed to delete URI from ContentResolver for songId $songId (uri: ${song.uriString})",
+                            e
+                        )
+                    }
+                    
+                    audioDao.deleteById(songId)
+                    localAudioFiles.removeAll { it.id == songId }
+                }
+                
+                withContext(Dispatchers.Main) {
+                    onComplete()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    context,
+                    "DeleteSongs",
+                    "Bulk deletion operation failed",
+                    e
+                )
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         browser.value?.release()
@@ -2207,6 +2560,17 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         browser.value = null
     }
 }
+
+data class DuplicateItem(
+    val file: AudioFile,
+    val path: String,
+    val sizeBytes: Long
+)
+
+data class DuplicateGroup(
+    val original: DuplicateItem,
+    val duplicates: List<DuplicateItem>
+)
 
 fun getPhysicalPath(context: android.content.Context, songId: Long, uriString: String? = null): String? {
     val uri = if (!uriString.isNullOrBlank()) {
@@ -2352,7 +2716,14 @@ fun getMimeTypeFromBytes(bytes: ByteArray?): String {
 }
 
 fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, uriString: String?, block: (org.jaudiotagger.audio.AudioFile) -> Unit): Boolean {
-    val physicalPath = getPhysicalPath(context, songId, uriString) ?: return false
+    val physicalPath = getPhysicalPath(context, songId, uriString)
+    if (physicalPath == null) {
+        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+            context, "MetadataWrite", 
+            "Failed to get physical path for songId $songId (uri: $uriString)"
+        )
+        return false
+    }
     val uri = if (!uriString.isNullOrBlank()) {
         Uri.parse(uriString)
     } else {
@@ -2375,6 +2746,10 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
             }
         } ?: run {
             android.util.Log.e("MetadataWrite", "Failed to open input stream for URI: $uri")
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context, "MetadataWrite", 
+                "Failed to open input stream for songId $songId (uri: $uri)"
+            )
             return false
         }
         
@@ -2412,6 +2787,10 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
                 }
             } ?: run {
                 android.util.Log.e("MetadataWrite", "Fallback openOutputStream returned null")
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    context, "MetadataWrite", 
+                    "Fallback openOutputStream returned null for songId $songId (uri: $uri)"
+                )
                 return false
             }
             android.util.Log.d("MetadataWrite", "Successfully copied temp back via ContentResolver fallback")
@@ -2427,6 +2806,7 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
         true
     } catch (e: Exception) {
         android.util.Log.e("MetadataWrite", "Exception in writeMetadataWithTempFile", e)
+        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "MetadataWrite", "Failed in writeMetadataWithTempFile for songId $songId (path: $physicalPath)", e)
         false
     } finally {
         try {

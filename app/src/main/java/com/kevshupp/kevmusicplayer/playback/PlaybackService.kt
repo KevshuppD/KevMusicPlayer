@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
 @Suppress("DEPRECATION")
 class PlaybackService : MediaLibraryService() {
     private var mediaLibrarySession: MediaLibrarySession? = null
-    private val serviceScope = CoroutineScope(Dispatchers.Main)
+    private val serviceScope = CoroutineScope(Dispatchers.Main + com.kevshupp.kevmusicplayer.data.TelemetryLogger.getExceptionHandler("PlaybackService_Scope"))
     private var wakeLock: android.os.PowerManager.WakeLock? = null
     private var playWhenRestored = false
     private var isRestoring = false
@@ -127,6 +127,16 @@ class PlaybackService : MediaLibraryService() {
                     val prefs = getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
                     prefs.edit().putInt("audio_session_id", audioSessionId).apply()
                 }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                android.util.Log.e("PlaybackService", "ExoPlayer error: ${error.message}", error)
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    this@PlaybackService,
+                    "ExoPlayer_Error",
+                    "ErrorCodeName: ${error.errorCodeName}, ErrorCode: ${error.errorCode}",
+                    error
+                )
             }
         })
 
@@ -286,6 +296,12 @@ class PlaybackService : MediaLibraryService() {
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                            this@PlaybackService,
+                            "Widget_Art_Extract",
+                            "Failed to extract art from uri $uriString for widget",
+                            e
+                        )
                     } finally {
                         try {
                             retriever.release()
@@ -315,6 +331,12 @@ class PlaybackService : MediaLibraryService() {
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    this@PlaybackService,
+                    "Widget_State_Update",
+                    "Failed to update Glance widget state for $title - $artist",
+                    e
+                )
             }
         }
     }
@@ -714,59 +736,76 @@ class PlaybackService : MediaLibraryService() {
             // Equalizer
             try {
                 val eqEnabled = prefs.getBoolean("eq_enabled", false)
-                if (equalizer == null) {
-                    equalizer = android.media.audiofx.Equalizer(0, audioSessionId)
-                }
-                equalizer?.enabled = eqEnabled
-                
-                val eq = equalizer
-                if (eq != null && eqEnabled) {
-                    val bandsStr = prefs.getString("eq_bands", null) ?: "0,0,0,0,0"
-                    val bands = bandsStr.split(",").mapNotNull { it.toIntOrNull() }
-                    val numBands = eq.numberOfBands.toInt()
-                    for (i in 0 until minOf(numBands, bands.size)) {
-                        try {
-                            val level = bands[i].coerceIn(eq.bandLevelRange[0].toInt(), eq.bandLevelRange[1].toInt())
-                            eq.setBandLevel(i.toShort(), level.toShort())
-                        } catch (e: Exception) {
-                            e.printStackTrace()
+                if (eqEnabled) {
+                    if (equalizer == null) {
+                        equalizer = android.media.audiofx.Equalizer(0, audioSessionId)
+                    }
+                    equalizer?.enabled = true
+                    
+                    val eq = equalizer
+                    if (eq != null) {
+                        val bandsStr = prefs.getString("eq_bands", null) ?: "0,0,0,0,0"
+                        val bands = bandsStr.split(",").mapNotNull { it.toIntOrNull() }
+                        val numBands = eq.numberOfBands.toInt()
+                        for (i in 0 until minOf(numBands, bands.size)) {
+                            try {
+                                val level = bands[i].coerceIn(eq.bandLevelRange[0].toInt(), eq.bandLevelRange[1].toInt())
+                                eq.setBandLevel(i.toShort(), level.toShort())
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
                         }
                     }
+                } else {
+                    try { equalizer?.release() } catch (e: Exception) {}
+                    equalizer = null
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(this, "AudioEffects_EQ", "Failed to setup Equalizer", e)
+                try { equalizer?.release() } catch (ex: Exception) {}
                 equalizer = null
             }
 
             // Bass Boost
             try {
                 val bbEnabled = prefs.getBoolean("bb_enabled", false)
-                val bbStrength = prefs.getInt("bb_strength", 0).toShort()
-                if (bassBoost == null) {
-                    bassBoost = android.media.audiofx.BassBoost(0, audioSessionId)
-                }
-                bassBoost?.enabled = bbEnabled
                 if (bbEnabled) {
+                    val bbStrength = prefs.getInt("bb_strength", 0).toShort()
+                    if (bassBoost == null) {
+                        bassBoost = android.media.audiofx.BassBoost(0, audioSessionId)
+                    }
+                    bassBoost?.enabled = true
                     bassBoost?.setStrength(bbStrength)
+                } else {
+                    try { bassBoost?.release() } catch (e: Exception) {}
+                    bassBoost = null
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(this, "AudioEffects_BB", "Failed to setup Bass Boost", e)
+                try { bassBoost?.release() } catch (ex: Exception) {}
                 bassBoost = null
             }
 
             // Virtualizer
             try {
                 val virtEnabled = prefs.getBoolean("virt_enabled", false)
-                val virtStrength = prefs.getInt("virt_strength", 0).toShort()
-                if (virtualizer == null) {
-                    virtualizer = android.media.audiofx.Virtualizer(0, audioSessionId)
-                }
-                virtualizer?.enabled = virtEnabled
                 if (virtEnabled) {
+                    val virtStrength = prefs.getInt("virt_strength", 0).toShort()
+                    if (virtualizer == null) {
+                        virtualizer = android.media.audiofx.Virtualizer(0, audioSessionId)
+                    }
+                    virtualizer?.enabled = true
                     virtualizer?.setStrength(virtStrength)
+                } else {
+                    try { virtualizer?.release() } catch (e: Exception) {}
+                    virtualizer = null
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(this, "AudioEffects_Virt", "Failed to setup Virtualizer", e)
+                try { virtualizer?.release() } catch (ex: Exception) {}
                 virtualizer = null
             }
 
@@ -774,28 +813,30 @@ class PlaybackService : MediaLibraryService() {
             try {
                 val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
                 val normalizeEnabled = settingsPrefs.getBoolean("normalize_sound", false)
-                if (loudnessEnhancer == null) {
-                    try {
+                if (normalizeEnabled) {
+                    if (loudnessEnhancer == null) {
                         loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId)
+                    }
+                    loudnessEnhancer?.enabled = true
+                    try {
+                        loudnessEnhancer?.setTargetGain(800)
                     } catch (e: Exception) {
                         e.printStackTrace()
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(this, "AudioEffects_Loudness_Gain", "Failed to set target gain on LoudnessEnhancer", e)
                     }
-                }
-                try {
-                    loudnessEnhancer?.enabled = normalizeEnabled
-                    if (normalizeEnabled) {
-                        // Set target gain to 800 mB for dynamic loudness enhancement/leveling
-                        loudnessEnhancer?.setTargetGain(800)
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
+                } else {
+                    try { loudnessEnhancer?.release() } catch (e: Exception) {}
+                    loudnessEnhancer = null
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(this, "AudioEffects_Loudness", "Failed to setup LoudnessEnhancer", e)
+                try { loudnessEnhancer?.release() } catch (ex: Exception) {}
                 loudnessEnhancer = null
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(this, "AudioEffects_Setup", "General failure in setupAudioEffects", e)
         }
     }
 
@@ -851,6 +892,12 @@ class PlaybackService : MediaLibraryService() {
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                            this@PlaybackService,
+                            "ReplayGain_Read",
+                            "Failed to read/resolve ReplayGain for songId ${song.id}",
+                            e
+                        )
                     }
 
                     // Save the fetched/resolved gain to database (use 0f as marker for no gain found)
@@ -861,6 +908,12 @@ class PlaybackService : MediaLibraryService() {
                         gain = finalGain
                     } catch (e: Exception) {
                         e.printStackTrace()
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                            this@PlaybackService,
+                            "ReplayGain_DB_Update",
+                            "Failed to save ReplayGain to DB for songId ${song.id}",
+                            e
+                        )
                     }
                 }
 
