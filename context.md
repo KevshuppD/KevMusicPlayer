@@ -102,6 +102,11 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
   - Para evitar conflictos de instalación y errores de "Firma de paquete incorrecta" al actualizar la app de forma cruzada (instalando un APK de CI/CD sobre uno compilado localmente), se almacena un keystore compartido (`app/shared.keystore`) en el repositorio.
   - El archivo `app/build.gradle.kts` define el bloque `signingConfigs` apuntando a este almacén compartido con contraseñas fijas, garantizando firmas criptográficas 100% idénticas en cualquier compilación.
 
+### K. Sistema de Actualización Automática Integrado (`AppUpdater`)
+- **Consulta de Versión en Arranque:** Cada vez que se abre la aplicación, realiza una consulta en segundo plano a la API pública de GitHub (`/releases/latest`) para comprobar si existe una versión (`versionName`) superior a la actualmente instalada.
+- **Descarga Directa con Progreso:** Si se detecta una nueva versión, muestra un diálogo de confirmación MD3 con el changelog de novedades. Si el usuario acepta, descarga el APK directamente en un hilo de fondo (`Dispatchers.IO`) mostrando una barra de progreso en la UI.
+- **Lanzador del Instalador:** Guarda el archivo temporalmente en la caché de la aplicación y ejecuta la instalación del APK compartiéndolo mediante `FileProvider` con los permisos necesarios, permitiendo al usuario actualizar la aplicación sin desinstalarla.
+
 ---
 
 ## 3. Esquema y Definición de Datos (Room Database)
@@ -192,3 +197,13 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 - **Validación Avanzada de jaudiotagger:** Monitorear la compatibilidad de escritura física de covers en archivos `.m4a` y `.ogg` específicos de ciertos fabricantes chinos de Android que aplican restricciones agresivas a la escritura de almacenamiento p2p.
 - **Optimización de Memoria en Glance:** Revisar periódicamente la carga asíncrona de carátulas para el widget con el fin de evitar picos de uso de memoria en dispositivos de gama baja.
 - **Sincronización Multidispositivo:** Planificar la integración de exportación automática de copias de seguridad de forma programada a nubes personales (como Google Drive).
+
+---
+
+## 7. Pautas de Operación de Inteligencias Artificiales (Directivas Clave)
+
+Este archivo (`context.md`) actúa como la memoria central y cerebro técnico de **KevMusicPlayer** para cualquier sesión de IA. Las siguientes directivas deben cumplirse estrictamente:
+
+- **Creación de Releases:** La compilación y publicación de nuevas versiones (Releases en GitHub con tags `v*` y APKs de producción) **únicamente debe realizarse cuando el usuario lo solicite de forma explícita en el chat**. Ninguna IA o proceso automatizado debe crear releases o tags por iniciativa propia o de forma preventiva.
+- **Consistencia de Firma:** Cualquier compilación local o remota de producción debe utilizar la configuración de firmas compartida `release` en Gradle, garantizando que el APK conserve la firma del keystore del repositorio y sea actualizable.
+- **Preservación del Contexto:** Al implementar nuevas funciones, optimizaciones o cambios arquitectónicos significativos, la IA debe documentarlos de forma oportuna en este archivo para guiar a futuras sesiones de trabajo.

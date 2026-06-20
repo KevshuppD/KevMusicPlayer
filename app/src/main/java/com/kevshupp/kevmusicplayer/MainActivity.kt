@@ -85,6 +85,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.rememberCoroutineScope
 import android.app.Activity
 
 class MainActivity : ComponentActivity() {
@@ -170,6 +173,7 @@ fun AppNavigation() {
     }
     val backStack = rememberNavBackStack(initialScreen as NavKey)
     val viewModel: MediaBrowserViewModel = viewModel()
+    val scope = rememberCoroutineScope()
     val listDetailStrategy = rememberListDetailSceneStrategy<NavKey>()
 
     // Intercept system back gestures to pop screens from backstack instead of closing the app!
@@ -333,6 +337,136 @@ fun AppNavigation() {
                 },
                 viewModel = viewModel,
                 settingsPrefs = settingsPrefs
+            )
+        }
+
+        var updateInfo by remember { mutableStateOf<com.kevshupp.kevmusicplayer.data.UpdateInfo?>(null) }
+        var downloadProgress by remember { mutableStateOf<Float?>(null) }
+        var showUpdateDialog by remember { mutableStateOf(false) }
+
+        LaunchedEffect(permissionsGranted, isFirstRun) {
+            if (permissionsGranted && !isFirstRun) {
+                val info = com.kevshupp.kevmusicplayer.data.AppUpdater.checkUpdate(context)
+                if (info != null) {
+                    updateInfo = info
+                    showUpdateDialog = true
+                }
+            }
+        }
+
+        if (showUpdateDialog && updateInfo != null) {
+            val info = updateInfo!!
+            val isDownloading = downloadProgress != null
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = {
+                    if (!isDownloading) {
+                        showUpdateDialog = false
+                    }
+                },
+                title = {
+                    Text(
+                        text = "Actualización Disponible (${info.version})",
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isDownloading) {
+                            Text(
+                                text = "Descargando actualización... ${(downloadProgress!! * 100).toInt()}%",
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { downloadProgress!! },
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = Color.White.copy(alpha = 0.1f),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            Text(
+                                text = "¿Deseas descargar e instalar la nueva versión de Kev Music Player?",
+                                color = Color.White
+                            )
+                            if (info.changelog.isNotBlank()) {
+                                Text(
+                                    text = "Novedades:",
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 14.sp
+                                )
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 150.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f))
+                                ) {
+                                    androidx.compose.foundation.lazy.LazyColumn(
+                                        modifier = Modifier.padding(12.dp)
+                                    ) {
+                                        item {
+                                            Text(
+                                                text = info.changelog,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = Color.White.copy(alpha = 0.8f)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    if (!isDownloading) {
+                        Button(
+                            onClick = {
+                                downloadProgress = 0f
+                                scope.launch {
+                                    val targetFile = java.io.File(context.cacheDir, "KevMusicPlayer-update.apk")
+                                    val success = com.kevshupp.kevmusicplayer.data.AppUpdater.downloadApk(
+                                        context = context,
+                                        downloadUrl = info.downloadUrl,
+                                        targetFile = targetFile
+                                    ) { progress ->
+                                        downloadProgress = progress
+                                    }
+                                    if (success) {
+                                        showUpdateDialog = false
+                                        downloadProgress = null
+                                        com.kevshupp.kevmusicplayer.data.AppUpdater.installApk(context, targetFile)
+                                    } else {
+                                        downloadProgress = null
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Error al descargar la actualización",
+                                            android.widget.Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = Color.Black
+                            )
+                        ) {
+                            Text("Descargar e Instalar", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                },
+                dismissButton = {
+                    if (!isDownloading) {
+                        TextButton(onClick = { showUpdateDialog = false }) {
+                            Text("Más tarde", color = Color.White.copy(alpha = 0.6f))
+                        }
+                    }
+                },
+                containerColor = Color(0xFF161829),
+                titleContentColor = Color.White,
+                textContentColor = Color.White
             )
         }
 
