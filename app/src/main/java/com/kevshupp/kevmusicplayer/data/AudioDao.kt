@@ -38,6 +38,9 @@ interface AudioDao {
     @Query("UPDATE audio_files SET translatedLyrics = :translatedLyrics WHERE id = :id")
     suspend fun updateTranslatedLyrics(id: Long, translatedLyrics: String?)
 
+    @Query("UPDATE audio_files SET lyrics = NULL, translatedLyrics = NULL")
+    suspend fun deleteAllLyrics()
+
     @Query("UPDATE audio_files SET playCount = playCount + 1, lastPlayed = :timestamp WHERE id = :id")
     suspend fun incrementPlayCount(id: Long, timestamp: Long)
 }

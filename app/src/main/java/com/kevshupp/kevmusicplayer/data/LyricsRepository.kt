@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import com.kevshupp.kevmusicplayer.KevMusicPlayerApplication
+import java.util.concurrent.TimeUnit
 
 data class LyricLine(
     val timeMs: Long,
@@ -26,7 +27,11 @@ data class LrcLibSearchResult(
 )
 
 object LyricsRepository {
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
+        .writeTimeout(25, TimeUnit.SECONDS)
+        .build()
 
     fun parseLrc(lrcText: String?): List<LyricLine> {
         if (lrcText.isNullOrBlank()) return emptyList()

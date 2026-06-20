@@ -190,6 +190,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     val requestedSubViewName = mutableStateOf<String?>(null)
 
     val isDownloadingAllLyrics = mutableStateOf(false)
+    val isDeletingAllLyrics = mutableStateOf(false)
     val downloadAllLyricsCurrent = mutableStateOf(0)
     val downloadAllLyricsTotal = mutableStateOf(0)
     val downloadAllLyricsSuccessCount = mutableStateOf(0)
@@ -946,6 +947,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     settingsJson.put("backup_dir_uri", backupDirUri)
                 }
                 
+                // Export music folder setting if present
+                val musicFolderPath = settingsPrefs.getString("music_folder_path", null)
+                if (musicFolderPath != null) {
+                    settingsJson.put("music_folder_path", musicFolderPath)
+                }
+                
                 // Export tab configurations
                 val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
                 settingsJson.put("enabled_tabs", playbackPrefs.getString("enabled_tabs", ""))
@@ -984,6 +991,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 val playlistsPrefs = context.getSharedPreferences("playlists_prefs", Context.MODE_PRIVATE)
                 val playlistsJson = JSONObject()
                 val playlistNames = playlistsPrefs.getStringSet("playlist_names", emptySet()) ?: emptySet()
+                
                 playlistNames.forEach { name ->
                     val songsStr = playlistsPrefs.getString("playlist_$name", "") ?: ""
                     val songIdsArray = JSONArray()
@@ -1035,6 +1043,36 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
                 json.put("cached_songs", cachedSongsArray)
 
+                // 4. Export songs metadata mapping for backup portability
+                val idsToExport = mutableSetOf<Long>()
+                playlistNames.forEach { name ->
+                    val songsStr = playlistsPrefs.getString("playlist_$name", "") ?: ""
+                    if (songsStr.isNotBlank()) {
+                        songsStr.split(",").forEach { idStr ->
+                            idStr.toLongOrNull()?.let { idsToExport.add(it) }
+                        }
+                    }
+                }
+                allEntities.forEach { entity ->
+                    if (!entity.lyrics.isNullOrBlank() || !entity.translatedLyrics.isNullOrBlank()) {
+                        idsToExport.add(entity.id)
+                    }
+                }
+                
+                val songsMetadataArray = JSONArray()
+                allEntities.forEach { entity ->
+                    if (idsToExport.contains(entity.id)) {
+                        val metaJson = JSONObject()
+                        metaJson.put("id", entity.id)
+                        metaJson.put("title", entity.title)
+                        metaJson.put("artist", entity.artist)
+                        metaJson.put("album", entity.album)
+                        metaJson.put("duration", entity.duration)
+                        songsMetadataArray.put(metaJson)
+                    }
+                }
+                json.put("songs_metadata", songsMetadataArray)
+
                 // Write to stream
                 outputStream.use { stream ->
                     stream.write(json.toString(4).toByteArray(Charsets.UTF_8))
@@ -1071,6 +1109,40 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 val json = JSONObject(jsonStr)
                 var importedLanguage: String? = null
 
+                // 0. Build mapping from old ID to new ID using songs_metadata
+                val oldToNewIdMap = mutableMapOf<Long, Long>()
+                val currentSongs = audioDao.getAllAudioFiles()
+                
+                if (json.has("songs_metadata")) {
+                    val songsMetadataArray = json.getJSONArray("songs_metadata")
+                    for (i in 0 until songsMetadataArray.length()) {
+                        val meta = songsMetadataArray.getJSONObject(i)
+                        val oldId = meta.getLong("id")
+                        val title = meta.getString("title")
+                        val artist = meta.getString("artist")
+                        val album = meta.getString("album")
+                        val duration = meta.getLong("duration")
+                        
+                        // Look for a matching local song
+                        val matchedSong = currentSongs.find { current ->
+                            current.title.trim().equals(title.trim(), ignoreCase = true) &&
+                            (current.artist.trim().equals(artist.trim(), ignoreCase = true) || artist.isBlank() || current.artist.isBlank()) &&
+                            Math.abs(current.duration - duration) < 4000
+                        }
+                        if (matchedSong != null) {
+                            oldToNewIdMap[oldId] = matchedSong.id
+                        }
+                    }
+                }
+
+                fun translateId(oldId: Long): Long? {
+                    return if (oldToNewIdMap.isNotEmpty()) {
+                        oldToNewIdMap[oldId]
+                    } else {
+                        oldId // fallback to direct mapping for backward compatibility
+                    }
+                }
+
                 // 1. Restore settings
                 if (json.has("settings")) {
                     val settingsJson = json.getJSONObject("settings")
@@ -1086,6 +1158,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     if (settingsJson.has("refresh_rate")) edit.putString("refresh_rate", settingsJson.getString("refresh_rate"))
                     if (settingsJson.has("disable_animations")) edit.putBoolean("disable_animations", settingsJson.getBoolean("disable_animations"))
                     if (settingsJson.has("backup_dir_uri")) edit.putString("backup_dir_uri", settingsJson.getString("backup_dir_uri"))
+                    if (settingsJson.has("music_folder_path")) {
+                        val musicFolderPath = settingsJson.getString("music_folder_path")
+                        if (!musicFolderPath.isNullOrBlank()) {
+                            edit.putString("music_folder_path", musicFolderPath)
+                        }
+                    }
                     if (settingsJson.has("excluded_folders")) edit.putString("excluded_folders", settingsJson.getString("excluded_folders"))
                     
                     if (settingsJson.has("ambient_glow_enabled")) edit.putBoolean("ambient_glow_enabled", settingsJson.getBoolean("ambient_glow_enabled"))
@@ -1149,7 +1227,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         val songIdsArray = playlistsJson.getJSONArray(name)
                         val songIds = mutableListOf<String>()
                         for (i in 0 until songIdsArray.length()) {
-                            songIds.add(songIdsArray.getLong(i).toString())
+                            val oldId = songIdsArray.getLong(i)
+                            val newId = translateId(oldId)
+                            if (newId != null) {
+                                songIds.add(newId.toString())
+                            }
                         }
                         edit.putString("playlist_$name", songIds.joinToString(","))
                     }
@@ -1182,12 +1264,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     val cachedSongsArray = json.getJSONArray("cached_songs")
                     for (i in 0 until cachedSongsArray.length()) {
                         val songJson = cachedSongsArray.getJSONObject(i)
-                        val id = songJson.getLong("id")
-                        val lyrics = if (songJson.has("lyrics") && !songJson.isNull("lyrics")) songJson.getString("lyrics") else null
-                        val translatedLyrics = if (songJson.has("translatedLyrics") && !songJson.isNull("translatedLyrics")) songJson.getString("translatedLyrics") else null
+                        val oldId = songJson.getLong("id")
+                        val newId = translateId(oldId)
+                        if (newId != null) {
+                            val lyrics = if (songJson.has("lyrics") && !songJson.isNull("lyrics")) songJson.getString("lyrics") else null
+                            val translatedLyrics = if (songJson.has("translatedLyrics") && !songJson.isNull("translatedLyrics")) songJson.getString("translatedLyrics") else null
 
-                        audioDao.updateLyrics(id, lyrics)
-                        audioDao.updateTranslatedLyrics(id, translatedLyrics)
+                            audioDao.updateLyrics(newId, lyrics)
+                            audioDao.updateTranslatedLyrics(newId, translatedLyrics)
+                        }
                     }
                 }
 
@@ -1250,6 +1335,365 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 withContext(Dispatchers.Main) {
                     onError(e)
                 }
+            }
+        }
+    }
+
+    fun updateSortBy(newSortBy: String) {
+        sortBy.value = newSortBy
+    }
+
+    fun addSongsToPlaylist(playlistName: String, songIds: List<Long>) {
+        val currentList = playlists[playlistName]?.toMutableList() ?: mutableListOf()
+        var modified = false
+        songIds.forEach { songId ->
+            if (!currentList.any { it.id == songId }) {
+                val song = localAudioFiles.find { it.id == songId }
+                if (song != null) {
+                    currentList.add(song)
+                    modified = true
+                }
+            }
+        }
+        if (modified) {
+            playlists[playlistName] = currentList
+            val prefs = getApplication<Application>().getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
+            val idsStr = currentList.map { it.id }.joinToString(",")
+            prefs.edit()
+                .putString("playlist_$playlistName", idsStr)
+                .apply()
+        }
+    }
+
+    fun deleteAllLyrics(context: Context, onComplete: () -> Unit) {
+        isDeletingAllLyrics.value = true
+        viewModelScope.launch {
+            try {
+                audioDao.deleteAllLyrics()
+                
+                val songsToProcess = localAudioFiles.toList()
+                
+                val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+                val musicFolderPath = settingsPrefs.getString("music_folder_path", null)
+                val baseMusicDir = if (!musicFolderPath.isNullOrBlank()) {
+                    File(musicFolderPath)
+                } else {
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+                }
+
+                withContext(Dispatchers.IO) {
+                    // 1. Delete specific lrc files based on song metadata
+                    songsToProcess.forEach { song ->
+                        try {
+                            val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                            val lrcFile = File(song.folderPath, "$cleanTitle.lrc")
+                            if (lrcFile.exists()) {
+                                lrcFile.delete()
+                            }
+                            val locale = java.util.Locale.getDefault().language
+                            val transLrcFile = File(song.folderPath, "$cleanTitle.$locale.lrc")
+                            if (transLrcFile.exists()) {
+                                transLrcFile.delete()
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                        
+                        try {
+                            writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
+                                val tag = audioFile.getTagOrCreateAndSetDefault()
+                                tag.deleteField(FieldKey.LYRICS)
+                                tag.deleteField(FieldKey.CUSTOM1)
+                                audioFile.tag = tag
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+
+                    // 2. Recursively delete all .lrc files in the root music folder
+                    if (baseMusicDir != null && baseMusicDir.exists() && baseMusicDir.isDirectory) {
+                        try {
+                            baseMusicDir.walk().forEach { file ->
+                                if (file.isFile && file.name.endsWith(".lrc", ignoreCase = true)) {
+                                    file.delete()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+                
+                localAudioFiles.indices.forEach { index ->
+                    val file = localAudioFiles[index]
+                    localAudioFiles[index] = file.copy(lyrics = null, translatedLyrics = null)
+                }
+                
+                loadPlaylists()
+                
+                withContext(Dispatchers.Main) {
+                    isDeletingAllLyrics.value = false
+                    onComplete()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    isDeletingAllLyrics.value = false
+                    onComplete()
+                }
+            }
+        }
+    }
+
+    fun organizeMusicByArtistFolder(
+        context: Context,
+        onProgress: (current: Int, total: Int, currentName: String) -> Unit,
+        onComplete: (successCount: Int, errorCount: Int) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val songsToOrganize = localAudioFiles.toList()
+            val total = songsToOrganize.size
+            var successCount = 0
+            var errorCount = 0
+
+            val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+            val musicFolderPath = settingsPrefs.getString("music_folder_path", null)
+            val baseMusicDir = if (!musicFolderPath.isNullOrBlank()) {
+                val f = File(musicFolderPath)
+                if (f.exists() && f.isDirectory) f else null
+            } else {
+                val defaultMusic = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+                if (defaultMusic.exists() && defaultMusic.isDirectory) defaultMusic else null
+            }
+
+            val parentDirsToCheck = mutableSetOf<File>()
+
+            songsToOrganize.forEachIndexed { index, song ->
+                try {
+                    val cleanArtist = song.artist.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+                    val isArtistValid = cleanArtist.isNotEmpty() &&
+                            !cleanArtist.equals("Unknown Artist", ignoreCase = true) &&
+                            !cleanArtist.equals("Unknown", ignoreCase = true) &&
+                            !cleanArtist.equals("<unknown>", ignoreCase = true) &&
+                            !cleanArtist.equals("Artista Desconocido", ignoreCase = true)
+
+                    val artistFolderName = if (isArtistValid) cleanArtist else {
+                        if (java.util.Locale.getDefault().language == "es") "Artista Desconocido" else "Unknown Artist"
+                    }
+
+                    val cleanAlbum = song.album.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+                    val isAlbumValid = cleanAlbum.isNotEmpty() &&
+                            !cleanAlbum.equals("Unknown Album", ignoreCase = true) &&
+                            !cleanAlbum.equals("Unknown", ignoreCase = true) &&
+                            !cleanAlbum.equals("<unknown>", ignoreCase = true) &&
+                            !cleanAlbum.equals("Álbum Desconocido", ignoreCase = true)
+
+                    val albumFolderName = if (isAlbumValid) cleanAlbum else {
+                        if (java.util.Locale.getDefault().language == "es") "Álbum Desconocido" else "Unknown Album"
+                    }
+
+                    val physicalPath = getPhysicalPath(context, song.id, song.uriString)
+                    if (!physicalPath.isNullOrBlank()) {
+                        val oldFile = File(physicalPath)
+                        if (oldFile.exists()) {
+                            val targetBaseDir = baseMusicDir ?: oldFile.parentFile?.parentFile ?: oldFile.parentFile ?: File("/sdcard")
+                            
+                            val targetArtistDir = File(targetBaseDir, artistFolderName)
+                            val targetAlbumDir = File(targetArtistDir, albumFolderName)
+                            val newFile = File(targetAlbumDir, oldFile.name)
+
+                            val isAlreadyOrganized = oldFile.absolutePath == newFile.absolutePath
+
+                            if (!isAlreadyOrganized) {
+                                oldFile.parentFile?.let { parentDirsToCheck.add(it) }
+                                oldFile.parentFile?.parentFile?.let { parentDirsToCheck.add(it) }
+
+                                if (!targetAlbumDir.exists()) {
+                                    targetAlbumDir.mkdirs()
+                                }
+
+                                withContext(Dispatchers.Main) {
+                                    onProgress(index + 1, total, song.title)
+                                }
+
+                                var moveCompleted = false
+
+                                try {
+                                    val renamed = oldFile.renameTo(newFile)
+                                    if (renamed) {
+                                        moveCompleted = true
+                                        val values = android.content.ContentValues().apply {
+                                            put(android.provider.MediaStore.Audio.Media.DATA, newFile.absolutePath)
+                                        }
+                                        val uri = Uri.parse(song.uriString)
+                                        context.contentResolver.update(uri, values, null, null)
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+
+                                if (moveCompleted) {
+                                    android.media.MediaScannerConnection.scanFile(
+                                        context,
+                                        arrayOf(oldFile.absolutePath, newFile.absolutePath),
+                                        null
+                                    ) { _, _ -> }
+                                    successCount++
+                                } else {
+                                    errorCount++
+                                }
+                            } else {
+                                successCount++
+                            }
+                        } else {
+                            errorCount++
+                        }
+                    } else {
+                        errorCount++
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    errorCount++
+                }
+            }
+
+            // Clean up empty/leftover folders (recursively, bottom-up)
+            try {
+                val dirsToCheck = mutableSetOf<File>()
+                dirsToCheck.addAll(parentDirsToCheck)
+                
+                if (baseMusicDir != null && baseMusicDir.exists() && baseMusicDir.isDirectory) {
+                    baseMusicDir.walkBottomUp().forEach { file ->
+                        if (file.isDirectory && file != baseMusicDir) {
+                            dirsToCheck.add(file)
+                        }
+                    }
+                }
+
+                val sortedDirs = dirsToCheck
+                    .filter { isSafeToDeleteDirectory(it, baseMusicDir) }
+                    .sortedByDescending { try { it.canonicalPath.length } catch (e: Exception) { it.absolutePath.length } }
+
+                for (dir in sortedDirs) {
+                    if (dir.exists() && dir.isDirectory && !hasAudioFiles(dir)) {
+                        dir.deleteRecursively()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            scanFiles(isManual = true)
+
+            withContext(Dispatchers.Main) {
+                onComplete(successCount, errorCount)
+            }
+        }
+    }
+
+    fun updateAlbumMetadata(
+        context: Context,
+        oldAlbumName: String,
+        songs: List<AudioFile>,
+        newAlbumName: String,
+        newArtist: String,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                try {
+                    org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
+                } catch (t: Throwable) {
+                    t.printStackTrace()
+                }
+
+                var successCount = 0
+                var failCount = 0
+                for (song in songs) {
+                    val success = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
+                        val tag = audioFile.getTagOrCreateAndSetDefault()
+                        tag.setField(FieldKey.ALBUM, newAlbumName)
+                        if (newArtist.isNotBlank()) {
+                            tag.setField(FieldKey.ARTIST, newArtist)
+                        }
+                        audioFile.tag = tag
+                    }
+
+                    if (success) {
+                        successCount++
+                    } else {
+                        failCount++
+                    }
+                }
+
+                if (failCount > 0) {
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                        context, "AlbumMetadataUpdate",
+                        "Failed to update metadata for $failCount out of ${songs.size} songs in album $oldAlbumName"
+                    )
+                }
+
+                if (successCount == 0 && songs.isNotEmpty()) {
+                    throw Exception("Failed to write metadata to any songs in the album")
+                }
+
+                val allEntities = audioDao.getAllAudioFiles()
+                val updatedEntities = mutableListOf<AudioFile>()
+                for (song in songs) {
+                    val entity = allEntities.find { it.id == song.id }
+                    if (entity != null) {
+                        updatedEntities.add(
+                            entity.copy(
+                                album = newAlbumName,
+                                artist = if (newArtist.isNotBlank()) newArtist else entity.artist
+                            )
+                        )
+                    }
+                }
+                if (updatedEntities.isNotEmpty()) {
+                    audioDao.insertAll(updatedEntities)
+                }
+
+                withContext(Dispatchers.Main) {
+                    com.kevshupp.kevmusicplayer.ui.screens.albumArtVersion++
+                    
+                    songs.forEach { song ->
+                        val index = localAudioFiles.indexOfFirst { it.id == song.id }
+                        if (index != -1) {
+                            val currentSong = localAudioFiles[index]
+                            localAudioFiles[index] = currentSong.copy(
+                                album = newAlbumName,
+                                artist = if (newArtist.isNotBlank()) newArtist else currentSong.artist
+                            )
+                        }
+                    }
+
+                    playlists.keys.toList().forEach { playlistName ->
+                        val list = playlists[playlistName] ?: emptyList()
+                        val newList = list.toMutableList()
+                        var changed = false
+                        newList.indices.forEach { i ->
+                            val item = newList[i]
+                            if (item.album.trim().equals(oldAlbumName.trim(), ignoreCase = true)) {
+                                newList[i] = item.copy(
+                                    album = newAlbumName,
+                                    artist = if (newArtist.isNotBlank()) newArtist else item.artist
+                                )
+                                changed = true
+                            }
+                        }
+                        if (changed) {
+                            playlists[playlistName] = newList
+                        }
+                    }
+
+                    updateSmartPlaylists()
+                    onSuccess()
+                }
+            } catch (e: Throwable) {
+                val ex = if (e is Exception) e else Exception(e)
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumMetadataUpdate", "Failed to update album metadata for $oldAlbumName", ex)
             }
         }
     }
@@ -2594,6 +3038,65 @@ fun getPhysicalPath(context: android.content.Context, songId: Long, uriString: S
         null
     }
 }
+
+fun isSafeToDeleteDirectory(dir: File, baseMusicDir: File?): Boolean {
+    val path = try { dir.canonicalPath } catch (e: Exception) { dir.absolutePath }
+    // Never delete roots or standard storage paths
+    if (path == "/" || path == "/storage" || path == "/storage/emulated" || path == "/storage/emulated/0" || path == "/sdcard") return false
+    
+    // Never delete hidden directories (starting with '.') or files inside them
+    var checkDir: File? = dir
+    while (checkDir != null) {
+        if (checkDir.name.startsWith(".")) {
+            return false
+        }
+        checkDir = checkDir.parentFile
+    }
+    
+    try {
+        val musicPublicDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC).canonicalPath
+        if (path == musicPublicDir) return false
+    } catch (e: Exception) {}
+    
+    if (baseMusicDir != null) {
+        try {
+            val baseCanonical = baseMusicDir.canonicalPath
+            // Never delete base music folder itself or any of its parents
+            if (path == baseCanonical || baseCanonical.startsWith(path)) {
+                return false
+            }
+        } catch (e: Exception) {}
+    }
+    
+    try {
+        val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS).canonicalPath
+        if (path == downloadDir) return false
+    } catch (e: Exception) {}
+    
+    try {
+        val dcimDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DCIM).canonicalPath
+        if (path == dcimDir) return false
+    } catch (e: Exception) {}
+
+    try {
+        val documentsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS).canonicalPath
+        if (path == documentsDir) return false
+    } catch (e: Exception) {}
+    
+    return true
+}
+
+fun hasAudioFiles(dir: File): Boolean {
+    val audioExtensions = setOf("mp3", "m4a", "flac", "wav", "ogg", "aac", "opus", "wma", "mp4", "mkv", "mid", "amr")
+    try {
+        return dir.walkBottomUp().any { file ->
+            file.isFile && audioExtensions.contains(file.extension.lowercase())
+        }
+    } catch (e: Exception) {
+        return true // Safely assume it has audio files on permission errors or exceptions to prevent deletion
+    }
+}
+
 
 fun saveLyricsPhysical(context: android.content.Context, songId: Long, songTitle: String, folderPath: String, lyrics: String) {
     // 1. Save to .lrc file next to the song

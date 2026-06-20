@@ -385,7 +385,7 @@ fun TagEditorDialog(
                         val displayBytes = selectedCoverBytes ?: initialArtBytes
                         
                         Card(
-                            shape = RoundedCornerShape(12.dp),
+                            shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape,
                             modifier = Modifier.size(90.dp),
                             colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f))
                         ) {
@@ -565,7 +565,7 @@ fun TagEditorDialog(
                                     ) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(8.dp)) {
                                             Card(
-                                                shape = RoundedCornerShape(8.dp),
+                                                shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(8.dp) else androidx.compose.ui.graphics.RectangleShape,
                                                 modifier = Modifier.size(90.dp)
                                             ) {
                                                 androidx.compose.ui.platform.LocalContext.current.let { _ ->
@@ -933,7 +933,7 @@ fun AlbumCoverEditorDialog(
                     ) {
                         // Card with current/selected artwork
                         Card(
-                            shape = RoundedCornerShape(12.dp),
+                            shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape,
                             modifier = Modifier.size(90.dp),
                             colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f))
                         ) {
@@ -1085,7 +1085,7 @@ fun AlbumCoverEditorDialog(
                                 ) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(8.dp)) {
                                         Card(
-                                            shape = RoundedCornerShape(8.dp),
+                                            shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(8.dp) else androidx.compose.ui.graphics.RectangleShape,
                                             modifier = Modifier.size(90.dp)
                                         ) {
                                             coil.compose.SubcomposeAsyncImage(
@@ -1454,7 +1454,7 @@ fun AlbumEditorDialog(
                                                 contentDescription = null,
                                                 modifier = Modifier
                                                     .size(60.dp)
-                                                    .clip(RoundedCornerShape(4.dp)),
+                                                    .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(4.dp) else androidx.compose.ui.graphics.RectangleShape),
                                                 loading = {
                                                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                                         CircularProgressIndicator(modifier = Modifier.size(16.dp))

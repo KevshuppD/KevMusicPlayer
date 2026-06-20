@@ -445,7 +445,8 @@ fun SettingsScreen(
                                 sortBy = sortBy,
                                 onSortByChanged = onSortByChanged,
                                 getLocalized = getLocalized,
-                                settingsPrefs = settingsPrefs
+                                settingsPrefs = settingsPrefs,
+                                viewModel = viewModel
                             )
                         }
                         "audio" -> {

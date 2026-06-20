@@ -137,7 +137,7 @@ fun PlayerScreen(
         showLyrics = false
     }
 
-    val currentSongFile = remember {
+    val currentSongFile = remember(playerState.currentSong?.mediaId) {
         derivedStateOf {
             viewModel?.localAudioFiles?.find { it.id.toString() == playerState.currentSong?.mediaId }
         }
@@ -747,7 +747,7 @@ fun PlayerScreen(
                 ) {
                     ScrollingLyricsView(
                         lyricLines = lyricLines,
-                        currentPositionMs = { playerState.position },
+                        positionMs = playerState.position,
                         songTitle = title,
                         songArtist = artist,
                         translatedLines = if (showTranslation) translatedLyricLines else null,
@@ -821,7 +821,7 @@ fun PlayerScreen(
                     val pageSong = remember(page, playerState.currentSong, playerState.playlistVersion) {
                         if (page in 0 until playerState.mediaItemCount) player.getMediaItemAt(page) else null
                     }
-                    val pageSongFile = remember {
+                    val pageSongFile = remember(pageSong?.mediaId) {
                         derivedStateOf {
                             viewModel?.localAudioFiles?.find { it.id.toString() == pageSong?.mediaId }
                         }
@@ -896,12 +896,12 @@ fun PlayerScreen(
                                 .aspectRatio(1f)
                                 .shadow(
                                     elevation = 32.dp,
-                                    shape = RoundedCornerShape(32.dp),
+                                    shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(32.dp) else androidx.compose.ui.graphics.RectangleShape,
                                     clip = false,
                                     ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
                                     spotColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)
                                 ),
-                            shape = RoundedCornerShape(32.dp),
+                            shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(32.dp) else androidx.compose.ui.graphics.RectangleShape,
                             colors = CardDefaults.cardColors(containerColor = Color.Transparent)
                         ) {
                             Box(
@@ -1333,7 +1333,7 @@ fun PlayerScreen(
                         Box(
                             modifier = Modifier
                                 .size(56.dp)
-                                .clip(RoundedCornerShape(14.dp))
+                                .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(14.dp) else androidx.compose.ui.graphics.RectangleShape)
                                 .background(artGradient),
                             contentAlignment = Alignment.Center
                         ) {
@@ -1978,6 +1978,15 @@ fun PlayerScreen(
                 val mediaId = playerState.currentSong?.mediaId
                 if (mediaId != null) "content://media/external/audio/media/$mediaId" else null
             }
+            val detailedInfo by produceState(
+                initialValue = DetailedAudioFileInfo("Loading...", "Loading...", "Loading...", "Loading...", "Loading...", "Loading...", "Loading..."),
+                key1 = playerState.currentSong?.mediaId
+            ) {
+                value = getDetailedAudioFileInfo(context, currentSongUriString)
+            }
+            val getLocalized = { es: String, en: String ->
+                if (java.util.Locale.getDefault().language == "es") es else en
+            }
             AlertDialog(
                 onDismissRequest = { showFileInfoDialog = false },
                 title = {
@@ -1988,22 +1997,24 @@ fun PlayerScreen(
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Audio Specifications", fontWeight = FontWeight.Bold)
+                        Text(getLocalized("Especificaciones de Audio", "Audio Specifications"), fontWeight = FontWeight.Bold)
                     }
                 },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Title: $title", fontWeight = FontWeight.Bold, color = Color.White)
-                        Text("Artist: $artist", color = Color.White.copy(alpha = 0.8f))
-                        Text("Format: ${fileInfo.first}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Text("Bitrate: ${fileInfo.second}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Text("Source URI: ${currentSongUriString ?: "Unknown"}", fontSize = 11.sp, color = Color.White.copy(alpha = 0.5f))
-                        Text("Decoder: Media3 ExoPlayer", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                        Text(getLocalized("Título: ${detailedInfo.title}", "Title: ${detailedInfo.title}"), fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(getLocalized("Artista: ${detailedInfo.artist}", "Artist: ${detailedInfo.artist}"), color = Color.White.copy(alpha = 0.8f))
+                        Text(getLocalized("Álbum: ${detailedInfo.album}", "Album: ${detailedInfo.album}"), color = Color.White.copy(alpha = 0.8f))
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(getLocalized("Ubicación: ${detailedInfo.location}", "Location: ${detailedInfo.location}"), fontSize = 12.sp, color = Color.White.copy(alpha = 0.7f))
+                        Text(getLocalized("Tipo: ${detailedInfo.type}", "Type: ${detailedInfo.type}"), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text(getLocalized("Tasa de bits: ${detailedInfo.bitrate}", "Bitrate: ${detailedInfo.bitrate}"), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text(getLocalized("Tamaño: ${detailedInfo.size}", "Size: ${detailedInfo.size}"), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = { showFileInfoDialog = false }) {
-                        Text("Close", fontWeight = FontWeight.Bold)
+                        Text(getLocalized("Cerrar", "Close"), fontWeight = FontWeight.Bold)
                     }
                 },
                 containerColor = Color(0xFF161829),

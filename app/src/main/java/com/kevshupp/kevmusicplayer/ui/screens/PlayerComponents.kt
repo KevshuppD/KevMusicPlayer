@@ -81,10 +81,120 @@ fun getAudioFileInfo(context: android.content.Context, uriString: String?): Pair
     return result
 }
 
+data class DetailedAudioFileInfo(
+    val title: String,
+    val album: String,
+    val artist: String,
+    val location: String,
+    val type: String,
+    val bitrate: String,
+    val size: String
+)
+
+fun getDetailedAudioFileInfo(context: android.content.Context, uriString: String?): DetailedAudioFileInfo {
+    var title = "Unknown Title"
+    var album = "Unknown Album"
+    var artist = "Unknown Artist"
+    var location = "Unknown Location"
+    var type = "MP3"
+    var bitrate = "320 kbps"
+    var size = "Unknown Size"
+
+    if (uriString.isNullOrEmpty()) {
+        return DetailedAudioFileInfo(title, album, artist, location, type, bitrate, size)
+    }
+
+    try {
+        val uri = Uri.parse(uriString)
+        context.contentResolver.query(
+            uri,
+            arrayOf(
+                android.provider.MediaStore.Audio.Media.TITLE,
+                android.provider.MediaStore.Audio.Media.ALBUM,
+                android.provider.MediaStore.Audio.Media.ARTIST,
+                android.provider.MediaStore.Audio.Media.DATA,
+                android.provider.MediaStore.Audio.Media.SIZE
+            ),
+            null, null, null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val titleIdx = cursor.getColumnIndex(android.provider.MediaStore.Audio.Media.TITLE)
+                val albumIdx = cursor.getColumnIndex(android.provider.MediaStore.Audio.Media.ALBUM)
+                val artistIdx = cursor.getColumnIndex(android.provider.MediaStore.Audio.Media.ARTIST)
+                val dataIdx = cursor.getColumnIndex(android.provider.MediaStore.Audio.Media.DATA)
+                val sizeIdx = cursor.getColumnIndex(android.provider.MediaStore.Audio.Media.SIZE)
+
+                if (titleIdx != -1) title = cursor.getString(titleIdx) ?: "Unknown Title"
+                if (albumIdx != -1) album = cursor.getString(albumIdx) ?: "Unknown Album"
+                if (artistIdx != -1) artist = cursor.getString(artistIdx) ?: "Unknown Artist"
+                if (dataIdx != -1) {
+                    val path = cursor.getString(dataIdx)
+                    if (!path.isNullOrEmpty()) {
+                        location = path
+                        type = path.substringAfterLast('.', "mp3").uppercase()
+                        
+                        val file = java.io.File(path)
+                        if (file.exists()) {
+                            val bytes = file.length()
+                            size = formatFileSize(bytes)
+                        }
+                    }
+                }
+                if (size == "Unknown Size" && sizeIdx != -1) {
+                    val bytes = cursor.getLong(sizeIdx)
+                    if (bytes > 0) {
+                        size = formatFileSize(bytes)
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    val retriever = android.media.MediaMetadataRetriever()
+    try {
+        val uri = Uri.parse(uriString)
+        retriever.setDataSource(context, uri)
+        val bitrateStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE)
+        if (!bitrateStr.isNullOrEmpty()) {
+            val bitrateKbps = bitrateStr.toInt() / 1000
+            bitrate = "$bitrateKbps kbps"
+        }
+        if (title == "Unknown Title") {
+            title = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE) ?: "Unknown Title"
+        }
+        if (album == "Unknown Album") {
+            album = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
+        }
+        if (artist == "Unknown Artist") {
+            artist = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    } finally {
+        try {
+            retriever.release()
+        } catch (ex: Exception) {
+            ex.printStackTrace()
+        }
+    }
+
+    return DetailedAudioFileInfo(title, album, artist, location, type, bitrate, size)
+}
+
+fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB")
+    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
+    return String.format(java.util.Locale.US, "%.2f %s", bytes / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
+}
+
+
 @Composable
 fun ScrollingLyricsView(
     lyricLines: List<LyricLine>,
-    currentPositionMs: () -> Long,
+    positionMs: Long,
     songTitle: String = "",
     songArtist: String = "",
     translatedLines: Map<Long, String>? = null,
@@ -106,20 +216,17 @@ fun ScrollingLyricsView(
         if (systemLang == "es") es else en
     }
     
-    val activeIndex = remember(lyricLines) {
-        derivedStateOf {
-            val pos = currentPositionMs()
-            lyricLines.indexOfLast { pos >= it.timeMs }.coerceAtLeast(0)
-        }
+    val activeIndex = remember(lyricLines, positionMs) {
+        lyricLines.indexOfLast { positionMs >= it.timeMs }.coerceAtLeast(0)
     }
 
     val disableAnimations = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
-    LaunchedEffect(activeIndex.value) {
-        if (lyricLines.isNotEmpty() && activeIndex.value >= 0) {
+    LaunchedEffect(activeIndex) {
+        if (lyricLines.isNotEmpty() && activeIndex >= 0) {
             if (disableAnimations) {
-                listState.scrollToItem(activeIndex.value)
+                listState.scrollToItem(activeIndex)
             } else {
-                listState.animateScrollToItem(activeIndex.value)
+                listState.animateScrollToItem(activeIndex)
             }
         }
     }
@@ -234,7 +341,7 @@ fun ScrollingLyricsView(
                 verticalArrangement = Arrangement.spacedBy(28.dp)
             ) {
                 itemsIndexed(lyricLines, key = { index, line -> "${line.timeMs}_$index" }) { index, line ->
-                    val isActive = index == activeIndex.value
+                    val isActive = index == activeIndex
                     val translatedText = translatedLines?.get(line.timeMs)
 
                     Column(
@@ -242,7 +349,7 @@ fun ScrollingLyricsView(
                             .fillMaxWidth()
                             .clickable { onLineClick(line.timeMs) }
                             .graphicsLayer {
-                                val distance = Math.abs(index - activeIndex.value)
+                                val distance = Math.abs(index - activeIndex)
                                 alpha = if (isActive) 1f else (0.4f - (distance * 0.05f)).coerceAtLeast(0.1f)
                                 scaleX = if (isActive) 1.05f else 1f
                                 scaleY = if (isActive) 1.05f else 1f

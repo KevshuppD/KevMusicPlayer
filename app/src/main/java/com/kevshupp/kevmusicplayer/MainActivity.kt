@@ -89,6 +89,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.rememberCoroutineScope
 import android.app.Activity
+import com.kevshupp.kevmusicplayer.ui.screens.getPhysicalPathFromTreeUri
 
 class MainActivity : ComponentActivity() {
     private val refreshRateListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
@@ -103,9 +104,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Apply saved language preference before composing UI
+                // Apply saved language preference before composing UI
         val settingsPrefs = getSharedPreferences("settings_prefs", MODE_PRIVATE)
-        val languageTag = settingsPrefs.getString("language", "en") ?: "en"
+        val languageTag = settingsPrefs.getString("language", "es") ?: "es"
         val localeManager = getSystemService(LocaleManager::class.java)
         localeManager?.applicationLocales = LocaleList.forLanguageTags(languageTag)
 
@@ -287,7 +288,7 @@ fun AppNavigation() {
                         enabledTabs = viewModel.enabledTabs.value,
                         onEnabledTabsChanged = { viewModel.updateEnabledTabs(it) },
                         sortBy = viewModel.sortBy.value,
-                        onSortByChanged = { viewModel.sortBy.value = it },
+                        onSortByChanged = { viewModel.updateSortBy(it) },
                         onRescan = { viewModel.scanFiles(isManual = true) },
                         onBack = {
                             if (backStack.size > 1) {
@@ -654,7 +655,7 @@ fun OnboardingFlow(
     settingsPrefs: android.content.SharedPreferences
 ) {
     val context = LocalContext.current
-    var step by remember { mutableStateOf(1) } // 1: Backup check, 2: Theme selection
+    var step by remember { mutableStateOf(1) } // 1: Backup check, 2: Music library source, 3: Theme selection
     var selectedTheme by remember {
         mutableStateOf(settingsPrefs.getString("app_theme", "cyberpunk") ?: "cyberpunk")
     }
@@ -691,17 +692,17 @@ fun OnboardingFlow(
                     val inputStream = context.contentResolver.openInputStream(backupFile.uri)
                     if (inputStream != null) {
                         viewModel.importBackup(
-                            context = context,
-                            inputStream = inputStream,
-                            onSuccess = {
-                                settingsPrefs.edit().putBoolean("is_first_run", false).apply()
-                                android.widget.Toast.makeText(context, "Copia de seguridad restaurada con éxito", android.widget.Toast.LENGTH_LONG).show()
-                                onDismiss()
-                            },
-                            onError = { error ->
-                                android.widget.Toast.makeText(context, "Error al restaurar: ${error.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
-                                step = 2
-                            }
+                             context = context,
+                             inputStream = inputStream,
+                             onSuccess = {
+                                 settingsPrefs.edit().putBoolean("is_first_run", false).apply()
+                                 android.widget.Toast.makeText(context, "Copia de seguridad restaurada con éxito", android.widget.Toast.LENGTH_LONG).show()
+                                 onDismiss()
+                             },
+                             onError = { error ->
+                                 android.widget.Toast.makeText(context, "Error al restaurar: ${error.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                                 step = 2
+                             }
                         )
                     }
                 } else {
@@ -712,6 +713,30 @@ fun OnboardingFlow(
                 e.printStackTrace()
                 android.widget.Toast.makeText(context, "Error al acceder a la carpeta: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
                 step = 2
+            }
+        }
+    }
+
+    val selectOnboardingMusicFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+                
+                val path = getPhysicalPathFromTreeUri(context, uri)
+                if (path != null) {
+                    settingsPrefs.edit().putString("music_folder_path", path).apply()
+                    android.widget.Toast.makeText(context, "Biblioteca configurada en: $path", android.widget.Toast.LENGTH_SHORT).show()
+                    step = 3
+                } else {
+                    android.widget.Toast.makeText(context, "No se pudo obtener la ruta física de la carpeta", android.widget.Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                android.widget.Toast.makeText(context, "Error al configurar carpeta: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -827,7 +852,80 @@ fun OnboardingFlow(
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
                     ) {
                         Text(
-                            "Omitir y Configurar Tema",
+                            "Omitir y Configurar Biblioteca",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+                } else if (step == 2) {
+                    Icon(
+                        imageVector = Icons.Rounded.FolderOpen,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(72.dp)
+                    )
+
+                    Text(
+                        text = "¿Dónde está tu música?",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Text(
+                        text = "Puedes seleccionar una carpeta específica para tu música o permitir que la aplicación escanee todo el dispositivo.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        textAlign = TextAlign.Center,
+                        lineHeight = 20.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = {
+                            selectOnboardingMusicFolderLauncher.launch(null)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                "Elegir carpeta específica",
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            settingsPrefs.edit().remove("music_folder_path").apply()
+                            step = 3
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
+                    ) {
+                        Text(
+                            "Escanear todo el dispositivo",
                             color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp
@@ -861,7 +959,8 @@ fun OnboardingFlow(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         val themes = listOf(
-                            Triple("cyberpunk", "Cyberpunk", Brush.horizontalGradient(listOf(Color(0xFF8A2BE2), Color(0xFFFF007F)))),
+                            Triple("cyberpunk", "Cyberpunk Rosa", Brush.horizontalGradient(listOf(Color(0xFF8A2BE2), Color(0xFFFF007F)))),
+                            Triple("cyberpunk_purpura", "Cyberpunk Púrpura", Brush.horizontalGradient(listOf(Color(0xFF0C0514), Color(0xFFD000FF)))),
                             Triple("petrol", "Azul Petróleo", Brush.horizontalGradient(listOf(Color(0xFF005F73), Color(0xFF0A9396)))),
                             Triple("turquoise", "Turquesa", Brush.horizontalGradient(listOf(Color(0xFF00F5D4), Color(0xFF00BBF9)))),
                             Triple("obsidian", "Obsidiana Oscuro", Brush.horizontalGradient(listOf(Color(0xFF1A1A1A), Color(0xFF0A0A0A)))),
@@ -921,6 +1020,7 @@ fun OnboardingFlow(
                     Button(
                         onClick = {
                             settingsPrefs.edit().putBoolean("is_first_run", false).apply()
+                            viewModel.scanFiles(isManual = true)
                             onDismiss()
                         },
                         modifier = Modifier

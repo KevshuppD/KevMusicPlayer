@@ -25,6 +25,27 @@ import androidx.core.view.WindowCompat
 import androidx.compose.ui.graphics.Color
 import android.content.Context
 
+private val CyberpunkPurpuraColorScheme = darkColorScheme(
+    primary = Color(0xFFD000FF),
+    onPrimary = Color(0xFF1A0033),
+    primaryContainer = Color(0xFF4D007A),
+    onPrimaryContainer = Color(0xFFF3E5F5),
+    secondary = Color(0xFFFF007F),
+    onSecondary = Color(0xFF2D0014),
+    secondaryContainer = Color(0xFF5A002C),
+    onSecondaryContainer = Color(0xFFFFD8E4),
+    tertiary = Color(0xFF00F0FF),
+    onTertiary = Color(0xFF00363C),
+    tertiaryContainer = Color(0xFF004F58),
+    onTertiaryContainer = Color(0xFFCBF8FF),
+    background = DarkBg,
+    onBackground = DarkOnBg,
+    surface = DarkSurface,
+    onSurface = DarkOnSurface,
+    surfaceVariant = DarkSurfaceVariant,
+    onSurfaceVariant = DarkOnSurface
+)
+
 private val PetrolColorScheme = darkColorScheme(
     primary = Color(0xFF00E5FF),
     onPrimary = Color(0xFF00363C),
@@ -107,6 +128,7 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 val LocalDisableAnimations = androidx.compose.runtime.staticCompositionLocalOf { false }
+val LocalSongImageRounded = androidx.compose.runtime.staticCompositionLocalOf { true }
 
 @Composable
 fun KevMusicPlayerTheme(
@@ -117,6 +139,7 @@ fun KevMusicPlayerTheme(
     // Observe dynamic changes instantly
     var currentTheme by remember { mutableStateOf(prefs.getString("app_theme", "cyberpunk") ?: "cyberpunk") }
     var currentDisableAnimations by remember { mutableStateOf(prefs.getBoolean("disable_animations", false)) }
+    var currentSongImageRounded by remember { mutableStateOf(prefs.getBoolean("song_image_rounded", true)) }
     
     // Store strong references to the change listeners so they are not garbage collected
     val listener = remember {
@@ -125,6 +148,8 @@ fun KevMusicPlayerTheme(
                 currentTheme = p.getString("app_theme", "cyberpunk") ?: "cyberpunk"
             } else if (key == "disable_animations") {
                 currentDisableAnimations = p.getBoolean("disable_animations", false)
+            } else if (key == "song_image_rounded") {
+                currentSongImageRounded = p.getBoolean("song_image_rounded", true)
             }
         }
     }
@@ -142,6 +167,7 @@ fun KevMusicPlayerTheme(
         "obsidian" -> ObsidianColorScheme
         "turquoise" -> TurquoiseColorScheme
         "monochrome" -> MonochromeColorScheme
+        "cyberpunk_purpura" -> CyberpunkPurpuraColorScheme
         else -> DarkColorScheme
     }
 
@@ -154,7 +180,8 @@ fun KevMusicPlayerTheme(
         }
     }
     CompositionLocalProvider(
-        LocalDisableAnimations provides currentDisableAnimations
+        LocalDisableAnimations provides currentDisableAnimations,
+        LocalSongImageRounded provides currentSongImageRounded
     ) {
         MaterialTheme(
             colorScheme = colorScheme,

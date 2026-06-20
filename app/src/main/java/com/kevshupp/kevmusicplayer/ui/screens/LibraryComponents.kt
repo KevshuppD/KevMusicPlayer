@@ -355,7 +355,7 @@ fun SongListView(
                     Box(
                         modifier = Modifier
                             .size(48.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape)
                             .background(getGradientForString(song.title)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -584,11 +584,22 @@ fun SongListView(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun AlbumGridView(
     albums: Map<String, List<AudioFile>>,
-    onAlbumClick: (String) -> Unit
+    onAlbumClick: (String) -> Unit,
+    onDeleteAlbum: (String, List<AudioFile>) -> Unit,
+    onAddAlbumToPlaylist: (String, List<AudioFile>) -> Unit,
+    onEditAlbum: (String, List<AudioFile>) -> Unit,
+    onShowAlbumInfo: (String, List<AudioFile>) -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val systemLang = remember { context.resources.configuration.locales[0].language }
+    val getLocalized = { es: String, en: String ->
+        if (systemLang == "es") es else en
+    }
+
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         contentPadding = PaddingValues(16.dp),
@@ -598,65 +609,111 @@ fun AlbumGridView(
     ) {
         items(albums.keys.toList(), key = { it }) { albumName ->
             val albumSongs = albums[albumName] ?: emptyList()
-            Card(
-                onClick = { onAlbumClick(albumName) },
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(0.82f)
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(getGradientForString(albumName)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val firstSongUri = albumSongs.firstOrNull()?.uriString
-                        val artBytes = rememberAlbumArt(firstSongUri)
-                        SubcomposeAsyncImage(
-                            model = artBytes,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                            error = {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Album,
-                                        contentDescription = null,
-                                        tint = Color.White.copy(alpha = 0.9f),
-                                        modifier = Modifier.size(54.dp)
-                                    )
+            var showMenu by remember { mutableStateOf(false) }
+
+            Box {
+                Card(
+                    shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(20.dp) else androidx.compose.ui.graphics.RectangleShape,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(0.82f)
+                        .combinedClickable(
+                            onClick = { onAlbumClick(albumName) },
+                            onLongClick = { showMenu = true }
+                        )
+                ) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f)
+                                .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(20.dp) else androidx.compose.ui.graphics.RectangleShape)
+                                .background(getGradientForString(albumName)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val firstSongUri = albumSongs.firstOrNull()?.uriString
+                            val artBytes = rememberAlbumArt(firstSongUri)
+                            SubcomposeAsyncImage(
+                                model = artBytes,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                                error = {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Album,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.9f),
+                                            modifier = Modifier.size(54.dp)
+                                        )
+                                    }
                                 }
-                            }
-                        )
-                    }
+                            )
+                        }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                        Text(
-                            text = albumName,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Text(
-                            text = "${albumSongs.size} Tracks",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
-                        )
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                            Text(
+                                text = albumName,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "${albumSongs.size} ${if (albumSongs.size == 1) getLocalized("Tema", "Track") else getLocalized("Temas", "Tracks")}",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+                            )
+                        }
                     }
+                }
+
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                    containerColor = Color(0xFF161829)
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(getLocalized("Eliminar Álbum", "Delete Album"), color = Color.White) },
+                        leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                        onClick = {
+                            showMenu = false
+                            onDeleteAlbum(albumName, albumSongs)
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(getLocalized("Agregar a Playlist", "Add to Playlist"), color = Color.White) },
+                        leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        onClick = {
+                            showMenu = false
+                            onAddAlbumToPlaylist(albumName, albumSongs)
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(getLocalized("Editar Metadatos", "Edit Metadata"), color = Color.White) },
+                        leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        onClick = {
+                            showMenu = false
+                            onEditAlbum(albumName, albumSongs)
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(getLocalized("Mostrar Información", "Show Info"), color = Color.White) },
+                        leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        onClick = {
+                            showMenu = false
+                            onShowAlbumInfo(albumName, albumSongs)
+                        }
+                    )
                 }
             }
         }
@@ -818,7 +875,7 @@ fun MiniPlayer(
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape)
                         .background(getGradientForString(title)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1587,7 +1644,7 @@ fun PlaylistGridView(
             Box {
                 Card(
                     onClick = { onPlaylistClick(name) },
-                    shape = RoundedCornerShape(20.dp),
+                    shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(20.dp) else androidx.compose.ui.graphics.RectangleShape,
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
                     ),
@@ -1744,7 +1801,7 @@ fun SongOptionsBottomSheet(
                 Box(
                     modifier = Modifier
                         .size(64.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(14.dp) else androidx.compose.ui.graphics.RectangleShape)
                         .background(getGradientForString(song.title)),
                     contentAlignment = Alignment.Center
                 ) {

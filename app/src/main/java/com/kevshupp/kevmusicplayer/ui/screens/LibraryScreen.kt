@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.SolidColor
 import coil.compose.SubcomposeAsyncImage
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
+import com.kevshupp.kevmusicplayer.playback.getPhysicalPath
 import com.kevshupp.kevmusicplayer.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -139,6 +140,10 @@ fun LibraryScreen(
     }
 
     var songToDelete by remember { mutableStateOf<AudioFile?>(null) }
+    var albumToDelete by remember { mutableStateOf<Pair<String, List<AudioFile>>?>(null) }
+    var albumForPlaylist by remember { mutableStateOf<Pair<String, List<AudioFile>>?>(null) }
+    var albumToEdit by remember { mutableStateOf<Pair<String, List<AudioFile>>?>(null) }
+    var albumToShowInfo by remember { mutableStateOf<Pair<String, List<AudioFile>>?>(null) }
     var songForPlaylist by remember { mutableStateOf<AudioFile?>(null) }
     var songForTagEditing by remember { mutableStateOf<AudioFile?>(null) }
     var albumForCoverEditing by remember { mutableStateOf<String?>(null) }
@@ -290,18 +295,47 @@ fun LibraryScreen(
                         )
                     }
 
-                    IconButton(
-                        onClick = onSettingsClick,
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                        ),
-                        modifier = Modifier.size(48.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Settings,
-                            contentDescription = "Settings",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
+                        val isScanning = viewModel?.isScanning?.value == true
+                        IconButton(
+                            onClick = { viewModel?.scanFiles(isManual = true) },
+                            enabled = !isScanning,
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            if (isScanning) {
+                                CircularProgressIndicator(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = "Reload Library",
+                                    tint = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = onSettingsClick,
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Settings,
+                                contentDescription = "Settings",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
                     }
                 }
 
@@ -547,7 +581,11 @@ fun LibraryScreen(
                                 "Albums" -> {
                                     AlbumGridView(
                                         albums = albums,
-                                        onAlbumClick = { currentSubView = SubView.AlbumDetail(it) }
+                                        onAlbumClick = { currentSubView = SubView.AlbumDetail(it) },
+                                        onDeleteAlbum = { name, songs -> albumToDelete = Pair(name, songs) },
+                                        onAddAlbumToPlaylist = { name, songs -> albumForPlaylist = Pair(name, songs) },
+                                        onEditAlbum = { name, songs -> albumToEdit = Pair(name, songs) },
+                                        onShowAlbumInfo = { name, songs -> albumToShowInfo = Pair(name, songs) }
                                     )
                                 }
                                 "Artists" -> {
@@ -673,7 +711,7 @@ fun LibraryScreen(
                             Box(
                                 modifier = Modifier
                                     .size(56.dp)
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape)
                                     .background(if (currentCover != null) SolidColor(Color.Transparent) else getGradientForString(subView.playlistName))
                                     .clickable(enabled = !isSmart) {
                                         coverPickerLauncher.launch("image/*")
@@ -707,7 +745,7 @@ fun LibraryScreen(
                             Box(
                                 modifier = Modifier
                                     .size(56.dp)
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape)
                                     .background(getGradientForString(subView.albumName))
                                     .clickable { albumForCoverEditing = subView.albumName },
                                 contentAlignment = Alignment.Center
@@ -1105,6 +1143,245 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+
+    if (albumToDelete != null) {
+        val context = LocalContext.current
+        val albumName = albumToDelete!!.first
+        val albumSongs = albumToDelete!!.second
+        AlertDialog(
+            onDismissRequest = { albumToDelete = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Rounded.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(getLocalized("¿Eliminar álbum?", "Delete Album?"), fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column {
+                    Text(getLocalized("¿Estás seguro de que deseas eliminar permanentemente todas las canciones de este álbum de tu dispositivo?", "Are you sure you want to permanently delete all tracks from this album from your device?"), color = Color.White.copy(alpha = 0.8f))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(albumName, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("${albumSongs.size} ${if (albumSongs.size == 1) getLocalized("Tema", "Track") else getLocalized("Temas", "Tracks")}", fontSize = 13.sp, color = Color.White.copy(alpha = 0.6f))
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val songIds = albumSongs.map { it.id }
+                        albumToDelete = null
+                        viewModel?.deleteSongs(context, songIds) {
+                            android.widget.Toast.makeText(context, getLocalized("Álbum eliminado", "Album deleted"), android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text(getLocalized("Eliminar", "Delete"), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { albumToDelete = null }) {
+                    Text(getLocalized("Cancelar", "Cancel"), color = Color.White.copy(alpha = 0.6f))
+                }
+            },
+            containerColor = Color(0xFF161829),
+            titleContentColor = Color.White,
+            textContentColor = Color.White
+        )
+    }
+
+    if (albumForPlaylist != null && viewModel != null) {
+        val albumSongs = albumForPlaylist!!.second
+        AlertDialog(
+            onDismissRequest = { albumForPlaylist = null },
+            title = { Text(getLocalized("Agregar álbum a playlist", "Add Album to Playlist"), color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                val list = viewModel.playlists.keys.toList()
+                if (list.isEmpty()) {
+                    Text(getLocalized("No tienes listas de reproducción creadas. Crea una primero en la pestaña 'PLAYLISTS'.", "You don't have any playlists created. Create one first in the 'PLAYLISTS' tab."), color = Color.White.copy(alpha = 0.7f))
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
+                    ) {
+                        items(list, key = { it }) { name ->
+                            Card(
+                                onClick = {
+                                    val songIds = albumSongs.map { it.id }
+                                    viewModel.addSongsToPlaylist(name, songIds)
+                                    albumForPlaylist = null
+                                    android.widget.Toast.makeText(context, getLocalized("Álbum agregado a playlist", "Album added to playlist"), android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f))
+                            ) {
+                                Text(
+                                    text = name,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { albumForPlaylist = null }) {
+                    Text(getLocalized("Cancelar", "Cancel"), color = Color.White.copy(alpha = 0.6f))
+                }
+            },
+            containerColor = Color(0xFF161829),
+            titleContentColor = Color.White,
+            textContentColor = Color.White
+        )
+    }
+
+    if (albumToEdit != null && viewModel != null) {
+        val oldAlbumName = albumToEdit!!.first
+        val albumSongs = albumToEdit!!.second
+        val initialArtist = remember(albumSongs) { albumSongs.firstOrNull()?.artist ?: "" }
+        var newAlbumName by remember { mutableStateOf(oldAlbumName) }
+        var newArtistName by remember { mutableStateOf(initialArtist) }
+        AlertDialog(
+            onDismissRequest = { albumToEdit = null },
+            title = { Text(getLocalized("Editar metadatos del álbum", "Edit Album Metadata"), color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextField(
+                        value = newAlbumName,
+                        onValueChange = { newAlbumName = it },
+                        label = { Text(getLocalized("Nombre del Álbum", "Album Name")) },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = Color.White.copy(alpha = 0.05f),
+                            unfocusedContainerColor = Color.White.copy(alpha = 0.05f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    TextField(
+                        value = newArtistName,
+                        onValueChange = { newArtistName = it },
+                        label = { Text(getLocalized("Nombre del Artista", "Artist Name")) },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = Color.White.copy(alpha = 0.05f),
+                            unfocusedContainerColor = Color.White.copy(alpha = 0.05f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val name = newAlbumName
+                        val artist = newArtistName
+                        val songs = albumSongs
+                        albumToEdit = null
+                        viewModel.updateAlbumMetadata(context, oldAlbumName, songs, name, artist) {
+                            android.widget.Toast.makeText(context, getLocalized("Metadatos de álbum actualizados", "Album metadata updated"), android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) {
+                    Text(getLocalized("Guardar", "Save"), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { albumToEdit = null }) {
+                    Text(getLocalized("Cancelar", "Cancel"), color = Color.White.copy(alpha = 0.6f))
+                }
+            },
+            containerColor = Color(0xFF161829),
+            titleContentColor = Color.White,
+            textContentColor = Color.White
+        )
+    }
+
+    if (albumToShowInfo != null) {
+        val albumName = albumToShowInfo!!.first
+        val albumSongs = albumToShowInfo!!.second
+        val artist = remember(albumSongs) { albumSongs.firstOrNull()?.artist ?: "Unknown Artist" }
+        val totalSize = remember(albumSongs) {
+            var sumBytes = 0L
+            albumSongs.forEach { song ->
+                try {
+                    val path = getPhysicalPath(context, song.id, song.uriString)
+                    if (!path.isNullOrBlank()) {
+                        val file = java.io.File(path)
+                        if (file.exists()) {
+                            sumBytes += file.length()
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            if (sumBytes > 0) {
+                val units = arrayOf("B", "KB", "MB", "GB")
+                val digitGroups = (Math.log10(sumBytes.toDouble()) / Math.log10(1024.0)).toInt()
+                String.format(java.util.Locale.US, "%.2f %s", sumBytes / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
+            } else {
+                "Unknown Size"
+            }
+        }
+        val totalDuration = remember(albumSongs) {
+            val sumMs = albumSongs.sumOf { it.duration }
+            val hrs = sumMs / 3600000
+            val mins = (sumMs % 3600000) / 60000
+            val secs = (sumMs % 60000) / 1000
+            if (hrs > 0) {
+                String.format(java.util.Locale.US, "%d:%02d:%02d", hrs, mins, secs)
+            } else {
+                String.format(java.util.Locale.US, "%d:%02d", mins, secs)
+            }
+        }
+        val formats = remember(albumSongs) {
+            albumSongs.map { song ->
+                val path = getPhysicalPath(context, song.id, song.uriString)
+                path?.substringAfterLast('.', "MP3")?.uppercase() ?: "MP3"
+            }.distinct().joinToString(", ")
+        }
+        val paths = remember(albumSongs) {
+            albumSongs.map { song ->
+                val path = getPhysicalPath(context, song.id, song.uriString)
+                path?.substringBeforeLast('/', "") ?: ""
+            }.distinct().filter { it.isNotEmpty() }.joinToString("\n")
+        }
+
+        AlertDialog(
+            onDismissRequest = { albumToShowInfo = null },
+            title = { Text(getLocalized("Información del Álbum", "Album Information"), color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(getLocalized("Álbum: $albumName", "Album: $albumName"), fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(getLocalized("Artista: $artist", "Artist: $artist"), color = Color.White.copy(alpha = 0.8f))
+                    Text(getLocalized("Temas: ${albumSongs.size}", "Tracks: ${albumSongs.size}"), color = Color.White.copy(alpha = 0.8f))
+                    Text(getLocalized("Duración Total: $totalDuration", "Total Duration: $totalDuration"), color = Color.White.copy(alpha = 0.8f))
+                    Text(getLocalized("Tamaño Total: $totalSize", "Total Size: $totalSize"), color = Color.White.copy(alpha = 0.8f))
+                    Text(getLocalized("Formatos: $formats", "Formats: $formats"), color = Color.White.copy(alpha = 0.8f))
+                    if (paths.isNotEmpty()) {
+                        Text(getLocalized("Ubicaciones:\n$paths", "Locations:\n$paths"), fontSize = 12.sp, color = Color.White.copy(alpha = 0.6f))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { albumToShowInfo = null }) {
+                    Text(getLocalized("Cerrar", "Close"), fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = Color(0xFF161829),
+            titleContentColor = Color.White,
+            textContentColor = Color.White
+        )
     }
 
     if (songToDelete != null) {

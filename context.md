@@ -206,4 +206,9 @@ Este archivo (`context.md`) actúa como la memoria central y cerebro técnico de
 
 - **Creación de Releases:** La compilación y publicación de nuevas versiones (Releases en GitHub con tags `v*` y APKs de producción) **únicamente debe realizarse cuando el usuario lo solicite de forma explícita en el chat**. Ninguna IA o proceso automatizado debe crear releases o tags por iniciativa propia o de forma preventiva.
 - **Consistencia de Firma:** Cualquier compilación local o remota de producción debe utilizar la configuración de firmas compartida `release` en Gradle, garantizando que el APK conserve la firma del keystore del repositorio y sea actualizable.
+- **Conexión ADB Inalámbrica (Wi-Fi):** Para conectar el dispositivo de desarrollo físico en entornos Linux sin lidiar con los puertos dinámicos aleatorios de Android, se debe ejecutar el siguiente comando automatizado que extrae y conecta el puerto a través de mDNS (Avahi):
+  ```bash
+  adb connect $(avahi-browse -rtp _adb-tls-connect._tcp -t 2>/dev/null | grep ^= | cut -d';' -f8,9 --output-delimiter=: | head -n1)
+  ```
 - **Preservación del Contexto:** Al implementar nuevas funciones, optimizaciones o cambios arquitectónicos significativos, la IA debe documentarlos de forma oportuna en este archivo para guiar a futuras sesiones de trabajo.
+
