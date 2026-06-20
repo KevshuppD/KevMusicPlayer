@@ -176,79 +176,75 @@ fun LibraryScreen(
     }
 
     // Filter audio files by search query
-    val filteredFiles = remember(audioFiles.toList(), searchQuery, sortBy) {
-        val filtered = audioFiles.filter {
-            it.title.contains(searchQuery, ignoreCase = true) ||
-            it.artist.contains(searchQuery, ignoreCase = true) ||
-            it.album.contains(searchQuery, ignoreCase = true) ||
-            it.genre.contains(searchQuery, ignoreCase = true)
-        }
-        when (sortBy) {
-            "Alphabetical" -> filtered.sortedWith { songA, songB ->
-                val charA = songA.title.firstOrNull()?.uppercaseChar() ?: '#'
-                val charB = songB.title.firstOrNull()?.uppercaseChar() ?: '#'
-                
-                val typeA = when {
-                    charA.isDigit() -> 0  // '#'
-                    charA in 'A'..'Z' -> 1 // Letters
-                    else -> 2             // '?'
-                }
-                val typeB = when {
-                    charB.isDigit() -> 0
-                    charB in 'A'..'Z' -> 1
-                    else -> 2
-                }
-                
-                if (typeA != typeB) {
-                    typeA.compareTo(typeB)
-                } else {
-                    songA.title.lowercase().compareTo(songB.title.lowercase())
-                }
+    val filteredFiles by remember {
+        derivedStateOf {
+            val filtered = audioFiles.filter {
+                it.title.contains(searchQuery, ignoreCase = true) ||
+                it.artist.contains(searchQuery, ignoreCase = true) ||
+                it.album.contains(searchQuery, ignoreCase = true) ||
+                it.genre.contains(searchQuery, ignoreCase = true)
             }
-            "Artist" -> filtered.sortedBy { it.artist.lowercase() }
-            "Duration" -> filtered.sortedByDescending { it.duration }
-            else -> filtered
+            when (sortBy) {
+                "Alphabetical" -> filtered.sortedWith { songA, songB ->
+                    val charA = songA.title.firstOrNull()?.uppercaseChar() ?: '#'
+                    val charB = songB.title.firstOrNull()?.uppercaseChar() ?: '#'
+                    
+                    val typeA = when {
+                        charA.isDigit() -> 0  // '#'
+                        charA in 'A'..'Z' -> 1 // Letters
+                        else -> 2             // '?'
+                    }
+                    val typeB = when {
+                        charB.isDigit() -> 0
+                        charB in 'A'..'Z' -> 1
+                        else -> 2
+                    }
+                    
+                    if (typeA != typeB) {
+                        typeA.compareTo(typeB)
+                    } else {
+                        songA.title.lowercase().compareTo(songB.title.lowercase())
+                    }
+                }
+                "Artist" -> filtered.sortedBy { it.artist.lowercase() }
+                "Duration" -> filtered.sortedByDescending { it.duration }
+                else -> filtered
+            }
         }
     }
 
     // Active song target index calculations for scrolling
     val currentPlayingMediaId = player?.currentMediaItem?.mediaId?.toLongOrNull()
-    val scrollTargetIndex = remember(currentPlayingMediaId, selectedTab, currentSubView, filteredFiles, audioFiles, viewModel?.playlists, viewModel?.smartPlaylists) {
-        if (currentPlayingMediaId == null) return@remember -1
+    val scrollTargetIndex by remember {
+        derivedStateOf {
+            if (currentPlayingMediaId == null) return@derivedStateOf -1
 
-        if (currentSubView == null) {
-            if (selectedTab == "Songs") {
-                filteredFiles.indexOfFirst { it.id == currentPlayingMediaId }
-            } else -1
-        } else {
-            val subSongs = when (val sv = currentSubView) {
-                is SubView.AlbumDetail -> filteredFiles.filter { it.album == sv.albumName }
-                is SubView.ArtistDetail -> filteredFiles.filter { it.artist == sv.artistName }
-                is SubView.GenreDetail -> filteredFiles.filter { it.genre == sv.genreName }
-                is SubView.FolderDetail -> filteredFiles.filter { it.folderName == sv.folderName }
-                is SubView.PlaylistDetail -> {
-                    viewModel?.smartPlaylists?.get(sv.playlistName)
-                        ?: viewModel?.playlists?.get(sv.playlistName) ?: emptyList()
+            if (currentSubView == null) {
+                if (selectedTab == "Songs") {
+                    filteredFiles.indexOfFirst { it.id == currentPlayingMediaId }
+                } else -1
+            } else {
+                val subSongs = when (val sv = currentSubView) {
+                    is SubView.AlbumDetail -> filteredFiles.filter { it.album == sv.albumName }
+                    is SubView.ArtistDetail -> filteredFiles.filter { it.artist == sv.artistName }
+                    is SubView.GenreDetail -> filteredFiles.filter { it.genre == sv.genreName }
+                    is SubView.FolderDetail -> filteredFiles.filter { it.folderName == sv.folderName }
+                    is SubView.PlaylistDetail -> {
+                        viewModel?.smartPlaylists?.get(sv.playlistName)
+                            ?: viewModel?.playlists?.get(sv.playlistName) ?: emptyList()
+                    }
+                    else -> emptyList()
                 }
-                else -> emptyList()
+                subSongs.indexOfFirst { it.id == currentPlayingMediaId }
             }
-            subSongs.indexOfFirst { it.id == currentPlayingMediaId }
         }
     }
 
     // Grouping
-    val albums = remember(filteredFiles) {
-        filteredFiles.groupBy { it.album }
-    }
-    val artists = remember(filteredFiles) {
-        filteredFiles.groupBy { it.artist }
-    }
-    val genres = remember(filteredFiles) {
-        filteredFiles.groupBy { it.genre }
-    }
-    val folders = remember(filteredFiles) {
-        filteredFiles.groupBy { it.folderName }
-    }
+    val albums by remember { derivedStateOf { filteredFiles.groupBy { it.album } } }
+    val artists by remember { derivedStateOf { filteredFiles.groupBy { it.artist } } }
+    val genres by remember { derivedStateOf { filteredFiles.groupBy { it.genre } } }
+    val folders by remember { derivedStateOf { filteredFiles.groupBy { it.folderName } } }
 
     Box(
         modifier = modifier
@@ -573,15 +569,17 @@ fun LibraryScreen(
                                     )
                                 }
                                 "Playlists" -> {
-                                    val allPlaylists = remember(viewModel?.playlists?.keys?.toList(), viewModel?.smartPlaylists?.keys?.toList()) {
-                                        val map = mutableMapOf<String, List<AudioFile>>()
-                                        viewModel?.smartPlaylists?.forEach { (name, list) ->
-                                            map[name] = list
+                                    val allPlaylists by remember {
+                                        derivedStateOf {
+                                            val map = mutableMapOf<String, List<AudioFile>>()
+                                            viewModel?.smartPlaylists?.forEach { (name, list) ->
+                                                map[name] = list
+                                            }
+                                            viewModel?.playlists?.forEach { (name, list) ->
+                                                map[name] = list
+                                            }
+                                            map
                                         }
-                                        viewModel?.playlists?.forEach { (name, list) ->
-                                            map[name] = list
-                                        }
-                                        map
                                     }
                                     PlaylistGridView(
                                         viewModel = viewModel,

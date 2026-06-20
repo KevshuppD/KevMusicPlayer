@@ -1194,9 +1194,11 @@ fun AlbumEditorDialog(
     }
 
     // Find the first song belonging to this album to pre-fill the artist
-    val firstSongInAlbum = remember(albumName, viewModel.localAudioFiles.toList()) {
-        viewModel.localAudioFiles.find { it.album.trim().equals(albumName.trim(), ignoreCase = true) }
-    }
+    val firstSongInAlbum = remember {
+        derivedStateOf {
+            viewModel.localAudioFiles.find { it.album.trim().equals(albumName.trim(), ignoreCase = true) }
+        }
+    }.value
 
     var albumTitleInput by remember { mutableStateOf(albumName) }
     var albumArtistInput by remember { mutableStateOf(firstSongInAlbum?.artist ?: "") }

@@ -137,9 +137,11 @@ fun PlayerScreen(
         showLyrics = false
     }
 
-    val currentSongFile = remember(playerState.currentSong?.mediaId, viewModel?.localAudioFiles?.toList()) {
-        viewModel?.localAudioFiles?.find { it.id.toString() == playerState.currentSong?.mediaId }
-    }
+    val currentSongFile = remember {
+        derivedStateOf {
+            viewModel?.localAudioFiles?.find { it.id.toString() == playerState.currentSong?.mediaId }
+        }
+    }.value
     val lyricsText = currentSongFile?.lyrics
     val lyricLines = remember(lyricsText) { LyricsRepository.parseLrc(lyricsText) }
     var translatedLyricLines by remember { mutableStateOf<Map<Long, String>?>(null) }
@@ -819,9 +821,11 @@ fun PlayerScreen(
                     val pageSong = remember(page, playerState.currentSong) {
                         if (page in 0 until player.mediaItemCount) player.getMediaItemAt(page) else null
                     }
-                    val pageSongFile = remember(pageSong?.mediaId, viewModel?.localAudioFiles?.toList()) {
-                        viewModel?.localAudioFiles?.find { it.id.toString() == pageSong?.mediaId }
-                    }
+                    val pageSongFile = remember {
+                        derivedStateOf {
+                            viewModel?.localAudioFiles?.find { it.id.toString() == pageSong?.mediaId }
+                        }
+                    }.value
                     val pageTitle = pageSong?.mediaMetadata?.title?.toString() ?: "Unknown Title"
                     val pageArtist = pageSong?.mediaMetadata?.artist?.toString() ?: "Unknown Artist"
                     val pageUriString = remember(pageSong?.mediaId) {
