@@ -92,6 +92,16 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
   - Almacena de forma persistente las trazas de error con marcas de tiempo en el archivo `telemetry_errors.log` dentro del directorio de almacenamiento privado de la aplicación (`filesDir`), si el usuario lo habilita en la configuración.
   - Ofrece una interfaz de usuario integrada para visualizar los logs en tiempo real, vaciar el registro y copiar el volcado de errores formateados al portapapeles para su fácil diagnóstico y resolución por parte del equipo de soporte.
 
+### I. Automatización de Compilación y Lanzamientos (CI/CD)
+- **GitHub Actions Workflow (`release.yml`):**
+  - Compila automáticamente el APK de producción firmado de release ante la subida de cualquier etiqueta de versión (`v*`) o mediante ejecución manual (`workflow_dispatch`).
+  - Configura Java 17, maneja caché automático de dependencias y empaquetadores de Gradle, y publica la release automáticamente en el repositorio asociando el APK renombrado.
+
+### J. Firma Compartida de Producción/Lanzamiento (Keystore)
+- **Firma Unificada (`shared.keystore`):**
+  - Para evitar conflictos de instalación y errores de "Firma de paquete incorrecta" al actualizar la app de forma cruzada (instalando un APK de CI/CD sobre uno compilado localmente), se almacena un keystore compartido (`app/shared.keystore`) en el repositorio.
+  - El archivo `app/build.gradle.kts` define el bloque `signingConfigs` apuntando a este almacén compartido con contraseñas fijas, garantizando firmas criptográficas 100% idénticas en cualquier compilación.
+
 ---
 
 ## 3. Esquema y Definición de Datos (Room Database)
@@ -133,6 +143,9 @@ data class AudioFile(
    - Para evitar excepciones `TransactionTooLargeException` al pasar listas extensas de reproducción mediante IPC a Media3, se limita la cola interna a un máximo de **1500 canciones** en memoria y se utiliza paginación (`getAudioFilesPaged`) para búsquedas en la UI.
 3. **Consistencia de Portadas de Álbum (Covers):**
    - Las carátulas de listas de reproducción manuales son persistidas en el directorio de caché de la aplicación y mapeadas dinámicamente en el ViewModel, evitando corrupciones en las referencias a almacenamiento externo.
+4. **Optimización de Memoria y Recomposiciones en Compose (`derivedStateOf`):**
+   - Se removió la creación repetida de listas temporales (`.toList()`) en las claves de bloques `remember` de alto rendimiento (búsquedas, listados principales, pager y ordenamientos).
+   - Se adoptaron estructuras `derivedStateOf` con lectura directa de estado (`.value` o delegación `by`). Compose realiza un seguimiento de dependencias reactivas y solo re-calcula las operaciones pesadas (filtrado, ordenación, agrupamientos y búsquedas) si el contenido de la lista original o los filtros cambian realmente, disminuyendo la latencia de fotogramas durante scrolls a 120Hz reales y resolviendo los fallos de smart-cast de Kotlin.
 
 ---
 
