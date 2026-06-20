@@ -45,9 +45,17 @@ object TelemetryLogger {
             val logLine = StringBuilder()
             logLine.append("[$timestamp] [$category] $message\n")
             if (throwable != null) {
-                logLine.append("  Exception: ${throwable.javaClass.name}: ${throwable.message}\n")
-                val stackTrace = throwable.stackTrace.take(5).joinToString("\n") { "    at ${it.className}.${it.methodName}(${it.fileName}:${it.lineNumber})" }
-                logLine.append("$stackTrace\n")
+                var current: Throwable? = throwable
+                while (current != null) {
+                    if (current != throwable) {
+                        logLine.append("  Caused by: ${current.javaClass.name}: ${current.message}\n")
+                    } else {
+                        logLine.append("  Exception: ${current.javaClass.name}: ${current.message}\n")
+                    }
+                    val stackTrace = current.stackTrace.take(15).joinToString("\n") { "    at ${it.className}.${it.methodName}(${it.fileName}:${it.lineNumber})" }
+                    logLine.append("$stackTrace\n")
+                    current = current.cause
+                }
             }
             logLine.append("\n")
             
