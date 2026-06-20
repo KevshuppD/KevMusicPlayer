@@ -4,6 +4,16 @@
 
 It focuses on providing a premium user experience with a vibrant **Material Design 3** interface, buttery-smooth **120Hz** animations, and an intelligent library management system.
 
+<p align="center">
+  <a href="obtainium://add/https://github.com/KevshuppD/KevMusicPlayer">
+    <img src="https://img.shields.io/badge/Add_to-Obtainium-purple?style=for-the-badge&logo=android" alt="Add to Obtainium" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/KevshuppD/KevMusicPlayer/releases/latest">
+    <img src="https://img.shields.io/badge/Download-APK-success?style=for-the-badge&logo=android" alt="Download APK" />
+  </a>
+</p>
+
 ## 🚀 Features
 
 - **Instant Startup**: Local SQLite caching (Room) ensures your library is ready the moment you open the app.
