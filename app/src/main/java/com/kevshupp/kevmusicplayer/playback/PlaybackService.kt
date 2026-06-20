@@ -958,6 +958,7 @@ class PlaybackService : MediaLibraryService() {
         fadeJob?.cancel()
         fadeJob = serviceScope.launch {
             val playbackPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+            var lastSkippedMediaItem: MediaItem? = null
             while (true) {
                 kotlinx.coroutines.delay(150)
                 if (!player.isPlaying || isFadingIn) continue
@@ -972,6 +973,7 @@ class PlaybackService : MediaLibraryService() {
                 
                 val duration = player.duration
                 val position = player.currentPosition
+                val currentItem = player.currentMediaItem
                 if (duration > 0) {
                     val remainingMs = duration - position
                     val crossfadeMs = crossfadeSeconds * 1000L
@@ -980,7 +982,8 @@ class PlaybackService : MediaLibraryService() {
                         val progress = remainingMs.toFloat() / crossfadeMs
                         player.volume = progress.coerceIn(0f, 1f) * currentReplayGainFactor
                         
-                        if (remainingMs <= 200L && player.hasNextMediaItem()) {
+                        if (remainingMs <= 200L && player.hasNextMediaItem() && currentItem != lastSkippedMediaItem) {
+                            lastSkippedMediaItem = currentItem
                             player.seekToNextMediaItem()
                             fadeNewTrackIn(player, crossfadeMs)
                         }

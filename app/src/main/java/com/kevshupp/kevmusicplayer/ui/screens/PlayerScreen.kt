@@ -745,7 +745,7 @@ fun PlayerScreen(
                 ) {
                     ScrollingLyricsView(
                         lyricLines = lyricLines,
-                        currentPositionMs = playerState.position,
+                        currentPositionMs = { playerState.position },
                         songTitle = title,
                         songArtist = artist,
                         translatedLines = if (showTranslation) translatedLyricLines else null,
@@ -1002,31 +1002,13 @@ fun PlayerScreen(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    val count = fftData.size
-                                    val totalWidth = (barWidth.toPx() * count) + (barSpacing.toPx() * (count - 1))
-                                    val startX = (size.width - totalWidth) / 2
-
-                                    for (i in 0 until count) {
-                                        val rawVal = fftData[i]
-                                        val value = if (hasAudioPermission && audioSessionId != 0) {
-                                            (rawVal * 2.5f).coerceIn(2f, 150f)
-                                        } else {
-                                            rawVal.coerceIn(2f, 150f)
-                                        }
-
-                                        val barHeight = (value / 150f) * size.height
-                                        val x = startX + i * (barWidth.toPx() + barSpacing.toPx())
-                                        val y = (size.height - barHeight) / 2
-
-                                        drawRoundRect(
-                                            color = waveColor.copy(alpha = 0.85f),
-                                            topLeft = androidx.compose.ui.geometry.Offset(x, y),
-                                            size = androidx.compose.ui.geometry.Size(barWidth.toPx(), barHeight.coerceAtLeast(4f)),
-                                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth.toPx() / 2)
-                                        )
-                                    }
-                                }
+                                FFTVisualizer(
+                                    fftData = fftData,
+                                    hasAudioPermission = hasAudioPermission,
+                                    audioSessionId = audioSessionId,
+                                    waveColor = waveColor,
+                                    modifier = Modifier.fillMaxSize()
+                                )
                             }
                         } else {
                             Spacer(

@@ -31,8 +31,13 @@ import android.net.Uri
 import com.kevshupp.kevmusicplayer.R
 import com.kevshupp.kevmusicplayer.data.LyricLine
 
+private val audioFileInfoCache = android.util.LruCache<String, Pair<String, String>>(150)
+
 fun getAudioFileInfo(context: android.content.Context, uriString: String?): Pair<String, String> {
     if (uriString.isNullOrEmpty()) return Pair("MP3", "320 kbps")
+    val cached = audioFileInfoCache.get(uriString)
+    if (cached != null) return cached
+
     var extension = "MP3"
     var bitrate = "320 kbps"
     try {
@@ -66,13 +71,15 @@ fun getAudioFileInfo(context: android.content.Context, uriString: String?): Pair
         e.printStackTrace()
     }
     
-    return Pair(extension, bitrate)
+    val result = Pair(extension, bitrate)
+    audioFileInfoCache.put(uriString, result)
+    return result
 }
 
 @Composable
 fun ScrollingLyricsView(
     lyricLines: List<LyricLine>,
-    currentPositionMs: Long,
+    currentPositionMs: () -> Long,
     songTitle: String = "",
     songArtist: String = "",
     translatedLines: Map<Long, String>? = null,
@@ -94,17 +101,20 @@ fun ScrollingLyricsView(
         if (systemLang == "es") es else en
     }
     
-    val activeIndex = remember(lyricLines, currentPositionMs) {
-        lyricLines.indexOfLast { currentPositionMs >= it.timeMs }.coerceAtLeast(0)
+    val activeIndex = remember(lyricLines) {
+        derivedStateOf {
+            val pos = currentPositionMs()
+            lyricLines.indexOfLast { pos >= it.timeMs }.coerceAtLeast(0)
+        }
     }
 
     val disableAnimations = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
-    LaunchedEffect(activeIndex) {
-        if (lyricLines.isNotEmpty() && activeIndex >= 0) {
+    LaunchedEffect(activeIndex.value) {
+        if (lyricLines.isNotEmpty() && activeIndex.value >= 0) {
             if (disableAnimations) {
-                listState.scrollToItem(activeIndex)
+                listState.scrollToItem(activeIndex.value)
             } else {
-                listState.animateScrollToItem(activeIndex)
+                listState.animateScrollToItem(activeIndex.value)
             }
         }
     }
@@ -219,7 +229,7 @@ fun ScrollingLyricsView(
                 verticalArrangement = Arrangement.spacedBy(28.dp)
             ) {
                 itemsIndexed(lyricLines, key = { index, line -> "${line.timeMs}_$index" }) { index, line ->
-                    val isActive = index == activeIndex
+                    val isActive = index == activeIndex.value
                     val translatedText = translatedLines?.get(line.timeMs)
 
                     Column(
@@ -227,7 +237,7 @@ fun ScrollingLyricsView(
                             .fillMaxWidth()
                             .clickable { onLineClick(line.timeMs) }
                             .graphicsLayer {
-                                val distance = Math.abs(index - activeIndex)
+                                val distance = Math.abs(index - activeIndex.value)
                                 alpha = if (isActive) 1f else (0.4f - (distance * 0.05f)).coerceAtLeast(0.1f)
                                 scaleX = if (isActive) 1.05f else 1f
                                 scaleY = if (isActive) 1.05f else 1f
@@ -407,5 +417,42 @@ fun detectLanguage(text: String): String {
         max == frScore -> "fr"
         max == ptScore -> "pt"
         else -> "en"
+    }
+}
+
+@Composable
+fun FFTVisualizer(
+    fftData: FloatArray,
+    hasAudioPermission: Boolean,
+    audioSessionId: Int,
+    waveColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val barWidth = 6.dp
+    val barSpacing = 4.dp
+    androidx.compose.foundation.Canvas(modifier = modifier) {
+        val count = fftData.size
+        val totalWidth = (barWidth.toPx() * count) + (barSpacing.toPx() * (count - 1))
+        val startX = (size.width - totalWidth) / 2
+
+        for (i in 0 until count) {
+            val rawVal = fftData.getOrElse(i) { 0f }
+            val value = if (hasAudioPermission && audioSessionId != 0) {
+                (rawVal * 2.5f).coerceIn(2f, 150f)
+            } else {
+                rawVal.coerceIn(2f, 150f)
+            }
+
+            val barHeight = (value / 150f) * size.height
+            val x = startX + i * (barWidth.toPx() + barSpacing.toPx())
+            val y = (size.height - barHeight) / 2
+
+            drawRoundRect(
+                color = waveColor.copy(alpha = 0.85f),
+                topLeft = androidx.compose.ui.geometry.Offset(x, y),
+                size = androidx.compose.ui.geometry.Size(barWidth.toPx(), barHeight.coerceAtLeast(4f)),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth.toPx() / 2)
+            )
+        }
     }
 }
