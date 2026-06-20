@@ -57,18 +57,23 @@ fun getAudioFileInfo(context: android.content.Context, uriString: String?): Pair
         e.printStackTrace()
     }
     
+    val retriever = android.media.MediaMetadataRetriever()
     try {
         val uri = Uri.parse(uriString)
-        val retriever = android.media.MediaMetadataRetriever()
         retriever.setDataSource(context, uri)
         val bitrateStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE)
         if (!bitrateStr.isNullOrEmpty()) {
             val bitrateKbps = bitrateStr.toInt() / 1000
             bitrate = "$bitrateKbps kbps"
         }
-        retriever.release()
     } catch (e: Exception) {
         e.printStackTrace()
+    } finally {
+        try {
+            retriever.release()
+        } catch (ex: Exception) {
+            ex.printStackTrace()
+        }
     }
     
     val result = Pair(extension, bitrate)

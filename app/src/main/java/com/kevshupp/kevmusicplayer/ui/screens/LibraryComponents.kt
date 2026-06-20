@@ -987,6 +987,9 @@ fun rememberPlayerState(player: Player?): PlayerStateInfo {
     var position by remember { mutableLongStateOf(player?.currentPosition ?: 0L) }
     var duration by remember { mutableLongStateOf(player?.duration ?: 0L) }
     var shuffleModeEnabled by remember { mutableStateOf(player?.shuffleModeEnabled ?: false) }
+    var mediaItemCount by remember { mutableStateOf(player?.mediaItemCount ?: 0) }
+    var currentMediaItemIndex by remember { mutableStateOf(player?.currentMediaItemIndex ?: 0) }
+    var playlistVersion by remember { mutableStateOf(0) }
 
     DisposableEffect(player) {
         if (player == null) return@DisposableEffect onDispose {}
@@ -995,15 +998,24 @@ fun rememberPlayerState(player: Player?): PlayerStateInfo {
             override fun onEvents(player: Player, events: Player.Events) {
                 isPlaying = player.isPlaying
                 currentSong = player.currentMediaItem
+                position = player.currentPosition
                 duration = player.duration.coerceAtLeast(0L)
                 shuffleModeEnabled = player.shuffleModeEnabled
+                mediaItemCount = player.mediaItemCount
+                currentMediaItemIndex = player.currentMediaItemIndex
+                if (events.contains(Player.EVENT_TIMELINE_CHANGED)) {
+                    playlistVersion++
+                }
             }
         }
         player.addListener(listener)
         isPlaying = player.isPlaying
         currentSong = player.currentMediaItem
+        position = player.currentPosition
         duration = player.duration.coerceAtLeast(0L)
         shuffleModeEnabled = player.shuffleModeEnabled
+        mediaItemCount = player.mediaItemCount
+        currentMediaItemIndex = player.currentMediaItemIndex
         onDispose {
             player.removeListener(listener)
         }
@@ -1018,7 +1030,7 @@ fun rememberPlayerState(player: Player?): PlayerStateInfo {
         }
     }
 
-    return PlayerStateInfo(isPlaying, currentSong, position, duration, shuffleModeEnabled)
+    return PlayerStateInfo(isPlaying, currentSong, position, duration, shuffleModeEnabled, mediaItemCount, currentMediaItemIndex, playlistVersion)
 }
 
 data class PlayerStateInfo(
@@ -1026,7 +1038,10 @@ data class PlayerStateInfo(
     val currentSong: MediaItem?,
     val position: Long,
     val duration: Long,
-    val shuffleModeEnabled: Boolean
+    val shuffleModeEnabled: Boolean,
+    val mediaItemCount: Int,
+    val currentMediaItemIndex: Int,
+    val playlistVersion: Int
 )
 
 // ---------------- ALBUM ART CACHE & ASYNC LOADER ----------------

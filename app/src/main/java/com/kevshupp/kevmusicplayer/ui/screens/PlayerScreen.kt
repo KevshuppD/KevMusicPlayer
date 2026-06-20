@@ -91,7 +91,9 @@ fun PlayerScreen(
         return
     }
 
-    if (player.mediaItemCount == 0) {
+    val playerState = rememberPlayerState(player)
+
+    if (playerState.mediaItemCount == 0) {
         Box(
             modifier = modifier
                 .fillMaxSize()
@@ -103,18 +105,16 @@ fun PlayerScreen(
                 modifier = Modifier.size(48.dp)
             )
         }
-        LaunchedEffect(player.mediaItemCount) {
-            if (player.mediaItemCount == 0) {
+        LaunchedEffect(playerState.mediaItemCount) {
+            if (playerState.mediaItemCount == 0) {
                 kotlinx.coroutines.delay(200)
-                if (player.mediaItemCount == 0) {
+                if (playerState.mediaItemCount == 0) {
                     onBack()
                 }
             }
         }
         return
     }
-
-    val playerState = rememberPlayerState(player)
     var showMoreOptions by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
     var showFileInfoDialog by remember { mutableStateOf(false) }
@@ -793,20 +793,20 @@ fun PlayerScreen(
                     )
                 }
             } else {
-                val currentMediaItemIndex = playerState.currentSong?.let { player.currentMediaItemIndex } ?: 0
+                val currentMediaItemIndex = playerState.currentMediaItemIndex
                 val pagerState = rememberPagerState(
                     initialPage = currentMediaItemIndex,
-                    pageCount = { player.mediaItemCount }
+                    pageCount = { playerState.mediaItemCount }
                 )
 
                 LaunchedEffect(currentMediaItemIndex) {
-                    if (currentMediaItemIndex in 0 until player.mediaItemCount && pagerState.currentPage != currentMediaItemIndex) {
+                    if (currentMediaItemIndex in 0 until playerState.mediaItemCount && pagerState.currentPage != currentMediaItemIndex) {
                         pagerState.scrollToPage(currentMediaItemIndex)
                     }
                 }
 
                 LaunchedEffect(pagerState.currentPage) {
-                    if (pagerState.currentPage != player.currentMediaItemIndex && pagerState.currentPage in 0 until player.mediaItemCount) {
+                    if (pagerState.currentPage != playerState.currentMediaItemIndex && pagerState.currentPage in 0 until playerState.mediaItemCount) {
                         player.seekTo(pagerState.currentPage, 0)
                         player.play()
                     }
@@ -818,8 +818,8 @@ fun PlayerScreen(
                         .weight(1f)
                         .fillMaxWidth()
                 ) { page ->
-                    val pageSong = remember(page, playerState.currentSong) {
-                        if (page in 0 until player.mediaItemCount) player.getMediaItemAt(page) else null
+                    val pageSong = remember(page, playerState.currentSong, playerState.playlistVersion) {
+                        if (page in 0 until playerState.mediaItemCount) player.getMediaItemAt(page) else null
                     }
                     val pageSongFile = remember {
                         derivedStateOf {
