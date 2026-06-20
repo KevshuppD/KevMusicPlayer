@@ -5,7 +5,7 @@
 It focuses on providing a premium user experience with a vibrant **Material Design 3** interface, buttery-smooth **120Hz** animations, and an intelligent library management system.
 
 <p align="center">
-  <a href="obtainium://add/https://github.com/KevshuppD/KevMusicPlayer">
+  <a href="obtainium://add?url=https://github.com/KevshuppD/KevMusicPlayer">
     <img src="https://img.shields.io/badge/Add_to-Obtainium-purple?style=for-the-badge&logo=android" alt="Add to Obtainium" />
   </a>
   &nbsp;
