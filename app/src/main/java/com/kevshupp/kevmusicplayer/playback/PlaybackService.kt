@@ -604,6 +604,7 @@ class PlaybackService : MediaLibraryService() {
         } else {
             stopSelf()
         }
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = mediaLibrarySession

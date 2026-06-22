@@ -21,8 +21,8 @@ data class UpdateInfo(
 object AppUpdater {
 
     fun isNewerVersion(current: String, latest: String): Boolean {
-        val cleanCurrent = current.removePrefix("v").trim()
-        val cleanLatest = latest.removePrefix("v").trim()
+        val cleanCurrent = current.removePrefix("v").split("-")[0].split("+")[0].trim()
+        val cleanLatest = latest.removePrefix("v").split("-")[0].split("+")[0].trim()
         if (cleanCurrent == cleanLatest) return false
         
         val currentParts = cleanCurrent.split(".").mapNotNull { it.toIntOrNull() }

@@ -92,4 +92,25 @@ class ExampleUnitTest {
             println("Re-read artwork width: ${art.width}, height: ${art.height}, bytes: ${art.binaryData?.size}")
         }
     }
+
+    @Test
+    fun testVersionCheck() {
+        val updater = com.kevshupp.kevmusicplayer.data.AppUpdater
+        
+        // Basic versions
+        org.junit.Assert.assertFalse(updater.isNewerVersion("1.2.10", "1.2.10"))
+        org.junit.Assert.assertTrue(updater.isNewerVersion("1.2.10", "1.2.11"))
+        org.junit.Assert.assertFalse(updater.isNewerVersion("1.2.11", "1.2.10"))
+        
+        // With 'v' prefix
+        org.junit.Assert.assertTrue(updater.isNewerVersion("1.2.10", "v1.2.11"))
+        org.junit.Assert.assertFalse(updater.isNewerVersion("v1.2.11", "1.2.10"))
+        org.junit.Assert.assertFalse(updater.isNewerVersion("v1.2.10", "v1.2.10"))
+        
+        // With debug/beta suffixes
+        org.junit.Assert.assertFalse(updater.isNewerVersion("1.2.10-debug", "v1.2.10"))
+        org.junit.Assert.assertTrue(updater.isNewerVersion("1.2.10-debug", "v1.2.11"))
+        org.junit.Assert.assertFalse(updater.isNewerVersion("1.2.10-beta.1", "1.2.10"))
+        org.junit.Assert.assertTrue(updater.isNewerVersion("1.2.10-beta.1", "1.2.11-RC2"))
+    }
 }

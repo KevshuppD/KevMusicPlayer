@@ -27,6 +27,17 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x gradlew
 
+      - name: Update Version Name in build.gradle.kts
+        run: |
+          REF_NAME="${{ github.ref_name }}"
+          if [[ "$REF_NAME" =~ ^v[0-9] ]]; then
+            CLEAN_VERSION=${REF_NAME#v}
+            echo "Updating versionName to $CLEAN_VERSION in app/build.gradle.kts"
+            sed -i "s/versionName = \".*\"/versionName = \"$CLEAN_VERSION\"/g" app/build.gradle.kts
+          else
+            echo "Ref $REF_NAME is not a version tag, keeping default versionName"
+          fi
+
       - name: Build Release APK
         run: ./gradlew assembleRelease
 
