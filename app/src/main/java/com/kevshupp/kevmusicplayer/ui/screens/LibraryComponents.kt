@@ -155,7 +155,7 @@ fun SongListView(
                 val currentSongsList by rememberUpdatedState(songs)
                 val currentSelectedSongsSet by rememberUpdatedState(selectedSongs)
                 val currentIsMultiSelectModeVal by rememberUpdatedState(isMultiSelectMode)
-                
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -165,7 +165,7 @@ fun SongListView(
                                 val down = awaitFirstDown(requireUnconsumed = true)
                                 var hasDragged = false
                                 var longPressTriggered = false
-                                val longPressTimeout = 500L
+                                val longPressTimeout = 400L
                                 val startTime = System.currentTimeMillis()
                                 val touchSlop = viewConfiguration.touchSlop
                                 
@@ -189,12 +189,6 @@ fun SongListView(
                                         if (hoverItem != null && hoverItem.index in sList.indices) {
                                             val hoverIndex = hoverItem.index
                                             if (hoverIndex != targetIndex) {
-                                                if (!hasDragged) {
-                                                    hasDragged = true
-                                                    if (!currentIsMultiSelectModeVal) {
-                                                        onSongLongClick(currentSong)
-                                                    }
-                                                }
                                                 targetIndex = hoverIndex
                                                 
                                                 val start = minOf(currentIndex, hoverIndex)
@@ -256,8 +250,10 @@ fun SongListView(
                                         }
                                         
                                         if (event == null) {
-                                            // Timeout reached! Long press triggers now.
+                                            // Timeout reached! Long press triggers selection mode directly
                                             longPressTriggered = true
+                                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                            onSongLongClick(currentSong)
                                             continue
                                         }
                                         
@@ -267,16 +263,11 @@ fun SongListView(
                                         if (!anyPressed) {
                                             // Released!
                                             if (elapsed < longPressTimeout) {
-                                                // Tap!
+                                                // Tap / Click!
                                                 if (currentIsMultiSelectModeVal) {
                                                     onSongSelectToggle?.invoke(currentSong)
                                                 } else {
                                                     onPlayDirectly?.invoke(currentSong)
-                                                }
-                                            } else {
-                                                // Long press release without drag
-                                                if (!hasDragged && !currentIsMultiSelectModeVal) {
-                                                    onSongClick(currentSong)
                                                 }
                                             }
                                             break
@@ -291,16 +282,10 @@ fun SongListView(
                                                 val dragDistanceX = Math.abs(change.position.x - down.position.x)
                                                 val dragDistanceY = Math.abs(currentY - down.position.y)
                                                 val dragDistance = Math.max(dragDistanceX, dragDistanceY)
-                                                val dragDistanceThreshold = if (currentIsMultiSelectModeVal) touchSlop else (touchSlop * 4f)
                                                 
-                                                // If they scroll/drag too much before long press, cancel and let parent handle scrolling
+                                                // If they scroll/drag too much BEFORE long press, cancel and let parent handle scrolling
                                                 if (!longPressTriggered && dragDistance > touchSlop) {
                                                     break
-                                                }
-                                                
-                                                if (elapsed >= longPressTimeout && !longPressTriggered) {
-                                                    longPressTriggered = true
-                                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                                 }
                                                 
                                                 if (longPressTriggered) {
@@ -309,15 +294,7 @@ fun SongListView(
                                                     if (pressedItemInfo != null) {
                                                         val viewportY = pressedItemInfo.offset + currentY
                                                         dragViewportY = viewportY
-                                                        
-                                                        // Drag threshold check to enter selection mode
-                                                        if (!hasDragged && (dragDistance > dragDistanceThreshold || targetIndex != currentIndex)) {
-                                                            hasDragged = true
-                                                            if (!currentIsMultiSelectModeVal) {
-                                                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                                onSongLongClick(currentSong)
-                                                            }
-                                                        }
+                                                        hasDragged = true
                                                         
                                                         updateSelectionAtY(viewportY)
                                                         startScrollIfNeeded()
@@ -692,7 +669,7 @@ fun AlbumGridView(
                     )
                     DropdownMenuItem(
                         text = { Text(getLocalized("Agregar a Playlist", "Add to Playlist"), color = Color.White) },
-                        leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         onClick = {
                             showMenu = false
                             onAddAlbumToPlaylist(albumName, albumSongs)
@@ -1616,7 +1593,7 @@ fun PlaylistGridView(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            imageVector = Icons.Rounded.PlaylistAdd,
+                            imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
                             contentDescription = "New Playlist",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(48.dp)
@@ -1860,7 +1837,7 @@ fun SongOptionsBottomSheet(
                     onClick = onAddToQueueClick
                 )
                 OptionItem(
-                    icon = Icons.Rounded.PlaylistAdd,
+                    icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
                     text = "Agregar a playlist",
                     onClick = onAddToPlaylistClick
                 )

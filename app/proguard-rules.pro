@@ -18,6 +18,7 @@
 # Keep Room entities, DAOs, databases, and serialization models
 -keep class com.kevshupp.kevmusicplayer.data.** { *; }
 -keep class com.kevshupp.kevmusicplayer.playback.** { *; }
+-keep class com.kevshupp.kevmusicplayer.widget.** { *; }
 
 # Preserve anything annotated with Room, Moshi, or Serialization annotations
 -keepclassmembers class * {
@@ -55,3 +56,13 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
+# Keep WorkManager InputMergers and public constructors
+-keep public class * extends androidx.work.InputMerger {
+    public <init>();
+}
+
+# Keep WorkManager Worker classes and public constructors
+-keep public class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}

@@ -197,7 +197,13 @@ fun SettingsScreen(
         }
     }
 
-    fun performExportToFolder(folderUriStr: String) {
+    fun performExportToFolder(
+        folderUriStr: String,
+        includeSettings: Boolean = true,
+        includeEqualizer: Boolean = true,
+        includePlaylists: Boolean = true,
+        includeLyrics: Boolean = true
+    ) {
         try {
             val folderUri = Uri.parse(folderUriStr)
             val dirFile = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri)
@@ -218,6 +224,10 @@ fun SettingsScreen(
                     viewModel.exportBackup(
                         context = context,
                         outputStream = outputStream,
+                        includeSettings = includeSettings,
+                        includeEqualizer = includeEqualizer,
+                        includePlaylists = includePlaylists,
+                        includeLyrics = includeLyrics,
                         onSuccess = {
                             android.widget.Toast.makeText(context, getLocalized("Copia de seguridad guardada y sobrescrita con éxito en la carpeta fija", "Backup saved and overwritten successfully in the fixed folder"), android.widget.Toast.LENGTH_LONG).show()
                         },

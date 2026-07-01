@@ -33,6 +33,7 @@ graph TD
 - **Escaneo Inteligente:** `AudioScanner` realiza una consulta a `MediaStore.Audio.Media.EXTERNAL_CONTENT_URI`. 
 - **Filtros de Duración:** Se omiten archivos menores de 5 segundos para evitar tonos de notificación o grabaciones de voz cortas.
 - **Optimización de Lectura:** Para evitar lentitud en el escaneo al abrir la aplicación, el `AudioScanner` cruza los datos con la base de datos Room (`existingFiles`) para recuperar de forma instantánea el estado de `ReplayGain` y letras ya procesados.
+- **Filtro de Carpeta de Música Activa:** Si el usuario ha seleccionado un directorio de música específico (`music_folder_path`), el escaneo filtra dinámicamente y descarta cualquier archivo de audio fuera de esa ruta antes de escribir en SQLite, sincronizando la base de datos Room y previniendo que aparezcan archivos ajenos (como audios de WhatsApp) en el reproductor.
 - **Exclusión de Carpetas:** Permite a los usuarios seleccionar directorios específicos de su almacenamiento local para ignorarlos de la biblioteca musical de manera persistente.
 
 ### B. Servicio de Reproducción y Audio FX (`PlaybackService`)
@@ -55,7 +56,7 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
 ### D. Letras Sincronizadas y Traducción (`LyricsRepository`)
 - **Descargas LRC:** Conectividad con la API pública de **LrcLib** para buscar canciones por texto de metadatos (`Artist + Title`). Prioriza letras con marcas de tiempo sincronizadas.
 - **Procesador LRC:** Parser integrado que decodifica cadenas de texto en formato estandarizado `[mm:ss.xx]` a marcas de tiempo de milisegundos (`LyricLine`).
-- **Traducciones Locales:** Soporte integrado para almacenar traducciones personalizadas mapeadas a cada marca de tiempo mediante serialización JSON.
+- **Traducciones Locales y Auto-Traducción:** Soporte integrado para almacenar traducciones personalizadas mapeadas a cada marca de tiempo mediante serialización JSON. Cuenta con un sistema unificado y automático que comprueba la canción en reproducción y traduce de manera automática al idioma del sistema las letras descargadas usando APIs de traducción con fallbacks locales.
 
 ### E. Editor de Metadatos y Escritura Física
 - **Integración jaudiotagger:** Configurado en "modo Android" (`TagOptionSingleton.getInstance().setAndroid(true)`) para manejar la edición de metadatos de audio en el almacenamiento local.
@@ -65,9 +66,11 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
   3. Reemplaza el archivo original mediante escritura directa en su ruta absoluta.
   4. En caso de fallo por restricciones de Scoped Storage, utiliza un fallback con `ContentResolver` y modo de escritura-truncado (`rwt`).
   5. Notifica al sistema operativo para re-escanear el archivo a través de `MediaScannerConnection`.
+- **Actualización en Caliente del Reproductor:** Al completar la edición física de metadatos, la app busca el identificador de la canción en la cola de reproducción del reproductor Media3 y la reemplaza en caliente (`browser.replaceMediaItem`), forzando la actualización instantánea de la UI y de la notificación del sistema sin interrumpir la reproducción actual de música.
 
 ### F. Mecanismo de Respaldo y Restauración (Backup & Restore)
-- **Estructura JSON:** Exporta en un único archivo de copia de seguridad las listas manuales e inteligentes, ecualización, preferencias de usuario y caché de letras.
+- **Estructura JSON:** Exporta en un único archivo de copia de seguridad las listas manuales e inteligentes, ecualización, preferencias de usuario y la caché de letras (con soporte de exportación personalizada selectiva mediante flags booleanos).
+- **Destino Vinculado Directo (Raíz de Música):** Si la opción "Utilizar la misma carpeta" está activada, el archivo `kev_music_player_backup.json` se almacena y busca directamente en la raíz de la carpeta de música específica seleccionada por el usuario (ej. `Music/kev_music_player_backup.json`), evitando la creación de subcarpetas adicionales redundantes.
 - **Limpieza de Sesiones Zombie:** Durante la restauración, es crítico evitar colisiones de estado en el reproductor. La función `importBackup` realiza:
   1. Detención inmediata del `PlaybackService`.
   2. Borrado completo de las preferencias de sesión del player (`playback_prefs`) que guarden rutas o índices obsoletos.
@@ -206,9 +209,65 @@ Este archivo (`context.md`) actúa como la memoria central y cerebro técnico de
 
 - **Creación de Releases:** La compilación y publicación de nuevas versiones (Releases en GitHub con tags `v*` y APKs de producción) **únicamente debe realizarse cuando el usuario lo solicite de forma explícita en el chat**. Ninguna IA o proceso automatizado debe crear releases o tags por iniciativa propia o de forma preventiva.
 - **Consistencia de Firma:** Cualquier compilación local o remota de producción debe utilizar la configuración de firmas compartida `release` en Gradle, garantizando que el APK conserve la firma del keystore del repositorio y sea actualizable.
-- **Conexión ADB Inalámbrica (Wi-Fi):** Para conectar el dispositivo de desarrollo físico en entornos Linux sin lidiar con los puertos dinámicos aleatorios de Android, se debe ejecutar el siguiente comando automatizado que extrae y conecta el puerto a través de mDNS (Avahi):
-  ```bash
-  adb connect $(avahi-browse -rtp _adb-tls-connect._tcp -t 2>/dev/null | grep ^= | cut -d';' -f8,9 --output-delimiter=: | head -n1)
-  ```
+- **Conexión ADB Inalámbrica (Wi-Fi):** Para conectar el dispositivo de desarrollo físico en entornos Linux, se utiliza la función `adb_smart_connect` que gestiona una conexión híbrida (Red Local vía mDNS/Avahi + fallback a Tailscale con puerto dinámico), como se detalla en la sección [Configuración de Entorno y Herramientas](#8-configuración-de-entorno-y-herramientas).
 - **Preservación del Contexto:** Al implementar nuevas funciones, optimizaciones o cambios arquitectónicos significativos, la IA debe documentarlos de forma oportuna en este archivo para guiar a futuras sesiones de trabajo.
+
+---
+
+## 8. Configuración de Entorno y Herramientas
+
+### Conexión ADB Híbrida (Red Local + Tailscale)
+Para facilitar la depuración inalámbrica con `adb` tanto en la red local (vía mDNS/Avahi) como de forma remota a través de **Tailscale**, se utiliza una función personalizada en el entorno de desarrollo (`~/.bashrc`).
+
+Esta función resuelve el problema de las IPs "fantasma" en caché de Avahi validando la conectividad mediante un `ping` rápido antes de intentar la conexión por ADB. Si la red local no está disponible, hace un fallback automático a la IP de Tailscale del dispositivo (`moto-g35-5g`) y solicita el puerto dinámico de Android.
+
+Añadir el siguiente bloque al final de `~/.bashrc` en la máquina de desarrollo (Linux Mint):
+
+```bash
+# Función para conectar ADB automáticamente (Local con fallback a Tailscale)
+adb_smart_connect() {
+    # 1. Intentar por mDNS (Red Local Física)
+    local target=$(avahi-browse -rtp _adb-tls-connect._tcp -t 2>/dev/null | grep ^= | cut -d';' -f8,9 --output-delimiter=: | head -n1)
+    local connected=false
+
+    if [ -n "$target" ]; then
+        echo "📱 Dispositivo detectado por mDNS local: $target"
+        # Separamos la IP para hacerle un ping rápido de 1 segundo
+        local local_ip=$(echo "$target" | cut -d':' -f1)
+        
+        echo "📡 Verificando si la IP local responde..."
+        if ping -c 1 -W 1 "$local_ip" >/dev/null 2>&1; then
+            echo "✅ Red local disponible. Conectando..."
+            adb connect "$target"
+            connected=true
+        else
+            echo "⚠️ La IP local no responde (posiblemente estás en redes distintas o cambió de IP)."
+        fi
+    fi
+
+    # 2. Si no se pudo conectar por red local, usar Tailscale
+    if [ "$connected" = false ]; then
+        echo "🔍 Intentando vía Tailscale con tu Moto G35 5G..."
+        local ts_ip=$(tailscale status | grep -i "moto-g35-5g" | awk '{print $1}')
+        
+        if [ -n "$ts_ip" ]; then
+            echo "🌐 IP de Tailscale encontrada: $ts_ip"
+            # Nos pide el puerto dinámico que muestra el celular
+            read -p "Introduce el puerto dinámico de Android (visto en pantalla): " ts_port
+            if [ -n "$ts_port" ]; then
+                adb connect "$ts_ip:$ts_port"
+            fi
+        else
+            echo "❌ No se encontró el 'moto-g35-5g' en la lista de Tailscale. Revisa si la app está activa en el celular."
+        fi
+    fi
+}
+```
+
+Uso en terminal:
+
+```bash
+source ~/.bashrc
+adb_smart_connect
+```
 

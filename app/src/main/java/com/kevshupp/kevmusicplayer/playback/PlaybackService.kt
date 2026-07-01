@@ -37,6 +37,7 @@ class PlaybackService : MediaLibraryService() {
     private var isRestoring = false
     private var skipToNextWhenRestored = false
     private var skipToPrevWhenRestored = false
+    private var playerListener: Player.Listener? = null
 
     companion object {
         const val CHANNEL_ID = "playback_channel"
@@ -70,7 +71,7 @@ class PlaybackService : MediaLibraryService() {
         val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
         settingsPrefs.registerOnSharedPreferenceChangeListener(settingsPrefsListener)
 
-        player.addListener(object : Player.Listener {
+        playerListener = object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val title = mediaItem?.mediaMetadata?.title?.toString() ?: ""
                 val artist = mediaItem?.mediaMetadata?.artist?.toString() ?: ""
@@ -105,7 +106,7 @@ class PlaybackService : MediaLibraryService() {
                 if (isPlaying) {
                     try {
                         if (wakeLock?.isHeld == false) {
-                            wakeLock?.acquire(10 * 60 * 1000L /* 10 minutes timeout */)
+                            wakeLock?.acquire()
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
@@ -138,7 +139,8 @@ class PlaybackService : MediaLibraryService() {
                     error
                 )
             }
-        })
+        }
+        player.addListener(playerListener!!)
 
         val callback = object : MediaLibrarySession.Callback {
             override fun onConnect(
@@ -149,6 +151,14 @@ class PlaybackService : MediaLibraryService() {
                 val sessionCommands = connectionResult.availableSessionCommands.buildUpon()
                 sessionCommands.add(androidx.media3.session.SessionCommand("ACTION_SKIP_NEXT", android.os.Bundle.EMPTY))
                 sessionCommands.add(androidx.media3.session.SessionCommand("ACTION_SKIP_PREV", android.os.Bundle.EMPTY))
+                
+                // Trigger a widget update on controller connection
+                val player = session.player
+                val title = player.currentMediaItem?.mediaMetadata?.title?.toString() ?: ""
+                val artist = player.currentMediaItem?.mediaMetadata?.artist?.toString() ?: ""
+                val uriString = player.currentMediaItem?.requestMetadata?.mediaUri?.toString()
+                this@PlaybackService.updateWidgetState(title, artist, player.isPlaying, uriString)
+
                 return MediaSession.ConnectionResult.accept(
                     sessionCommands.build(),
                     connectionResult.availablePlayerCommands
@@ -342,6 +352,7 @@ class PlaybackService : MediaLibraryService() {
                     MusicWidget().update(this@PlaybackService, glanceId)
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 e.printStackTrace()
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     this@PlaybackService,
@@ -512,87 +523,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action
-        if (action != null) {
-            if (action == "com.kevshupp.kevmusicplayer.action.PLAY_PAUSE" ||
-                action == "com.kevshupp.kevmusicplayer.action.NEXT" ||
-                action == "com.kevshupp.kevmusicplayer.action.PREVIOUS") {
-                try {
-                    createNotificationChannelIfNeeded()
-                    val notification = androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
-                        .setSmallIcon(android.R.drawable.ic_media_play)
-                        .setContentTitle("KevMusicPlayer")
-                        .setContentText("Cargando reproductor...")
-                        .setOngoing(true)
-                        .build()
-                    startForeground(1001, notification)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-        }
-
-        val result = super.onStartCommand(intent, flags, startId)
-        if (action != null) {
-            val player = mediaLibrarySession?.player
-            if (player != null) {
-                when (action) {
-                    "com.kevshupp.kevmusicplayer.action.PLAY_PAUSE" -> {
-                        if (player.isPlaying) {
-                            player.pause()
-                        } else {
-                            if (player.mediaItemCount > 0) {
-                                player.play()
-                            } else {
-                                playWhenRestored = true
-                                serviceScope.launch {
-                                    restorePlaybackState(player)
-                                }
-                            }
-                        }
-                    }
-                    "com.kevshupp.kevmusicplayer.action.NEXT" -> {
-                        val crossfadeSeconds = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
-                        val p = player as? ExoPlayer
-                        if (p != null && crossfadeSeconds > 0) {
-                            performManualSkip(p, next = true)
-                        } else {
-                            if (player.mediaItemCount > 0) {
-                                if (player.hasNextMediaItem()) {
-                                    player.seekToNextMediaItem()
-                                }
-                            } else {
-                                skipToNextWhenRestored = true
-                                playWhenRestored = true
-                                serviceScope.launch {
-                                    restorePlaybackState(player)
-                                }
-                            }
-                        }
-                    }
-                    "com.kevshupp.kevmusicplayer.action.PREVIOUS" -> {
-                        val crossfadeSeconds = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
-                        val p = player as? ExoPlayer
-                        if (p != null && crossfadeSeconds > 0) {
-                            performManualSkip(p, next = false)
-                        } else {
-                            if (player.mediaItemCount > 0) {
-                                if (player.hasPreviousMediaItem()) {
-                                    player.seekToPreviousMediaItem()
-                                }
-                            } else {
-                                skipToPrevWhenRestored = true
-                                playWhenRestored = true
-                                serviceScope.launch {
-                                    restorePlaybackState(player)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return result
+        return super.onStartCommand(intent, flags, startId)
     }
 
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
@@ -621,18 +552,27 @@ class PlaybackService : MediaLibraryService() {
         val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
         settingsPrefs.unregisterOnSharedPreferenceChangeListener(settingsPrefsListener)
 
-        equalizer?.release()
-        bassBoost?.release()
-        virtualizer?.release()
-        loudnessEnhancer?.release()
+        // Remove player listener before releasing the player to avoid deadlocks/callbacks
+        playerListener?.let {
+            mediaLibrarySession?.player?.removeListener(it)
+        }
+
         fadeJob?.cancel()
         fadeInJob?.cancel()
 
+        // Release Media3 session and player first
         mediaLibrarySession?.run {
             player.release()
             release()
         }
         mediaLibrarySession = null
+
+        // Release audio effects after player release
+        equalizer?.release()
+        bassBoost?.release()
+        virtualizer?.release()
+        loudnessEnhancer?.release()
+
         try {
             unregisterReceiver(bluetoothReceiver)
         } catch (e: Exception) {
@@ -887,7 +827,18 @@ class PlaybackService : MediaLibraryService() {
                                 try {
                                     org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
                                 } catch (t: Throwable) {}
-                                val audioFile = org.jaudiotagger.audio.AudioFileIO.read(file)
+                                val audioFile = if (file.extension.lowercase() in listOf("m4a", "mp4")) {
+                                    try {
+                                        val reader = SafeMp4FileReader()
+                                        val readAudio = reader.read(file)
+                                        readAudio.setExt(file.extension.lowercase())
+                                        readAudio
+                                    } catch (e: Exception) {
+                                        org.jaudiotagger.audio.AudioFileIO.read(file)
+                                    }
+                                } else {
+                                    org.jaudiotagger.audio.AudioFileIO.read(file)
+                                }
                                 val tag = audioFile.tag
                                 if (tag != null) {
                                     var gainStr = tag.getFirst("REPLAYGAIN_TRACK_GAIN")

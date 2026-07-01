@@ -170,7 +170,7 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(playerState.currentSong?.mediaId) {
+    LaunchedEffect(playerState.currentSong?.mediaId, currentSongFile?.id) {
         val songId = playerState.currentSong?.mediaId
         if (songId != null && currentSongFile != null) {
             val hasLyrics = !currentSongFile.lyrics.isNullOrBlank()
@@ -641,9 +641,11 @@ fun PlayerScreen(
         val autoTranslateEnabled = remember(settingsPrefs) { settingsPrefs.getBoolean("auto_translate", false) }
 
         LaunchedEffect(currentSongFile?.id, lyricLines, autoTranslateEnabled) {
-            val cached = currentSongFile?.translatedLyrics
-            if (cached.isNullOrBlank() && lyricLines.isNotEmpty() && autoTranslateEnabled && !isTranslating) {
-                val sample = lyricLines.filter { it.text.isNotBlank() }.joinToString("\n") { it.text }
+            val cachedTranslation = currentSongFile?.translatedLyrics
+            val lyrics = currentSongFile?.lyrics
+            if (autoTranslateEnabled && cachedTranslation.isNullOrBlank() && !lyrics.isNullOrBlank() && !isTranslating) {
+                val parsedLines = LyricsRepository.parseLrc(lyrics)
+                val sample = parsedLines.filter { it.text.isNotBlank() }.joinToString("\n") { it.text }
                 if (sample.isNotBlank()) {
                     val detected = detectLanguage(sample)
                     if (detected != targetLang) {
@@ -652,6 +654,9 @@ fun PlayerScreen(
                 }
             }
         }
+
+
+
 
         Column(
             modifier = Modifier
@@ -878,6 +883,8 @@ fun PlayerScreen(
                                     onDragEnd = {
                                         if (totalY < -100f) {
                                             showLyrics = true
+                                        } else if (totalY > 100f) {
+                                            onBack()
                                         }
                                     },
                                     onVerticalDrag = { change, dragAmount ->

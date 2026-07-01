@@ -778,7 +778,7 @@ fun TagEditorDialog(
                         genre = genre,
                         coverBytes = selectedCoverBytes,
                         onSuccess = {
-                            if (applyCoverToEntireAlbum && selectedCoverBytes != null && viewModel != null) {
+                            if (applyCoverToEntireAlbum && selectedCoverBytes != null) {
                                 viewModel.updateAlbumCover(
                                     context = context,
                                     albumName = album,

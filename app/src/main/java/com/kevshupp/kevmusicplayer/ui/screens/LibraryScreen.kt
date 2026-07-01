@@ -123,11 +123,13 @@ fun LibraryScreen(
     var isMultiSelectMode by remember { mutableStateOf(false) }
     val selectedSongs = remember { mutableStateListOf<AudioFile>() }
 
-    // Intercept system back gestures to exit active subview details or multi-select first
-    BackHandler(enabled = isActive && (isMultiSelectMode || currentSubView != null)) {
+    // Intercept system back gestures to exit active subview details, clear search queries, or exit multi-select first
+    BackHandler(enabled = isActive && (isMultiSelectMode || searchQuery.isNotEmpty() || currentSubView != null)) {
         if (isMultiSelectMode) {
             isMultiSelectMode = false
             selectedSongs.clear()
+        } else if (searchQuery.isNotEmpty()) {
+            searchQuery = ""
         } else {
             currentSubView = null
         }

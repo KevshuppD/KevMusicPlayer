@@ -43,14 +43,34 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import com.kevshupp.kevmusicplayer.MainActivity
 import com.kevshupp.kevmusicplayer.playback.PlaybackService
 import androidx.core.content.ContextCompat
+import android.content.ComponentName
+import androidx.media3.session.SessionToken
+import androidx.media3.session.MediaController
+import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.ExecutionException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class MusicWidget : GlanceAppWidget() {
     override val stateDefinition = PreferencesGlanceStateDefinition
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         android.util.Log.d("WidgetDebug", "provideGlance called")
-        provideContent {
-            WidgetContent(context)
+        try {
+            provideContent {
+                WidgetContent(context)
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            e.printStackTrace()
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context,
+                "Widget_ProvideGlance",
+                "Failed inside provideGlance content",
+                e
+            )
+            throw e
         }
     }
 
@@ -226,13 +246,27 @@ class PlayPauseCallback : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters
     ) {
-        val intent = Intent(context, PlaybackService::class.java).apply {
-            action = "com.kevshupp.kevmusicplayer.action.PLAY_PAUSE"
-        }
         try {
-            ContextCompat.startForegroundService(context, intent)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val appContext = context.applicationContext
+                val sessionToken = SessionToken(appContext, ComponentName(appContext, PlaybackService::class.java))
+                val controller = MediaController.Builder(appContext, sessionToken).buildAsync().await()
+                if (controller.isPlaying) {
+                    controller.pause()
+                } else {
+                    controller.play()
+                }
+                kotlinx.coroutines.delay(500)
+                controller.release()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context,
+                "Widget_PlayPause",
+                "Failed to toggle play/pause from widget",
+                e
+            )
         }
     }
 }
@@ -243,13 +277,25 @@ class NextCallback : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters
     ) {
-        val intent = Intent(context, PlaybackService::class.java).apply {
-            action = "com.kevshupp.kevmusicplayer.action.NEXT"
-        }
         try {
-            ContextCompat.startForegroundService(context, intent)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val appContext = context.applicationContext
+                val sessionToken = SessionToken(appContext, ComponentName(appContext, PlaybackService::class.java))
+                val controller = MediaController.Builder(appContext, sessionToken).buildAsync().await()
+                if (controller.hasNextMediaItem()) {
+                    controller.seekToNextMediaItem()
+                }
+                kotlinx.coroutines.delay(500)
+                controller.release()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context,
+                "Widget_Next",
+                "Failed to skip to next from widget",
+                e
+            )
         }
     }
 }
@@ -260,13 +306,43 @@ class PreviousCallback : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters
     ) {
-        val intent = Intent(context, PlaybackService::class.java).apply {
-            action = "com.kevshupp.kevmusicplayer.action.PREVIOUS"
-        }
         try {
-            ContextCompat.startForegroundService(context, intent)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val appContext = context.applicationContext
+                val sessionToken = SessionToken(appContext, ComponentName(appContext, PlaybackService::class.java))
+                val controller = MediaController.Builder(appContext, sessionToken).buildAsync().await()
+                if (controller.hasPreviousMediaItem()) {
+                    controller.seekToPreviousMediaItem()
+                }
+                kotlinx.coroutines.delay(500)
+                controller.release()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context,
+                "Widget_Previous",
+                "Failed to skip to previous from widget",
+                e
+            )
+        }
+    }
+}
+
+// Suspend extension function to await ListenableFuture in coroutines
+suspend fun <T> ListenableFuture<T>.await(): T {
+    return suspendCancellableCoroutine { continuation ->
+        addListener({
+            try {
+                continuation.resume(get())
+            } catch (e: ExecutionException) {
+                continuation.resumeWithException(e.cause ?: e)
+            } catch (e: Exception) {
+                continuation.resumeWithException(e)
+            }
+        }, { command -> command.run() })
+        continuation.invokeOnCancellation {
+            cancel(true)
         }
     }
 }

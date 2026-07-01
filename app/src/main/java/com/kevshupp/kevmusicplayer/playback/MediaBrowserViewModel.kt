@@ -199,8 +199,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     var ignoreSavePlaybackState = false
 
     private val audioScanner = AudioScanner(application)
-    private val database = AppDatabase.getDatabase(application)
-    private val audioDao = database.audioDao()
+    val database = AppDatabase.getDatabase(application)
+    val audioDao = database.audioDao()
 
     init {
         // Force jaudiotagger to run in Android mode (bypasses java.awt classes)
@@ -208,6 +208,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
         } catch (t: Throwable) {
             t.printStackTrace()
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            checkAutoBackup(application)
         }
 
         // Instantly load the cached songs from SQLite database in chunks to ensure the screen is NEVER empty upon startup and we avoid RAM spike/freezes!
@@ -586,8 +590,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         emptyList<String>()
                     }
 
+                    val selectedMusicFolder = prefs.getString("music_folder_path", null)
+
                     val filteredScanned = scannedFiles.filter { file ->
-                        excludedFolders.none { excluded ->
+                        val isInsideSelected = if (selectedMusicFolder != null) {
+                            file.folderPath.startsWith(selectedMusicFolder)
+                        } else {
+                            true
+                        }
+                        isInsideSelected && excludedFolders.none { excluded ->
                             file.folderPath.equals(excluded, ignoreCase = true) || file.folderPath.startsWith(excluded + "/", ignoreCase = true)
                         }
                     }
@@ -924,6 +935,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun exportBackup(
         context: Context,
         outputStream: OutputStream,
+        includeSettings: Boolean = true,
+        includeEqualizer: Boolean = true,
+        includePlaylists: Boolean = true,
+        includeLyrics: Boolean = true,
         onSuccess: () -> Unit,
         onError: (Exception) -> Unit
     ) {
@@ -933,145 +948,154 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 json.put("backup_version", 1)
 
                 // 1. Export settings
-                val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
-                val settingsJson = JSONObject()
-                settingsJson.put("language", settingsPrefs.getString("language", "en"))
-                settingsJson.put("app_theme", settingsPrefs.getString("app_theme", "cyberpunk"))
-                settingsJson.put("refresh_rate", settingsPrefs.getString("refresh_rate", "120"))
-                settingsJson.put("disable_animations", settingsPrefs.getBoolean("disable_animations", false))
-                settingsJson.put("excluded_folders", settingsPrefs.getString("excluded_folders", "[]"))
-                
-                // Export backup folder setting if present
-                val backupDirUri = settingsPrefs.getString("backup_dir_uri", null)
-                if (backupDirUri != null) {
-                    settingsJson.put("backup_dir_uri", backupDirUri)
-                }
-                
-                // Export music folder setting if present
-                val musicFolderPath = settingsPrefs.getString("music_folder_path", null)
-                if (musicFolderPath != null) {
-                    settingsJson.put("music_folder_path", musicFolderPath)
-                }
-                
-                // Export tab configurations
-                val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
-                settingsJson.put("enabled_tabs", playbackPrefs.getString("enabled_tabs", ""))
+                if (includeSettings) {
+                    val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+                    val settingsJson = JSONObject()
+                    settingsJson.put("language", settingsPrefs.getString("language", "en"))
+                    settingsJson.put("app_theme", settingsPrefs.getString("app_theme", "cyberpunk"))
+                    settingsJson.put("refresh_rate", settingsPrefs.getString("refresh_rate", "120"))
+                    settingsJson.put("disable_animations", settingsPrefs.getBoolean("disable_animations", false))
+                    settingsJson.put("excluded_folders", settingsPrefs.getString("excluded_folders", "[]"))
+                    
+                    val backupDirUri = settingsPrefs.getString("backup_dir_uri", null)
+                    if (backupDirUri != null) {
+                        settingsJson.put("backup_dir_uri", backupDirUri)
+                    }
+                    
+                    val musicFolderPath = settingsPrefs.getString("music_folder_path", null)
+                    if (musicFolderPath != null) {
+                        settingsJson.put("music_folder_path", musicFolderPath)
+                    }
+                    
+                    val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
+                    settingsJson.put("enabled_tabs", playbackPrefs.getString("enabled_tabs", ""))
 
-                // Export additional settings
-                settingsJson.put("ambient_glow_enabled", settingsPrefs.getBoolean("ambient_glow_enabled", true))
-                settingsJson.put("ambient_glow_intensity", settingsPrefs.getString("ambient_glow_intensity", "medium"))
-                settingsJson.put("auto_translate", settingsPrefs.getBoolean("auto_translate", false))
-                settingsJson.put("bluetooth_resume_enabled", settingsPrefs.getBoolean("bluetooth_resume_enabled", false))
-                settingsJson.put("bluetooth_resume_all", settingsPrefs.getBoolean("bluetooth_resume_all", false))
-                
-                val btDevices = settingsPrefs.getStringSet("bluetooth_resume_devices", emptySet()) ?: emptySet()
-                val btDevicesArray = JSONArray()
-                btDevices.forEach { btDevicesArray.put(it) }
-                settingsJson.put("bluetooth_resume_devices", btDevicesArray)
-                
-                settingsJson.put("normalize_sound", settingsPrefs.getBoolean("normalize_sound", false))
-                settingsJson.put("crossfade_duration", settingsPrefs.getInt("crossfade_duration", 0))
-                settingsJson.put("show_visualizer", settingsPrefs.getBoolean("show_visualizer", true))
-                
-                json.put("settings", settingsJson)
+                    settingsJson.put("ambient_glow_enabled", settingsPrefs.getBoolean("ambient_glow_enabled", true))
+                    settingsJson.put("ambient_glow_intensity", settingsPrefs.getString("ambient_glow_intensity", "medium"))
+                    settingsJson.put("auto_translate", settingsPrefs.getBoolean("auto_translate", false))
+                    settingsJson.put("bluetooth_resume_enabled", settingsPrefs.getBoolean("bluetooth_resume_enabled", false))
+                    settingsJson.put("bluetooth_resume_all", settingsPrefs.getBoolean("bluetooth_resume_all", false))
+                    
+                    val btDevices = settingsPrefs.getStringSet("bluetooth_resume_devices", emptySet()) ?: emptySet()
+                    val btDevicesArray = JSONArray()
+                    btDevices.forEach { btDevicesArray.put(it) }
+                    settingsJson.put("bluetooth_resume_devices", btDevicesArray)
+                    
+                    settingsJson.put("normalize_sound", settingsPrefs.getBoolean("normalize_sound", false))
+                    settingsJson.put("crossfade_duration", settingsPrefs.getInt("crossfade_duration", 0))
+                    settingsJson.put("show_visualizer", settingsPrefs.getBoolean("show_visualizer", true))
+                    
+                    json.put("settings", settingsJson)
+                }
 
                 // 1.5. Export equalizer
-                val eqPrefs = context.getSharedPreferences("equalizer_prefs", Context.MODE_PRIVATE)
-                val eqJson = JSONObject()
-                eqJson.put("eq_enabled", eqPrefs.getBoolean("eq_enabled", false))
-                eqJson.put("bb_enabled", eqPrefs.getBoolean("bb_enabled", false))
-                eqJson.put("bb_strength", eqPrefs.getInt("bb_strength", 0))
-                eqJson.put("virt_enabled", eqPrefs.getBoolean("virt_enabled", false))
-                eqJson.put("virt_strength", eqPrefs.getInt("virt_strength", 0))
-                eqJson.put("eq_bands", eqPrefs.getString("eq_bands", "0,0,0,0,0"))
-                eqJson.put("eq_preset", eqPrefs.getString("eq_preset", "Flat"))
-                json.put("equalizer", eqJson)
+                if (includeEqualizer) {
+                    val eqPrefs = context.getSharedPreferences("equalizer_prefs", Context.MODE_PRIVATE)
+                    val eqJson = JSONObject()
+                    eqJson.put("eq_enabled", eqPrefs.getBoolean("eq_enabled", false))
+                    eqJson.put("bb_enabled", eqPrefs.getBoolean("bb_enabled", false))
+                    eqJson.put("bb_strength", eqPrefs.getInt("bb_strength", 0))
+                    eqJson.put("virt_enabled", eqPrefs.getBoolean("virt_enabled", false))
+                    eqJson.put("virt_strength", eqPrefs.getInt("virt_strength", 0))
+                    eqJson.put("eq_bands", eqPrefs.getString("eq_bands", "0,0,0,0,0"))
+                    eqJson.put("eq_preset", eqPrefs.getString("eq_preset", "Flat"))
+                    json.put("equalizer", eqJson)
+                }
 
                 // 2. Export playlists
                 val playlistsPrefs = context.getSharedPreferences("playlists_prefs", Context.MODE_PRIVATE)
-                val playlistsJson = JSONObject()
                 val playlistNames = playlistsPrefs.getStringSet("playlist_names", emptySet()) ?: emptySet()
-                
-                playlistNames.forEach { name ->
-                    val songsStr = playlistsPrefs.getString("playlist_$name", "") ?: ""
-                    val songIdsArray = JSONArray()
-                    if (songsStr.isNotBlank()) {
-                        songsStr.split(",").forEach { idStr ->
-                            idStr.toLongOrNull()?.let { songIdsArray.put(it) }
+                if (includePlaylists) {
+                    val playlistsJson = JSONObject()
+                    playlistNames.forEach { name ->
+                        val songsStr = playlistsPrefs.getString("playlist_$name", "") ?: ""
+                        val songIdsArray = JSONArray()
+                        if (songsStr.isNotBlank()) {
+                            songsStr.split(",").forEach { idStr ->
+                                idStr.toLongOrNull()?.let { songIdsArray.put(it) }
+                            }
+                        }
+                        playlistsJson.put(name, songIdsArray)
+                    }
+                    json.put("playlists", playlistsJson)
+
+                    // Export smart playlists
+                    val smartPlaylistsJson = JSONObject()
+                    val smartPlaylistNames = playlistsPrefs.getStringSet("smart_playlist_names", emptySet()) ?: emptySet()
+                    smartPlaylistNames.forEach { name ->
+                        val configStr = playlistsPrefs.getString("smart_playlist_config_$name", null)
+                        if (configStr != null) {
+                            try {
+                                smartPlaylistsJson.put(name, JSONObject(configStr))
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
                         }
                     }
-                    playlistsJson.put(name, songIdsArray)
-                }
-                json.put("playlists", playlistsJson)
+                    json.put("smart_playlists", smartPlaylistsJson)
 
-                // Export smart playlists
-                val smartPlaylistsJson = JSONObject()
-                val smartPlaylistNames = playlistsPrefs.getStringSet("smart_playlist_names", emptySet()) ?: emptySet()
-                smartPlaylistNames.forEach { name ->
-                    val configStr = playlistsPrefs.getString("smart_playlist_config_$name", null)
-                    if (configStr != null) {
-                        try {
-                            smartPlaylistsJson.put(name, JSONObject(configStr))
-                        } catch (e: Exception) {
-                            e.printStackTrace()
+                    // Export playlist covers
+                    val playlistCoversJson = JSONObject()
+                    playlistNames.forEach { name ->
+                        val cover = playlistsPrefs.getString("playlist_cover_$name", null)
+                        if (cover != null) {
+                            playlistCoversJson.put(name, cover)
                         }
                     }
+                    json.put("playlist_covers", playlistCoversJson)
                 }
-                json.put("smart_playlists", smartPlaylistsJson)
-
-                // Export playlist covers
-                val playlistCoversJson = JSONObject()
-                playlistNames.forEach { name ->
-                    val cover = playlistsPrefs.getString("playlist_cover_$name", null)
-                    if (cover != null) {
-                        playlistCoversJson.put(name, cover)
-                    }
-                }
-                json.put("playlist_covers", playlistCoversJson)
 
                 // 3. Export cached songs (lyrics and translatedLyrics)
-                val cachedSongsArray = JSONArray()
                 val allEntities = audioDao.getAllAudioFiles()
-                allEntities.forEach { entity ->
-                    if (!entity.lyrics.isNullOrBlank() || !entity.translatedLyrics.isNullOrBlank()) {
-                        val songJson = JSONObject()
-                        songJson.put("id", entity.id)
-                        songJson.put("lyrics", entity.lyrics)
-                        songJson.put("translatedLyrics", entity.translatedLyrics)
-                        cachedSongsArray.put(songJson)
+                if (includeLyrics) {
+                    val cachedSongsArray = JSONArray()
+                    allEntities.forEach { entity ->
+                        if (!entity.lyrics.isNullOrBlank() || !entity.translatedLyrics.isNullOrBlank()) {
+                            val songJson = JSONObject()
+                            songJson.put("id", entity.id)
+                            songJson.put("lyrics", entity.lyrics)
+                            songJson.put("translatedLyrics", entity.translatedLyrics)
+                            cachedSongsArray.put(songJson)
+                        }
                     }
+                    json.put("cached_songs", cachedSongsArray)
                 }
-                json.put("cached_songs", cachedSongsArray)
 
                 // 4. Export songs metadata mapping for backup portability
                 val idsToExport = mutableSetOf<Long>()
-                playlistNames.forEach { name ->
-                    val songsStr = playlistsPrefs.getString("playlist_$name", "") ?: ""
-                    if (songsStr.isNotBlank()) {
-                        songsStr.split(",").forEach { idStr ->
-                            idStr.toLongOrNull()?.let { idsToExport.add(it) }
+                if (includePlaylists) {
+                    playlistNames.forEach { name ->
+                        val songsStr = playlistsPrefs.getString("playlist_$name", "") ?: ""
+                        if (songsStr.isNotBlank()) {
+                            songsStr.split(",").forEach { idStr ->
+                                idStr.toLongOrNull()?.let { idsToExport.add(it) }
+                            }
                         }
                     }
                 }
-                allEntities.forEach { entity ->
-                    if (!entity.lyrics.isNullOrBlank() || !entity.translatedLyrics.isNullOrBlank()) {
-                        idsToExport.add(entity.id)
+                if (includeLyrics) {
+                    allEntities.forEach { entity ->
+                        if (!entity.lyrics.isNullOrBlank() || !entity.translatedLyrics.isNullOrBlank()) {
+                            idsToExport.add(entity.id)
+                        }
                     }
                 }
                 
-                val songsMetadataArray = JSONArray()
-                allEntities.forEach { entity ->
-                    if (idsToExport.contains(entity.id)) {
-                        val metaJson = JSONObject()
-                        metaJson.put("id", entity.id)
-                        metaJson.put("title", entity.title)
-                        metaJson.put("artist", entity.artist)
-                        metaJson.put("album", entity.album)
-                        metaJson.put("duration", entity.duration)
-                        songsMetadataArray.put(metaJson)
+                if (idsToExport.isNotEmpty()) {
+                    val songsMetadataArray = JSONArray()
+                    allEntities.forEach { entity ->
+                        if (idsToExport.contains(entity.id)) {
+                            val metaJson = JSONObject()
+                            metaJson.put("id", entity.id)
+                            metaJson.put("title", entity.title)
+                            metaJson.put("artist", entity.artist)
+                            metaJson.put("album", entity.album)
+                            metaJson.put("duration", entity.duration)
+                            songsMetadataArray.put(metaJson)
+                        }
                     }
+                    json.put("songs_metadata", songsMetadataArray)
                 }
-                json.put("songs_metadata", songsMetadataArray)
 
                 // Write to stream
                 outputStream.use { stream ->
@@ -1339,6 +1363,88 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun checkAutoBackup(context: Context) {
+        val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+        val interval = settingsPrefs.getString("auto_backup_interval", "off") ?: "off"
+        if (interval == "off") return
+
+        val lastBackupTime = settingsPrefs.getLong("last_backup_time", 0L)
+        val currentTime = System.currentTimeMillis()
+        val durationMs = when (interval) {
+            "daily" -> 24L * 60 * 60 * 1000
+            "weekly" -> 7L * 24 * 60 * 60 * 1000
+            "monthly" -> 30L * 24 * 60 * 60 * 1000
+            else -> return
+        }
+
+        if (currentTime - lastBackupTime >= durationMs) {
+            performAutoBackup(context)
+        }
+    }
+
+    private fun performAutoBackup(context: Context) {
+        val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+        val useSameFolder = settingsPrefs.getBoolean("use_same_folder_for_backup", false)
+        val selectedMusicFolder = settingsPrefs.getString("music_folder_path", null)
+        val backupDirUri = settingsPrefs.getString("backup_dir_uri", null)
+
+        if (useSameFolder && selectedMusicFolder != null) {
+            val backupFile = java.io.File(selectedMusicFolder, "kev_music_player_backup.json")
+            try {
+                val outputStream = backupFile.outputStream()
+                exportBackup(
+                    context = context,
+                    outputStream = outputStream,
+                    includeSettings = true,
+                    includeEqualizer = true,
+                    includePlaylists = true,
+                    includeLyrics = true,
+                    onSuccess = {
+                        settingsPrefs.edit().putLong("last_backup_time", System.currentTimeMillis()).apply()
+                    },
+                    onError = { e ->
+                        e.printStackTrace()
+                    }
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        } else if (!useSameFolder && backupDirUri != null) {
+            try {
+                val folderUri = Uri.parse(backupDirUri)
+                val dirFile = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri)
+                if (dirFile != null && dirFile.exists()) {
+                    var backupFile = dirFile.findFile("kev_music_player_backup.json")
+                    if (backupFile == null) {
+                        backupFile = dirFile.createFile("application/json", "kev_music_player_backup.json")
+                    }
+                    val fileUri = backupFile?.uri
+                    if (fileUri != null) {
+                        val outputStream = context.contentResolver.openOutputStream(fileUri, "rwt")
+                        if (outputStream != null) {
+                            exportBackup(
+                                context = context,
+                                outputStream = outputStream,
+                                includeSettings = true,
+                                includeEqualizer = true,
+                                includePlaylists = true,
+                                includeLyrics = true,
+                                onSuccess = {
+                                    settingsPrefs.edit().putLong("last_backup_time", System.currentTimeMillis()).apply()
+                                },
+                                onError = { e ->
+                                    e.printStackTrace()
+                                }
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     fun updateSortBy(newSortBy: String) {
         sortBy.value = newSortBy
     }
@@ -1471,32 +1577,48 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
             songsToOrganize.forEachIndexed { index, song ->
                 try {
-                    val cleanArtist = song.artist.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
-                    val isArtistValid = cleanArtist.isNotEmpty() &&
-                            !cleanArtist.equals("Unknown Artist", ignoreCase = true) &&
-                            !cleanArtist.equals("Unknown", ignoreCase = true) &&
-                            !cleanArtist.equals("<unknown>", ignoreCase = true) &&
-                            !cleanArtist.equals("Artista Desconocido", ignoreCase = true)
-
-                    val artistFolderName = if (isArtistValid) cleanArtist else {
-                        if (java.util.Locale.getDefault().language == "es") "Artista Desconocido" else "Unknown Artist"
-                    }
-
-                    val cleanAlbum = song.album.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
-                    val isAlbumValid = cleanAlbum.isNotEmpty() &&
-                            !cleanAlbum.equals("Unknown Album", ignoreCase = true) &&
-                            !cleanAlbum.equals("Unknown", ignoreCase = true) &&
-                            !cleanAlbum.equals("<unknown>", ignoreCase = true) &&
-                            !cleanAlbum.equals("Álbum Desconocido", ignoreCase = true)
-
-                    val albumFolderName = if (isAlbumValid) cleanAlbum else {
-                        if (java.util.Locale.getDefault().language == "es") "Álbum Desconocido" else "Unknown Album"
-                    }
-
                     val physicalPath = getPhysicalPath(context, song.id, song.uriString)
                     if (!physicalPath.isNullOrBlank()) {
                         val oldFile = File(physicalPath)
                         if (oldFile.exists()) {
+                            // Try to read AlbumArtist first from physical tags (keeps collaborations grouped)
+                            var albumArtist: String? = null
+                            try {
+                                val audioFile = org.jaudiotagger.audio.AudioFileIO.read(oldFile)
+                                val tag = audioFile.tag
+                                if (tag != null) {
+                                    val aa = tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM_ARTIST)
+                                    if (!aa.isNullOrBlank()) {
+                                        albumArtist = aa
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                // ignore
+                            }
+
+                            val artistToUse = albumArtist ?: song.artist
+                            val cleanArtist = artistToUse.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+                            val isArtistValid = cleanArtist.isNotEmpty() &&
+                                    !cleanArtist.equals("Unknown Artist", ignoreCase = true) &&
+                                    !cleanArtist.equals("Unknown", ignoreCase = true) &&
+                                    !cleanArtist.equals("<unknown>", ignoreCase = true) &&
+                                    !cleanArtist.equals("Artista Desconocido", ignoreCase = true)
+
+                            val artistFolderName = if (isArtistValid) cleanArtist else {
+                                if (java.util.Locale.getDefault().language == "es") "Artista Desconocido" else "Unknown Artist"
+                            }
+
+                            val cleanAlbum = song.album.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+                            val isAlbumValid = cleanAlbum.isNotEmpty() &&
+                                    !cleanAlbum.equals("Unknown Album", ignoreCase = true) &&
+                                    !cleanAlbum.equals("Unknown", ignoreCase = true) &&
+                                    !cleanAlbum.equals("<unknown>", ignoreCase = true) &&
+                                    !cleanAlbum.equals("Álbum Desconocido", ignoreCase = true)
+
+                            val albumFolderName = if (isAlbumValid) cleanAlbum else {
+                                if (java.util.Locale.getDefault().language == "es") "Álbum Desconocido" else "Unknown Album"
+                            }
+
                             val targetBaseDir = baseMusicDir ?: oldFile.parentFile?.parentFile ?: oldFile.parentFile ?: File("/sdcard")
                             
                             val targetArtistDir = File(targetBaseDir, artistFolderName)
@@ -2271,6 +2393,36 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
                     // Refresh smart playlists
                     updateSmartPlaylists()
+
+                    // 5. Update inside Media3 player's current playlist to keep notification/UI in sync
+                    val b = browser.value
+                    if (b != null) {
+                        for (i in 0 until b.mediaItemCount) {
+                            val item = b.getMediaItemAt(i)
+                            if (item.mediaId == songId.toString()) {
+                                val trackUri = item.requestMetadata.mediaUri ?: Uri.parse(songUriString ?: "")
+                                val newMediaItem = MediaItem.Builder()
+                                    .setMediaId(songId.toString())
+                                    .setUri(trackUri)
+                                    .setRequestMetadata(
+                                        MediaItem.RequestMetadata.Builder()
+                                            .setMediaUri(trackUri)
+                                            .build()
+                                    )
+                                    .setMediaMetadata(
+                                        androidx.media3.common.MediaMetadata.Builder()
+                                            .setTitle(title)
+                                            .setArtist(artist)
+                                            .setAlbumTitle(album)
+                                            .setIsPlayable(true)
+                                            .setIsBrowsable(false)
+                                            .build()
+                                    )
+                                    .build()
+                                b.replaceMediaItem(i, newMediaItem)
+                            }
+                        }
+                    }
                     
                     onSuccess()
                 }
@@ -2710,6 +2862,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     fun getAllDeviceFolders(context: Context): List<String> {
         val list = mutableListOf<String>()
+        val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+        val selectedMusicFolder = settingsPrefs.getString("music_folder_path", null)
+
         val projection = arrayOf(android.provider.MediaStore.Audio.Media.DATA)
         try {
             context.contentResolver.query(
@@ -2726,8 +2881,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     val parentFile = file.parentFile
                     if (parentFile != null) {
                         val parentPath = parentFile.absolutePath
-                        if (!list.contains(parentPath)) {
-                            list.add(parentPath)
+                        if (selectedMusicFolder != null) {
+                            if (parentPath.startsWith(selectedMusicFolder)) {
+                                if (!list.contains(parentPath)) {
+                                    list.add(parentPath)
+                                }
+                            }
+                        } else {
+                            if (!list.contains(parentPath)) {
+                                list.add(parentPath)
+                            }
                         }
                     }
                 }
@@ -3218,6 +3381,17 @@ fun getMimeTypeFromBytes(bytes: ByteArray?): String {
     }
 }
 
+class SafeMp4FileReader : org.jaudiotagger.audio.mp4.Mp4FileReader() {
+    override fun getEncodingInfo(path: java.nio.file.Path): org.jaudiotagger.audio.generic.GenericAudioHeader {
+        return try {
+            super.getEncodingInfo(path)
+        } catch (e: Throwable) {
+            android.util.Log.w("SafeMp4FileReader", "Caught error in getEncodingInfo for MP4/M4A, returning empty audio header", e)
+            org.jaudiotagger.audio.generic.GenericAudioHeader()
+        }
+    }
+}
+
 fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, uriString: String?, block: (org.jaudiotagger.audio.AudioFile) -> Unit): Boolean {
     val physicalPath = getPhysicalPath(context, songId, uriString)
     if (physicalPath == null) {
@@ -3262,7 +3436,18 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
         } catch (t: Throwable) {
             android.util.Log.e("MetadataWrite", "Failed to set jaudiotagger android mode", t)
         }
-        val audioFile = AudioFileIO.read(tempFile)
+        val audioFile = if (tempFile.extension.lowercase() in listOf("m4a", "mp4")) {
+            try {
+                val file = SafeMp4FileReader().read(tempFile)
+                file.setExt(tempFile.extension.lowercase())
+                file
+            } catch (e: Exception) {
+                android.util.Log.e("MetadataWrite", "SafeMp4FileReader failed, falling back to AudioFileIO", e)
+                AudioFileIO.read(tempFile)
+            }
+        } else {
+            AudioFileIO.read(tempFile)
+        }
         block(audioFile)
         AudioFileIO.write(audioFile)
         android.util.Log.d("MetadataWrite", "Successfully wrote tags to temp file.")
