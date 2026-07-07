@@ -116,6 +116,7 @@ fun SettingsScreen(
 
     var showFolderList by remember { mutableStateOf(false) }
     var showDuplicateFinder by remember { mutableStateOf(false) }
+    var showIntegrityChecker by remember { mutableStateOf(false) }
     val deviceFolders = remember { viewModel.getAllDeviceFolders(context) }
     var excludedFolders by remember { mutableStateOf(viewModel.getExcludedFolders()) }
 
@@ -511,7 +512,8 @@ fun SettingsScreen(
                                 deviceFolders = deviceFolders,
                                 excludedFolders = excludedFolders,
                                 setExcludedFolders = { excludedFolders = it },
-                                onFindDuplicates = { showDuplicateFinder = true }
+                                onFindDuplicates = { showDuplicateFinder = true },
+                                onCheckIntegrity = { showIntegrityChecker = true }
                             )
                         }
                         "about" -> {
@@ -531,6 +533,13 @@ fun SettingsScreen(
         DuplicateFinderDialog(
             viewModel = viewModel,
             onDismiss = { showDuplicateFinder = false }
+        )
+    }
+
+    if (showIntegrityChecker) {
+        SongIntegrityDialog(
+            viewModel = viewModel,
+            onDismiss = { showIntegrityChecker = false }
         )
     }
 }

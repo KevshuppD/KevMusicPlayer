@@ -170,6 +170,7 @@ data class SmartPlaylistConfig(
 )
 
 class MediaBrowserViewModel(application: Application) : AndroidViewModel(application) {
+    private var initialDbLoadJob: kotlinx.coroutines.Job? = null
     private var browserFuture: ListenableFuture<MediaBrowser>? = null
     val browser = mutableStateOf<MediaBrowser?>(null)
     val localAudioFiles = mutableStateListOf<AudioFile>()
@@ -215,7 +216,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }
 
         // Instantly load the cached songs from SQLite database in chunks to ensure the screen is NEVER empty upon startup and we avoid RAM spike/freezes!
-        viewModelScope.launch {
+        initialDbLoadJob = viewModelScope.launch {
             try {
                 // 1. Load the first chunk (500 files) for instant rendering
                 val firstChunk = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -564,6 +565,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         isScanning.value = true
         viewModelScope.launch {
             try {
+                initialDbLoadJob?.join()
                 val updatedFilesList = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     // 0. Fetch existing cached entities first to bypass slow disk I/O on unchanged files
                     val existingEntities = audioDao.getAllAudioFiles().associateBy { it.id }
@@ -3156,6 +3158,86 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     "Bulk deletion operation failed",
                     e
                 )
+            }
+        }
+    }
+
+    var isVerifyingIntegrity = mutableStateOf(false)
+        private set
+    var verifyIntegrityCurrent = mutableStateOf(0)
+        private set
+    var verifyIntegrityTotal = mutableStateOf(0)
+        private set
+    var verifyIntegrityCurrentName = mutableStateOf("")
+        private set
+
+    fun verifySongsIntegrity(
+        context: Context,
+        onComplete: (List<Pair<AudioFile, String>>) -> Unit
+    ) {
+        if (isVerifyingIntegrity.value) return
+        isVerifyingIntegrity.value = true
+        verifyIntegrityCurrent.value = 0
+        verifyIntegrityTotal.value = 0
+        verifyIntegrityCurrentName.value = ""
+        
+        viewModelScope.launch(Dispatchers.IO) {
+            val songsToVerify = localAudioFiles.toList()
+            withContext(Dispatchers.Main) {
+                verifyIntegrityTotal.value = songsToVerify.size
+            }
+            val damaged = mutableListOf<Pair<AudioFile, String>>()
+
+            songsToVerify.forEachIndexed { index, song ->
+                withContext(Dispatchers.Main) {
+                    verifyIntegrityCurrent.value = index + 1
+                    verifyIntegrityCurrentName.value = song.title
+                }
+                
+                var isDamaged = false
+                var reason = ""
+                
+                // 1. Check if the URI is readable
+                try {
+                    val uri = Uri.parse(song.uriString)
+                    context.contentResolver.openAssetFileDescriptor(uri, "r")?.use {
+                        // Successfully opened file descriptor
+                    } ?: run {
+                        isDamaged = true
+                        reason = if (java.util.Locale.getDefault().language == "es") "Archivo inaccesible o eliminado" else "File inaccessible or deleted"
+                    }
+                } catch (e: Exception) {
+                    isDamaged = true
+                    reason = if (java.util.Locale.getDefault().language == "es") "No se puede abrir el archivo" else "Cannot open file"
+                }
+
+                // 2. If it is readable, try parsing metadata to see if it's corrupted/damaged
+                if (!isDamaged) {
+                    val retriever = android.media.MediaMetadataRetriever()
+                    try {
+                        val uri = Uri.parse(song.uriString)
+                        retriever.setDataSource(context, uri)
+                        val hasAudio = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
+                        if (hasAudio == null) {
+                            isDamaged = true
+                            reason = if (java.util.Locale.getDefault().language == "es") "Archivo de audio sin pistas válidas" else "Audio file has no valid tracks"
+                        }
+                    } catch (e: Exception) {
+                        isDamaged = true
+                        reason = if (java.util.Locale.getDefault().language == "es") "Archivo de audio dañado o corrupto" else "Corrupted or damaged audio file"
+                    } finally {
+                        try { retriever.release() } catch (e: Exception) {}
+                    }
+                }
+
+                if (isDamaged) {
+                    damaged.add(Pair(song, reason))
+                }
+            }
+
+            withContext(Dispatchers.Main) {
+                isVerifyingIntegrity.value = false
+                onComplete(damaged)
             }
         }
     }

@@ -36,6 +36,7 @@ object TelemetryLogger {
     }
 
     fun logError(context: Context, category: String, message: String, throwable: Throwable? = null) {
+        android.util.Log.e("TelemetryLogger", "[$category] $message", throwable)
         if (!isEnabled(context)) return
         try {
             val file = File(context.filesDir, LOG_FILE_NAME)
@@ -43,7 +44,7 @@ object TelemetryLogger {
             val timestamp = sdf.format(Date())
             
             val logLine = StringBuilder()
-            logLine.append("[$timestamp] [$category] $message\n")
+            logLine.append("[$timestamp] [$category] [ERROR] $message\n")
             if (throwable != null) {
                 var current: Throwable? = throwable
                 while (current != null) {
@@ -63,6 +64,18 @@ object TelemetryLogger {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    fun logInfo(category: String, message: String) {
+        try {
+            logInfo(KevMusicPlayerApplication.instance, category, message)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun logInfo(context: Context, category: String, message: String) {
+        android.util.Log.i("TelemetryLogger", "[$category] $message")
     }
 
     fun getLogs(context: Context): String {

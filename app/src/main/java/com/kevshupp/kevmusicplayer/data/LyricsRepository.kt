@@ -70,49 +70,82 @@ object LyricsRepository {
                 .url("https://lrclib.net/api/search?q=$query")
                 .build()
             val list = mutableListOf<LrcLibSearchResult>()
-            try {
-                client.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        val body = response.body?.string() ?: return@withContext emptyList()
-                        val jsonArray = JSONArray(body)
-                        for (i in 0 until jsonArray.length()) {
-                            val obj = jsonArray.getJSONObject(i)
-                            val id = obj.optLong("id", 0L)
-                            val trackName = obj.optString("trackName", "")
-                            val artistName = obj.optString("artistName", "")
-                            val albumName = obj.optString("albumName", "")
-                            val duration = obj.optInt("duration", 0)
-                            
-                            var synced = obj.optString("syncedLyrics", "")
-                            if (synced.isEmpty() || synced == "null") synced = ""
-                            
-                            var plain = obj.optString("plainLyrics", "")
-                            if (plain.isEmpty() || plain == "null") plain = ""
-                            
-                            list.add(
-                                LrcLibSearchResult(
-                                    id = id,
-                                    trackName = trackName,
-                                    artistName = artistName,
-                                    albumName = albumName,
-                                    durationSeconds = duration,
-                                    syncedLyrics = if (synced.isNotEmpty()) synced else null,
-                                    plainLyrics = if (plain.isNotEmpty()) plain else null
+            var attempt = 0
+            val maxAttempts = 3
+            var lastException: Exception? = null
+
+            while (attempt < maxAttempts) {
+                try {
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val body = response.body?.string() ?: return@withContext emptyList()
+                            val jsonArray = JSONArray(body)
+                            for (i in 0 until jsonArray.length()) {
+                                val obj = jsonArray.getJSONObject(i)
+                                val id = obj.optLong("id", 0L)
+                                val trackName = obj.optString("trackName", "")
+                                val artistName = obj.optString("artistName", "")
+                                val albumName = obj.optString("albumName", "")
+                                val duration = obj.optInt("duration", 0)
+                                
+                                var synced = obj.optString("syncedLyrics", "")
+                                if (synced.isEmpty() || synced == "null") synced = ""
+                                
+                                var plain = obj.optString("plainLyrics", "")
+                                if (plain.isEmpty() || plain == "null") plain = ""
+                                
+                                list.add(
+                                    LrcLibSearchResult(
+                                        id = id,
+                                        trackName = trackName,
+                                        artistName = artistName,
+                                        albumName = albumName,
+                                        durationSeconds = duration,
+                                        syncedLyrics = if (synced.isNotEmpty()) synced else null,
+                                        plainLyrics = if (plain.isNotEmpty()) plain else null
+                                    )
                                 )
-                            )
+                            }
+                            lastException = null
+                            break // Success!
+                        } else {
+                            if (response.code == 429 || response.code >= 500) {
+                                throw java.io.IOException("HTTP error code: ${response.code}")
+                            } else {
+                                break // Non-retryable error
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    lastException = e
+                    val isNetworkError = e is java.net.SocketTimeoutException || 
+                                         e is java.net.ConnectException || 
+                                         e is java.net.UnknownHostException || 
+                                         e is java.net.SocketException ||
+                                         e is java.io.IOException
+                    if (!isNetworkError) {
+                        break
+                    }
+                    kotlinx.coroutines.delay(1000L * (attempt + 1))
                 }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                e.printStackTrace()
+                attempt++
+            }
+
+            val exceptionToLog = lastException
+            if (exceptionToLog != null) {
+                val isNetworkError = exceptionToLog is java.net.SocketTimeoutException || 
+                                     exceptionToLog is java.net.ConnectException || 
+                                     exceptionToLog is java.net.UnknownHostException || 
+                                     exceptionToLog is java.net.SocketException
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     KevMusicPlayerApplication.instance,
                     "LyricsSearch",
-                    "Failed search from LrcLib for $artist - $title",
-                    e
+                    "Failed search from LrcLib for $artist - $title: ${exceptionToLog.localizedMessage ?: exceptionToLog.message}",
+                    if (isNetworkError) null else exceptionToLog
                 )
             }
+
             // Prioritize results that have synced lyrics
             list.sortedWith(compareByDescending<LrcLibSearchResult> { it.syncedLyrics != null }
                 .thenBy { it.trackName.length })
@@ -125,39 +158,71 @@ object LyricsRepository {
             val request = Request.Builder()
                 .url("https://lrclib.net/api/search?q=$query")
                 .build()
-            try {
-                client.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        val body = response.body?.string() ?: return@withContext null
-                        val jsonArray = JSONArray(body)
-                        if (jsonArray.length() > 0) {
-                            // First pass: try to find a match with synced lyrics
-                            for (i in 0 until jsonArray.length()) {
-                                val match = jsonArray.getJSONObject(i)
-                                val syncedLyrics = match.optString("syncedLyrics")
-                                if (!syncedLyrics.isNullOrEmpty() && syncedLyrics != "null") {
-                                    return@withContext syncedLyrics
+            var attempt = 0
+            val maxAttempts = 3
+            var lastException: Exception? = null
+
+            while (attempt < maxAttempts) {
+                try {
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val body = response.body?.string() ?: return@withContext null
+                            val jsonArray = JSONArray(body)
+                            if (jsonArray.length() > 0) {
+                                // First pass: try to find a match with synced lyrics
+                                for (i in 0 until jsonArray.length()) {
+                                    val match = jsonArray.getJSONObject(i)
+                                    val syncedLyrics = match.optString("syncedLyrics")
+                                    if (!syncedLyrics.isNullOrEmpty() && syncedLyrics != "null") {
+                                        return@withContext syncedLyrics
+                                    }
+                                }
+                                // Second pass: fallback to the first match with plain lyrics
+                                for (i in 0 until jsonArray.length()) {
+                                    val match = jsonArray.getJSONObject(i)
+                                    val plainLyrics = match.optString("plainLyrics")
+                                    if (!plainLyrics.isNullOrEmpty() && plainLyrics != "null") {
+                                        return@withContext plainLyrics
+                                    }
                                 }
                             }
-                            // Second pass: fallback to the first match with plain lyrics
-                            for (i in 0 until jsonArray.length()) {
-                                val match = jsonArray.getJSONObject(i)
-                                val plainLyrics = match.optString("plainLyrics")
-                                if (!plainLyrics.isNullOrEmpty() && plainLyrics != "null") {
-                                    return@withContext plainLyrics
-                                }
+                            lastException = null
+                            return@withContext null
+                        } else {
+                            if (response.code == 429 || response.code >= 500) {
+                                throw java.io.IOException("HTTP error code: ${response.code}")
+                            } else {
+                                break // Non-retryable error
                             }
                         }
                     }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    lastException = e
+                    val isNetworkError = e is java.net.SocketTimeoutException || 
+                                         e is java.net.ConnectException || 
+                                         e is java.net.UnknownHostException || 
+                                         e is java.net.SocketException ||
+                                         e is java.io.IOException
+                    if (!isNetworkError) {
+                        break
+                    }
+                    kotlinx.coroutines.delay(1000L * (attempt + 1))
                 }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                e.printStackTrace()
+                attempt++
+            }
+
+            val exceptionToLog = lastException
+            if (exceptionToLog != null) {
+                val isNetworkError = exceptionToLog is java.net.SocketTimeoutException || 
+                                     exceptionToLog is java.net.ConnectException || 
+                                     exceptionToLog is java.net.UnknownHostException || 
+                                     exceptionToLog is java.net.SocketException
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     KevMusicPlayerApplication.instance,
                     "LyricsFetch",
-                    "Failed fetch from LrcLib for $artist - $title",
-                    e
+                    "Failed fetch from LrcLib for $artist - $title: ${exceptionToLog.localizedMessage ?: exceptionToLog.message}",
+                    if (isNetworkError) null else exceptionToLog
                 )
             }
             null
@@ -197,35 +262,67 @@ object LyricsRepository {
                 .url("https://itunes.apple.com/search?term=$encodedQuery&entity=song&limit=10")
                 .build()
             val list = mutableListOf<ITunesCoverSearchResult>()
-            try {
-                client.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        val body = response.body?.string() ?: return@withContext emptyList()
-                        val jsonObject = JSONObject(body)
-                        val results = jsonObject.optJSONArray("results") ?: return@withContext emptyList()
-                        for (i in 0 until results.length()) {
-                            val obj = results.getJSONObject(i)
-                            val trackName = obj.optString("trackName", "")
-                            val artistName = obj.optString("artistName", "")
-                            val albumName = obj.optString("collectionName", "")
-                            var coverUrl = obj.optString("artworkUrl100", "")
-                            if (coverUrl.isNotEmpty()) {
-                                coverUrl = coverUrl.replace("100x100bb.jpg", "600x600bb.jpg")
+            var attempt = 0
+            val maxAttempts = 3
+            var lastException: Exception? = null
+
+            while (attempt < maxAttempts) {
+                try {
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val body = response.body?.string() ?: return@withContext emptyList()
+                            val jsonObject = JSONObject(body)
+                            val results = jsonObject.optJSONArray("results") ?: return@withContext emptyList()
+                            for (i in 0 until results.length()) {
+                                val obj = results.getJSONObject(i)
+                                val trackName = obj.optString("trackName", "")
+                                val artistName = obj.optString("artistName", "")
+                                val albumName = obj.optString("collectionName", "")
+                                var coverUrl = obj.optString("artworkUrl100", "")
+                                if (coverUrl.isNotEmpty()) {
+                                    coverUrl = coverUrl.replace("100x100bb.jpg", "600x600bb.jpg")
+                                }
+                                if (coverUrl.isNotEmpty()) {
+                                    list.add(ITunesCoverSearchResult(trackName, artistName, albumName, coverUrl))
+                                }
                             }
-                            if (coverUrl.isNotEmpty()) {
-                                list.add(ITunesCoverSearchResult(trackName, artistName, albumName, coverUrl))
+                            lastException = null
+                            break // Success!
+                        } else {
+                            if (response.code == 429 || response.code >= 500) {
+                                throw java.io.IOException("HTTP error code: ${response.code}")
+                            } else {
+                                break // Non-retryable error
                             }
                         }
                     }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    lastException = e
+                    val isNetworkError = e is java.net.SocketTimeoutException || 
+                                         e is java.net.ConnectException || 
+                                         e is java.net.UnknownHostException || 
+                                         e is java.net.SocketException ||
+                                         e is java.io.IOException
+                    if (!isNetworkError) {
+                        break
+                    }
+                    kotlinx.coroutines.delay(1000L * (attempt + 1))
                 }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                e.printStackTrace()
+                attempt++
+            }
+
+            val exceptionToLog = lastException
+            if (exceptionToLog != null) {
+                val isNetworkError = exceptionToLog is java.net.SocketTimeoutException || 
+                                     exceptionToLog is java.net.ConnectException || 
+                                     exceptionToLog is java.net.UnknownHostException || 
+                                     exceptionToLog is java.net.SocketException
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     KevMusicPlayerApplication.instance,
                     "CoverSearch",
-                    "Failed search from iTunes for $query",
-                    e
+                    "Failed search from iTunes for $query: ${exceptionToLog.localizedMessage ?: exceptionToLog.message}",
+                    if (isNetworkError) null else exceptionToLog
                 )
             }
             list
@@ -235,23 +332,54 @@ object LyricsRepository {
     suspend fun downloadCoverBytes(url: String): ByteArray? {
         return withContext(Dispatchers.IO) {
             val request = Request.Builder().url(url).build()
-            try {
-                client.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        response.body?.bytes()
-                    } else null
+            var attempt = 0
+            val maxAttempts = 3
+            var lastException: Exception? = null
+
+            while (attempt < maxAttempts) {
+                try {
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            lastException = null
+                            return@withContext response.body?.bytes()
+                        } else {
+                            if (response.code == 429 || response.code >= 500) {
+                                throw java.io.IOException("HTTP error code: ${response.code}")
+                            } else {
+                                break // Non-retryable error
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    lastException = e
+                    val isNetworkError = e is java.net.SocketTimeoutException || 
+                                         e is java.net.ConnectException || 
+                                         e is java.net.UnknownHostException || 
+                                         e is java.net.SocketException ||
+                                         e is java.io.IOException
+                    if (!isNetworkError) {
+                        break
+                    }
+                    kotlinx.coroutines.delay(1000L * (attempt + 1))
                 }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                e.printStackTrace()
+                attempt++
+            }
+
+            val exceptionToLog = lastException
+            if (exceptionToLog != null) {
+                val isNetworkError = exceptionToLog is java.net.SocketTimeoutException || 
+                                     exceptionToLog is java.net.ConnectException || 
+                                     exceptionToLog is java.net.UnknownHostException || 
+                                     exceptionToLog is java.net.SocketException
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     KevMusicPlayerApplication.instance,
                     "CoverDownload",
-                    "Failed download from $url",
-                    e
+                    "Failed download from $url: ${exceptionToLog.localizedMessage ?: exceptionToLog.message}",
+                    if (isNetworkError) null else exceptionToLog
                 )
-                null
             }
+            null
         }
     }
 }

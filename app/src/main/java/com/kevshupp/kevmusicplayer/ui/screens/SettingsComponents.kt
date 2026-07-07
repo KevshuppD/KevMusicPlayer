@@ -1857,7 +1857,8 @@ fun LibrarySettingsSection(
     deviceFolders: List<String>,
     excludedFolders: List<String>,
     setExcludedFolders: (List<String>) -> Unit,
-    onFindDuplicates: () -> Unit
+    onFindDuplicates: () -> Unit,
+    onCheckIntegrity: () -> Unit
 ) {
     var activeOrganizerAction by remember { mutableStateOf("") }
 
@@ -2366,6 +2367,60 @@ fun LibrarySettingsSection(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = getLocalized("Buscar Canciones Duplicadas", "Search Duplicate Songs"),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+
+            // Integrity Checker Section
+            HorizontalDivider(
+                color = settingsDividerColor(),
+                modifier = Modifier.padding(vertical = 16.dp)
+            )
+
+            Text(
+                text = getLocalized("VERIFICADOR DE INTEGRIDAD", "INTEGRITY CHECKER"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.align(Alignment.Start)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = getLocalized(
+                    "Busca archivos de audio dañados, corruptos o inaccesibles para mantener limpia tu biblioteca.",
+                    "Search for damaged, corrupted, or inaccessible audio files to keep your library clean."
+                ),
+                fontSize = 12.sp,
+                color = settingsTextMutedColor(),
+                modifier = Modifier.align(Alignment.Start)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = onCheckIntegrity,
+                enabled = !isScanning && !isRenaming,
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.OfflinePin,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = getLocalized("Verificar Integridad", "Verify Integrity"),
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
                     color = MaterialTheme.colorScheme.onPrimary

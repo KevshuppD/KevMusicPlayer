@@ -76,14 +76,23 @@ class PlaybackService : MediaLibraryService() {
                 val title = mediaItem?.mediaMetadata?.title?.toString() ?: ""
                 val artist = mediaItem?.mediaMetadata?.artist?.toString() ?: ""
                 val uriString = mediaItem?.requestMetadata?.mediaUri?.toString()
-                android.util.Log.d("WidgetDebug", "Transition to: $title - $artist, uri: $uriString")
+                
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    this@PlaybackService,
+                    "Playback_Transition",
+                    "Transition to: $title - $artist, uri: $uriString, reason: $reason, activeSessionId: ${player.audioSessionId}, volume: ${player.volume}"
+                )
+                
                 updateWidgetState(title, artist, player.isPlaying, uriString)
                 applyReplayGain(mediaItem)
 
-                // Force recreation of audio effects on track transition to prevent hardware silence issues
                 val sessionId = player.audioSessionId
                 if (sessionId != 0) {
-                    currentAudioSessionId = 0
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                        this@PlaybackService,
+                        "Playback_Transition",
+                        "Setting up audio effects on transition for session $sessionId"
+                    )
                     setupAudioEffects(sessionId)
                 }
             }
@@ -100,7 +109,13 @@ class PlaybackService : MediaLibraryService() {
                 val title = player.currentMediaItem?.mediaMetadata?.title?.toString() ?: ""
                 val artist = player.currentMediaItem?.mediaMetadata?.artist?.toString() ?: ""
                 val uriString = player.currentMediaItem?.requestMetadata?.mediaUri?.toString()
-                android.util.Log.d("WidgetDebug", "Is playing changed: $isPlaying, $title - $artist")
+                
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    this@PlaybackService,
+                    "Playback_State",
+                    "Is playing changed to $isPlaying for: $title - $artist, volume: ${player.volume}"
+                )
+                
                 updateWidgetState(title, artist, isPlaying, uriString)
 
                 if (isPlaying) {
@@ -124,6 +139,11 @@ class PlaybackService : MediaLibraryService() {
 
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 if (audioSessionId != 0) {
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                        this@PlaybackService,
+                        "Playback_AudioSession",
+                        "Audio session ID changed to: $audioSessionId (current stored session: $currentAudioSessionId)"
+                    )
                     setupAudioEffects(audioSessionId)
                     val prefs = getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
                     prefs.edit().putInt("audio_session_id", audioSessionId).apply()
@@ -141,6 +161,48 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         player.addListener(playerListener!!)
+
+        val analyticsListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onAudioSinkError(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                audioSinkError: Exception
+            ) {
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    this@PlaybackService,
+                    "Playback_AudioSinkError",
+                    "AudioSink rendering error: ${audioSinkError.localizedMessage}",
+                    audioSinkError
+                )
+            }
+
+            override fun onAudioCodecError(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                audioCodecError: Exception
+            ) {
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    this@PlaybackService,
+                    "Playback_AudioCodecError",
+                    "AudioCodec error: ${audioCodecError.localizedMessage}",
+                    audioCodecError
+                )
+            }
+
+            override fun onAudioUnderrun(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                bufferSize: Int,
+                bufferSizeMs: Long,
+                elapsedSinceLastFeedMs: Long
+            ) {
+                if (bufferSizeMs > 500) {
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                        this@PlaybackService,
+                        "Playback_AudioUnderrun",
+                        "High audio underrun detected: bufferSize=$bufferSize, bufferSizeMs=$bufferSizeMs, elapsedSinceLastFeedMs=$elapsedSinceLastFeedMs"
+                    )
+                }
+            }
+        }
+        player.addAnalyticsListener(analyticsListener)
 
         val callback = object : MediaLibrarySession.Callback {
             override fun onConnect(
@@ -673,6 +735,11 @@ class PlaybackService : MediaLibraryService() {
         if (audioSessionId == 0) return
         try {
             if (currentAudioSessionId != audioSessionId) {
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    this,
+                    "AudioEffects_Setup",
+                    "Releasing old effects because session ID changed from $currentAudioSessionId to $audioSessionId"
+                )
                 try { equalizer?.release() } catch (e: Exception) {}
                 equalizer = null
                 try { bassBoost?.release() } catch (e: Exception) {}
@@ -690,6 +757,7 @@ class PlaybackService : MediaLibraryService() {
             try {
                 val eqEnabled = prefs.getBoolean("eq_enabled", false)
                 if (eqEnabled) {
+                    val isNew = equalizer == null
                     if (equalizer == null) {
                         equalizer = android.media.audiofx.Equalizer(0, audioSessionId)
                     }
@@ -708,10 +776,18 @@ class PlaybackService : MediaLibraryService() {
                                 e.printStackTrace()
                             }
                         }
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                            this,
+                            "AudioEffects_EQ",
+                            "Equalizer ${if (isNew) "created" else "updated"}: bands=$bandsStr, session=$audioSessionId"
+                        )
                     }
                 } else {
-                    try { equalizer?.release() } catch (e: Exception) {}
-                    equalizer = null
+                    if (equalizer != null) {
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(this, "AudioEffects_EQ", "Disabling and releasing Equalizer")
+                        try { equalizer?.release() } catch (e: Exception) {}
+                        equalizer = null
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -725,14 +801,23 @@ class PlaybackService : MediaLibraryService() {
                 val bbEnabled = prefs.getBoolean("bb_enabled", false)
                 if (bbEnabled) {
                     val bbStrength = prefs.getInt("bb_strength", 0).toShort()
+                    val isNew = bassBoost == null
                     if (bassBoost == null) {
                         bassBoost = android.media.audiofx.BassBoost(0, audioSessionId)
                     }
                     bassBoost?.enabled = true
                     bassBoost?.setStrength(bbStrength)
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                        this,
+                        "AudioEffects_BB",
+                        "BassBoost ${if (isNew) "created" else "updated"}: strength=$bbStrength, session=$audioSessionId"
+                    )
                 } else {
-                    try { bassBoost?.release() } catch (e: Exception) {}
-                    bassBoost = null
+                    if (bassBoost != null) {
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(this, "AudioEffects_BB", "Disabling and releasing BassBoost")
+                        try { bassBoost?.release() } catch (e: Exception) {}
+                        bassBoost = null
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -746,14 +831,23 @@ class PlaybackService : MediaLibraryService() {
                 val virtEnabled = prefs.getBoolean("virt_enabled", false)
                 if (virtEnabled) {
                     val virtStrength = prefs.getInt("virt_strength", 0).toShort()
+                    val isNew = virtualizer == null
                     if (virtualizer == null) {
                         virtualizer = android.media.audiofx.Virtualizer(0, audioSessionId)
                     }
                     virtualizer?.enabled = true
                     virtualizer?.setStrength(virtStrength)
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                        this,
+                        "AudioEffects_Virt",
+                        "Virtualizer ${if (isNew) "created" else "updated"}: strength=$virtStrength, session=$audioSessionId"
+                    )
                 } else {
-                    try { virtualizer?.release() } catch (e: Exception) {}
-                    virtualizer = null
+                    if (virtualizer != null) {
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(this, "AudioEffects_Virt", "Disabling and releasing Virtualizer")
+                        try { virtualizer?.release() } catch (e: Exception) {}
+                        virtualizer = null
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -767,19 +861,28 @@ class PlaybackService : MediaLibraryService() {
                 val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
                 val normalizeEnabled = settingsPrefs.getBoolean("normalize_sound", false)
                 if (normalizeEnabled) {
+                    val isNew = loudnessEnhancer == null
                     if (loudnessEnhancer == null) {
                         loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId)
                     }
                     loudnessEnhancer?.enabled = true
                     try {
                         loudnessEnhancer?.setTargetGain(800)
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                            this,
+                            "AudioEffects_Loudness",
+                            "LoudnessEnhancer ${if (isNew) "created" else "updated"}: targetGain=800, session=$audioSessionId"
+                        )
                     } catch (e: Exception) {
                         e.printStackTrace()
                         android.util.Log.w("PlaybackService", "Failed to set target gain on LoudnessEnhancer: ${e.message}")
                     }
                 } else {
-                    try { loudnessEnhancer?.release() } catch (e: Exception) {}
-                    loudnessEnhancer = null
+                    if (loudnessEnhancer != null) {
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(this, "AudioEffects_Loudness", "Disabling and releasing LoudnessEnhancer")
+                        try { loudnessEnhancer?.release() } catch (e: Exception) {}
+                        loudnessEnhancer = null
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -884,9 +987,18 @@ class PlaybackService : MediaLibraryService() {
                 if (gain != null && gain != 0f) {
                     val rawFactor = Math.pow(10.0, gain.toDouble() / 20.0).toFloat()
                     currentReplayGainFactor = rawFactor.coerceIn(0.15f, 1.0f)
-                    android.util.Log.d("ReplayGain", "Applied ReplayGain: $gain dB, factor: $currentReplayGainFactor for song: ${song?.title}")
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                        this@PlaybackService,
+                        "ReplayGain",
+                        "Resolved ReplayGain: $gain dB -> Factor: $currentReplayGainFactor for song: ${song?.title}"
+                    )
                 } else {
                     currentReplayGainFactor = 1f
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                        this@PlaybackService,
+                        "ReplayGain",
+                        "No ReplayGain found for song: ${song?.title}, defaulting factor to 1.0"
+                    )
                 }
             } else {
                 currentReplayGainFactor = 1f
@@ -896,6 +1008,11 @@ class PlaybackService : MediaLibraryService() {
                 val player = mediaLibrarySession?.player as? ExoPlayer
                 if (player != null && !isFadingIn) {
                     player.volume = currentReplayGainFactor
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                        this@PlaybackService,
+                        "ReplayGain",
+                        "Applied ReplayGain volume factor $currentReplayGainFactor to ExoPlayer"
+                    )
                 }
             }
         }
@@ -919,6 +1036,11 @@ class PlaybackService : MediaLibraryService() {
                 if (crossfadeSeconds <= 0) {
                     if (player.volume != currentReplayGainFactor && !isFadingIn) {
                         player.volume = currentReplayGainFactor
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                            this@PlaybackService,
+                            "Playback_Volume",
+                            "Crossfade disabled. Set volume to currentReplayGainFactor: $currentReplayGainFactor"
+                        )
                     }
                     continue
                 }
@@ -932,9 +1054,15 @@ class PlaybackService : MediaLibraryService() {
                     
                     if (remainingMs <= crossfadeMs) {
                         val progress = remainingMs.toFloat() / crossfadeMs
-                        player.volume = progress.coerceIn(0f, 1f) * currentReplayGainFactor
+                        val targetVol = progress.coerceIn(0f, 1f) * currentReplayGainFactor
+                        player.volume = targetVol
                         
                         if (remainingMs <= 200L && player.hasNextMediaItem() && currentItem != lastSkippedMediaItem) {
+                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                                this@PlaybackService,
+                                "Playback_Volume",
+                                "Remaining time $remainingMs <= 200ms. Transitioning track with crossfade: current=$currentItem"
+                            )
                             lastSkippedMediaItem = currentItem
                             player.seekToNextMediaItem()
                             fadeNewTrackIn(player, crossfadeMs)
@@ -942,6 +1070,11 @@ class PlaybackService : MediaLibraryService() {
                     } else {
                         if (player.volume != currentReplayGainFactor && !isFadingIn) {
                             player.volume = currentReplayGainFactor
+                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                                this@PlaybackService,
+                                "Playback_Volume",
+                                "Reset volume to currentReplayGainFactor: $currentReplayGainFactor (not in crossfade zone)"
+                            )
                         }
                     }
                 }
@@ -954,15 +1087,32 @@ class PlaybackService : MediaLibraryService() {
         isFadingIn = true
         fadeInJob = serviceScope.launch {
             try {
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    this@PlaybackService,
+                    "Playback_Volume",
+                    "Starting fade-in for new track over ${crossfadeMs}ms. Target volume: $currentReplayGainFactor"
+                )
                 player.volume = 0f
                 val steps = 20
                 val delayMs = (crossfadeMs / steps).coerceAtLeast(10L)
                 for (i in 1..steps) {
                     kotlinx.coroutines.delay(delayMs)
-                    if (!player.isPlaying) break
+                    if (!player.isPlaying) {
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                            this@PlaybackService,
+                            "Playback_Volume",
+                            "Fade-in interrupted: player is not playing"
+                        )
+                        break
+                    }
                     player.volume = (i.toFloat() / steps) * currentReplayGainFactor
                 }
                 player.volume = currentReplayGainFactor
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    this@PlaybackService,
+                    "Playback_Volume",
+                    "Fade-in completed. Volume set to: $currentReplayGainFactor"
+                )
             } finally {
                 isFadingIn = false
             }
@@ -973,6 +1123,11 @@ class PlaybackService : MediaLibraryService() {
         fadeInJob?.cancel()
         manualSkipJob?.cancel()
         manualSkipJob = serviceScope.launch {
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                this@PlaybackService,
+                "Playback_Volume",
+                "Performing manual skip (next=$next). Current volume: ${player.volume}"
+            )
             val fadeOutSteps = 10
             val originalVolume = player.volume
             for (i in fadeOutSteps downTo 0) {
@@ -996,6 +1151,11 @@ class PlaybackService : MediaLibraryService() {
                 player.volume = (i.toFloat() / fadeOutSteps) * currentReplayGainFactor
             }
             player.volume = currentReplayGainFactor
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                this@PlaybackService,
+                "Playback_Volume",
+                "Manual skip completed. Volume set to: $currentReplayGainFactor"
+            )
         }
     }
 }

@@ -119,6 +119,7 @@ fun LibraryScreen(
     }
     var selectedTab by rememberSaveable { mutableStateOf("Songs") }
     var currentSubView by rememberSaveable(stateSaver = SubViewSaver) { mutableStateOf<SubView?>(null) }
+    var showInsights by remember { mutableStateOf(false) }
 
     var isMultiSelectMode by remember { mutableStateOf(false) }
     val selectedSongs = remember { mutableStateListOf<AudioFile>() }
@@ -326,6 +327,20 @@ fun LibraryScreen(
                         }
 
                         IconButton(
+                            onClick = { showInsights = true },
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Insights,
+                                contentDescription = "Estadísticas",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+
+                        IconButton(
                             onClick = onSettingsClick,
                             colors = IconButtonDefaults.iconButtonColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
@@ -415,8 +430,9 @@ fun LibraryScreen(
                     IconButton(
                         onClick = {
                             if (filteredFiles.isNotEmpty()) {
-                                val shuffled = filteredFiles.shuffled()
-                                onFileClick(shuffled.first(), shuffled)
+                                val randomSong = filteredFiles.random()
+                                onFileClick(randomSong, filteredFiles)
+                                player?.shuffleModeEnabled = true
                             }
                         },
                         colors = IconButtonDefaults.iconButtonColors(
@@ -851,8 +867,9 @@ fun LibraryScreen(
                                 IconButton(
                                     onClick = {
                                         if (subSongs.isNotEmpty()) {
-                                            val shuffled = subSongs.shuffled()
-                                            onFileClick(shuffled.first(), shuffled)
+                                            val randomSong = subSongs.random()
+                                            onFileClick(randomSong, subSongs)
+                                            player?.shuffleModeEnabled = true
                                         }
                                     },
                                     colors = IconButtonDefaults.iconButtonColors(
@@ -1554,5 +1571,12 @@ fun LibraryScreen(
             }
         )
     }
+
+    MusicInsightsScreen(
+        visible = showInsights,
+        onDismiss = { showInsights = false },
+        audioFiles = audioFiles,
+        getLocalized = getLocalized
+    )
 
 }
