@@ -1876,8 +1876,8 @@ fun LibrarySettingsSection(
     var exportPlaylists by remember { mutableStateOf(true) }
     var exportLyrics by remember { mutableStateOf(true) }
 
-    var totalSongs by remember { mutableStateOf(0) }
-    var totalSizeMb by remember { mutableStateOf(0f) }
+    var totalSongs by remember { mutableStateOf(settingsPrefs.getInt("cached_total_songs", viewModel.localAudioFiles.size)) }
+    var totalSizeMb by remember { mutableStateOf(settingsPrefs.getFloat("cached_total_size_mb", 0f)) }
     LaunchedEffect(viewModel.localAudioFiles.toList(), isScanning) {
         val filesCopy = viewModel.localAudioFiles.toList()
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -1893,8 +1893,14 @@ fun LibrarySettingsSection(
                     // ignore
                 }
             }
-            totalSongs = allSongs.size
-            totalSizeMb = totalBytes.toFloat() / (1024 * 1024)
+            val count = allSongs.size
+            val size = totalBytes.toFloat() / (1024 * 1024)
+            totalSongs = count
+            totalSizeMb = size
+            settingsPrefs.edit()
+                .putInt("cached_total_songs", count)
+                .putFloat("cached_total_size_mb", size)
+                .apply()
         }
     }
 

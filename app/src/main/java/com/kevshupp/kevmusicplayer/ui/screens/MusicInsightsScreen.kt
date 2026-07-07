@@ -109,14 +109,18 @@ fun MusicInsightsScreen(
         """.trimIndent()
     }
 
-    Box(
+    Surface(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
-            .navigationBarsPadding()
+            .navigationBarsPadding(),
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
             // Header Row
             Row(
                 modifier = Modifier
@@ -136,7 +140,8 @@ fun MusicInsightsScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Estadísticas", "Insights"),
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold)
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                 }
 
@@ -250,7 +255,10 @@ fun MusicInsightsScreen(
                     } else {
                         Card(
                             shape = RoundedCornerShape(24.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 topSongs.forEachIndexed { index, song ->
@@ -303,6 +311,7 @@ fun MusicInsightsScreen(
                                                 text = song.title,
                                                 fontSize = 14.sp,
                                                 fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
@@ -346,7 +355,10 @@ fun MusicInsightsScreen(
                     } else {
                         Card(
                             shape = RoundedCornerShape(24.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 topArtists.forEachIndexed { index, (artist, plays) ->
@@ -385,6 +397,7 @@ fun MusicInsightsScreen(
                                             text = artist,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface,
                                             modifier = Modifier.weight(1f),
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -418,7 +431,10 @@ fun MusicInsightsScreen(
 
                     Card(
                         shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     ) {
                         Column(
                             modifier = Modifier.padding(20.dp),
@@ -456,9 +472,19 @@ fun MusicInsightsScreen(
                                                 modifier = Modifier.size(16.dp)
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(text = label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = label,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
                                         }
-                                        Text(text = "$percentage%", fontSize = 13.sp, fontWeight = FontWeight.Black)
+                                        Text(
+                                            text = "$percentage%",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
                                     }
 
                                     // Bar representation
@@ -493,6 +519,7 @@ fun MusicInsightsScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
+    }
     }
 }
 

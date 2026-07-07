@@ -62,6 +62,7 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
 
 ### E1. Panel de Estadísticas y Resumen (`MusicInsightsScreen`)
 - **Visualización de Resumen de Biblioteca (v1.2.14):** Integra el diálogo modal `MusicInsightsScreen` que calcula y presenta estadísticas en tiempo real de la biblioteca, tales como total de canciones, tiempo total de reproducción acumulado, las 5 canciones más reproducidas, distribución de géneros más escuchados, y un botón para compartir el resumen en redes. Se abre mediante un acceso rápido con icono de estadísticas en la cabecera de la biblioteca.
+- **Correcciones de Color en Tema Oscuro (v1.2.15):** Se resolvieron problemas de visibilidad de texto donde los nombres de canciones, artistas y textos de distribución de tiempo se mostraban en negro e ilegibles al usar temas oscuros (Cyberpunk, Obsidian, etc.), envolviendo la pantalla en un contenedor `Surface` y aplicando colores explícitos del tema.
 
 ### E. Editor de Metadatos y Escritura Física
 - **Integración jaudiotagger:** Configurado en "modo Android" (`TagOptionSingleton.getInstance().setAndroid(true)`) para manejar la edición de metadatos de audio en el almacenamiento local.
@@ -154,6 +155,7 @@ data class AudioFile(
    - El escaneo inicial de `AudioScanner` realiza cargas diferidas (lazy loads) de `ReplayGain` durante la reproducción, reduciendo drásticamente el uso de recursos al iniciar la aplicación.
    - Para evitar la contención del hilo principal y problemas de ANR durante el arranque en frío (cold-start), la conexión del `MediaBrowser` y el inicio de escaneo de archivos están diferidos hasta que finaliza el flujo de bienvenida (`OnboardingFlow`).
    - Se han eliminado las llamadas disruptivas a `Activity.recreate()` al restaurar copias de seguridad u omitir/configurar temas en el Onboarding, sustituyéndolas por recomposiciones puramente reactivas guiadas por estados de Compose.
+   - **Caché de Estadísticas de Biblioteca (v1.2.15):** Para evitar la carga lenta y el molesto parpadeo de "0 canciones" al abrir la configuración de la biblioteca, la información de total de canciones y espacio en disco se almacena en caché local (`SharedPreferences`) y se actualiza asíncronamente en segundo plano.
 2. **Límites de Comunicación IPC:**
    - Para evitar excepciones `TransactionTooLargeException` al pasar listas extensas de reproducción mediante IPC a Media3, se limita la cola interna a un máximo de **1500 canciones** en memoria y se utiliza paginación (`getAudioFilesPaged`) para búsquedas en la UI.
 3. **Consistencia de Portadas de Álbum (Covers):**
