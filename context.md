@@ -35,6 +35,7 @@ graph TD
 - **Optimización de Lectura:** Para evitar lentitud en el escaneo al abrir la aplicación, el `AudioScanner` cruza los datos con la base de datos Room (`existingFiles`) para recuperar de forma instantánea el estado de `ReplayGain` y letras ya procesados.
 - **Filtro de Carpeta de Música Activa:** Si el usuario ha seleccionado un directorio de música específico (`music_folder_path`), el escaneo filtra dinámicamente y descarta cualquier archivo de audio fuera de esa ruta antes de escribir en SQLite, sincronizando la base de datos Room y previniendo que aparezcan archivos ajenos (como audios de WhatsApp) en el reproductor.
 - **Exclusión de Carpetas:** Permite a los usuarios seleccionar directorios específicos de su almacenamiento local para ignorarlos de la biblioteca musical de manera persistente.
+- **Sincronización en Inicio (v1.2.14):** El método `scanFiles()` realiza un `join()` en la tarea de carga de base de datos inicial (`initialDbLoadJob`) para evitar condiciones de carrera (race conditions) en el inicio en frío de la app, previniendo que escaneos rápidos automáticos borren la caché local existente al asumir que la base de datos está vacía.
 
 ### B. Servicio de Reproducción y Audio FX (`PlaybackService`)
 - **Estabilidad en Segundo Plano:** Mantiene un `WakeLock` parcial durante la reproducción activa para evitar suspensiones del sistema.
@@ -46,6 +47,7 @@ graph TD
   - *LoudnessEnhancer:* Normalizador de volumen por hardware.
 - **Normalización ReplayGain:** Lee de forma perezosa (lazy) las etiquetas físicas (`REPLAYGAIN_TRACK_GAIN`, `REPLAYGAIN_ALBUM_GAIN`) de los archivos de audio en un hilo de fondo (`Dispatchers.IO`), calcula la escala y ajusta el volumen del canal de `ExoPlayer` de manera dinámica.
 - **Fundido Cruzado (Crossfade):** Transición suave por software que desvanece de manera gradual el volumen (Fade Out / Fade In) al cambiar de pista de forma manual o automática.
+- **Modo Aleatorio Verdadero (v1.2.14):** Los controles de reproducción aleatoria de la biblioteca eligen un primer tema al azar y activan `player.shuffleModeEnabled = true` en el reproductor en lugar de pasar una cola pre-mezclada estática. Esto sincroniza la interfaz del reproductor (marcando el botón aleatorio como activo) y activa el orden de mezcla nativo de ExoPlayer.
 
 ### C. Sistema de Playlists Inteligentes (Smart Playlists)
 A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinámicas y se evalúan en tiempo de ejecución a partir de reglas almacenadas en formato JSON:
@@ -57,6 +59,9 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
 - **Descargas LRC:** Conectividad con la API pública de **LrcLib** para buscar canciones por texto de metadatos (`Artist + Title`). Prioriza letras con marcas de tiempo sincronizadas.
 - **Procesador LRC:** Parser integrado que decodifica cadenas de texto en formato estandarizado `[mm:ss.xx]` a marcas de tiempo de milisegundos (`LyricLine`).
 - **Traducciones Locales y Auto-Traducción:** Soporte integrado para almacenar traducciones personalizadas mapeadas a cada marca de tiempo mediante serialización JSON. Cuenta con un sistema unificado y automático que comprueba la canción en reproducción y traduce de manera automática al idioma del sistema las letras descargadas usando APIs de traducción con fallbacks locales.
+
+### E1. Panel de Estadísticas y Resumen (`MusicInsightsScreen`)
+- **Visualización de Resumen de Biblioteca (v1.2.14):** Integra el diálogo modal `MusicInsightsScreen` que calcula y presenta estadísticas en tiempo real de la biblioteca, tales como total de canciones, tiempo total de reproducción acumulado, las 5 canciones más reproducidas, distribución de géneros más escuchados, y un botón para compartir el resumen en redes. Se abre mediante un acceso rápido con icono de estadísticas en la cabecera de la biblioteca.
 
 ### E. Editor de Metadatos y Escritura Física
 - **Integración jaudiotagger:** Configurado en "modo Android" (`TagOptionSingleton.getInstance().setAndroid(true)`) para manejar la edición de metadatos de audio en el almacenamiento local.
@@ -92,6 +97,8 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
   - **Detección Expandida (v1.2.5):** Ahora captura fallos de red y de parseo de JSON en las APIs de traducción de letras (Google Translate y MyMemory fallback), errores de E/S física o base de datos en el cálculo de ReplayGain, excepciones críticas al importar o exportar copias de seguridad de la aplicación, fallos al inicializar o liberar la conexión de `MediaBrowser`, y errores en el parseo de directorios excluidos o de carga inicial de SQLite en Room.
   - **Manejo Global de Corrutinas:** Proporciona un `CoroutineExceptionHandler` integrado que captura y registra de forma centralizada cualquier excepción no controlada en hilos o ámbitos asíncronos (como el de `PlaybackService`).
   - **API sin Contexto:** Cuenta con sobrecargas de registro estáticas que infieren el contexto global de la aplicación (`KevMusicPlayerApplication.instance`), lo que facilita la instrumentación limpia del código desde clases utilitarias o repositorios.
+  - **Filtros de Logs de Diagnóstico (v1.2.14):** Las entradas normales de tipo `[INFO]` (logs rutinarios de eventos) se limitan al Logcat de Android y no se escriben en el archivo local `telemetry_errors.log`, reservando el archivo persistente únicamente para errores, advertencias y anomalías reales.
+  - **Monitoreo del Renderizador de Audio (v1.2.14):** Implementa un `AnalyticsListener` en `PlaybackService` para capturar y registrar anomalías graves en el pipeline de renderizado y decodificación de audio (`onAudioSinkError`, `onAudioCodecError`, y `onAudioUnderrun` de larga duración) directo al registro de telemetría de errores.
   - Almacena de forma persistente las trazas de error con marcas de tiempo en el archivo `telemetry_errors.log` dentro del directorio de almacenamiento privado de la aplicación (`filesDir`), si el usuario lo habilita en la configuración.
   - Ofrece una interfaz de usuario integrada para visualizar los logs en tiempo real, vaciar el registro y copiar el volcado de errores formateados al portapapeles para su fácil diagnóstico y resolución por parte del equipo de soporte.
 
