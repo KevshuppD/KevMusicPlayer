@@ -1,6 +1,7 @@
 package com.kevshupp.kevmusicplayer.ui.screens
 
 import android.content.Intent
+import android.graphics.Bitmap
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,9 +20,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -31,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
 import com.kevshupp.kevmusicplayer.data.AudioFile
+import kotlinx.coroutines.launch
 import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,6 +50,8 @@ fun MusicInsightsScreen(
     if (!visible) return
 
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val graphicsLayer = rememberGraphicsLayer()
 
     // Calculations
     val playedSongs = remember(audioFiles) {
@@ -147,11 +155,41 @@ fun MusicInsightsScreen(
 
                 IconButton(
                     onClick = {
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, shareStatsText)
+                        coroutineScope.launch {
+                            try {
+                                val imageBitmap = graphicsLayer.toImageBitmap()
+                                val bitmap = imageBitmap.asAndroidBitmap()
+                                
+                                // Guardar temporalmente en caché
+                                val cacheFile = java.io.File(context.cacheDir, "music_insights.png")
+                                java.io.FileOutputStream(cacheFile).use { out ->
+                                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                                }
+                                
+                                val authority = "${context.packageName}.fileprovider"
+                                val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, cacheFile)
+                                
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "image/png"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, getLocalized("Compartir Estadísticas", "Share Insights")))
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                                    context,
+                                    "ShareInsightsImage",
+                                    "Error capturing insights image",
+                                    e
+                                )
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, shareStatsText)
+                                }
+                                context.startActivity(Intent.createChooser(intent, getLocalized("Compartir Estadísticas", "Share Insights")))
+                            }
                         }
-                        context.startActivity(Intent.createChooser(intent, getLocalized("Compartir Estadísticas", "Share Insights")))
                     },
                     colors = IconButtonDefaults.iconButtonColors(
                         containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
@@ -165,13 +203,26 @@ fun MusicInsightsScreen(
                 }
             }
 
-            Column(
+            val backgroundColor = MaterialTheme.colorScheme.background
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(backgroundColor)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .drawWithContent {
+                            graphicsLayer.record {
+                                this@drawWithContent.drawContent()
+                            }
+                            drawLayer(graphicsLayer)
+                        }
+                        .background(backgroundColor)
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
                 // Banner / Card Premium Overview
                 Box(
                     modifier = Modifier
@@ -376,20 +427,12 @@ fun MusicInsightsScreen(
                                             modifier = Modifier.width(36.dp)
                                         )
 
-                                        Box(
+                                        ArtistImage(
+                                            artist = artist,
                                             modifier = Modifier
                                                 .size(40.dp)
                                                 .clip(CircleShape)
-                                                .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.Person,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.secondary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
+                                        )
 
                                         Spacer(modifier = Modifier.width(12.dp))
 
@@ -516,7 +559,18 @@ fun MusicInsightsScreen(
                     }
                 }
 
+                Text(
+                    text = "KevMusicPlayer",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+
                 Spacer(modifier = Modifier.height(24.dp))
+                }
             }
         }
     }

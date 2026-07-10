@@ -719,20 +719,12 @@ fun ArtistListView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Circle Profile style for Artists
-                Box(
+                ArtistImage(
+                    artist = artistName,
                     modifier = Modifier
                         .size(52.dp)
                         .clip(CircleShape)
-                        .background(getGradientForString(artistName)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Person,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
+                )
 
                 Spacer(modifier = Modifier.width(16.dp))
 
@@ -1898,3 +1890,56 @@ private fun OptionItem(
         }
     }
 }
+
+@Composable
+fun ArtistImage(
+    artist: String,
+    modifier: Modifier = Modifier,
+    contentDescription: String? = null
+) {
+    val context = LocalContext.current
+    var imageFile by remember(artist) {
+        mutableStateOf(com.kevshupp.kevmusicplayer.data.ArtistImageHelper.getArtistImageFile(context, artist))
+    }
+    var triggerDownload by remember(artist) { mutableStateOf(!imageFile.exists()) }
+
+    LaunchedEffect(artist, triggerDownload) {
+        if (triggerDownload) {
+            val file = com.kevshupp.kevmusicplayer.data.ArtistImageHelper.downloadArtistImage(context, artist)
+            if (file != null && file.exists()) {
+                imageFile = file
+            }
+        }
+    }
+
+    if (imageFile.exists() && imageFile.length() > 0) {
+        SubcomposeAsyncImage(
+            model = imageFile,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+            error = {
+                ArtistPlaceholderIcon(artist, modifier)
+            }
+        )
+    } else {
+        ArtistPlaceholderIcon(artist, modifier)
+    }
+}
+
+@Composable
+private fun ArtistPlaceholderIcon(artist: String, modifier: Modifier) {
+    Box(
+        modifier = modifier
+            .background(getGradientForString(artist)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Person,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.fillMaxSize(0.5f)
+        )
+    }
+}
+

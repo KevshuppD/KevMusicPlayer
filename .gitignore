@@ -14,3 +14,9 @@
 .cxx
 local.properties
 .kotlin/
+
+# Keystores privados (conservando el shared.keystore local)
+*.keystore
+!shared.keystore
+*.keystore.base64
+

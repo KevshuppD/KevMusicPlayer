@@ -38,8 +38,17 @@ jobs:
             echo "Ref $REF_NAME is not a version tag, keeping default versionName"
           fi
 
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
+
       - name: Build Release APK
         run: ./gradlew assembleRelease
+        env:
+          RELEASE_KEYSTORE_FILE: "release.keystore"
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
       - name: Rename APK
         run: |

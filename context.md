@@ -63,6 +63,7 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
 ### E1. Panel de Estadísticas y Resumen (`MusicInsightsScreen`)
 - **Visualización de Resumen de Biblioteca (v1.2.14):** Integra el diálogo modal `MusicInsightsScreen` que calcula y presenta estadísticas en tiempo real de la biblioteca, tales como total de canciones, tiempo total de reproducción acumulado, las 5 canciones más reproducidas, distribución de géneros más escuchados, y un botón para compartir el resumen en redes. Se abre mediante un acceso rápido con icono de estadísticas en la cabecera de la biblioteca.
 - **Correcciones de Color en Tema Oscuro (v1.2.15):** Se resolvieron problemas de visibilidad de texto donde los nombres de canciones, artistas y textos de distribución de tiempo se mostraban en negro e ilegibles al usar temas oscuros (Cyberpunk, Obsidian, etc.), envolviendo la pantalla en un contenedor `Surface` y aplicando colores explícitos del tema.
+- **Compartir Resumen como Imagen:** El botón de compartir ahora captura visualmente el contenedor del resumen musical mediante `GraphicsLayer` y Compose 1.7, guardándolo como un archivo PNG en la caché y compartiéndolo a través del `FileProvider` con la marca de agua "KevMusicPlayer" y un fallback automático de texto si ocurre algún error.
 
 ### E. Editor de Metadatos y Escritura Física
 - **Integración jaudiotagger:** Configurado en "modo Android" (`TagOptionSingleton.getInstance().setAndroid(true)`) para manejar la edición de metadatos de audio en el almacenamiento local.
@@ -117,6 +118,12 @@ A diferencia de las listas manuales ordinarias, las *Smart Playlists* son dinám
 - **Consulta de Versión en Arranque:** Cada vez que se abre la aplicación, realiza una consulta en segundo plano a la API pública de GitHub (`/releases/latest`) para comprobar si existe una versión (`versionName`) superior a la actualmente instalada.
 - **Descarga Directa con Progreso:** Si se detecta una nueva versión, muestra un diálogo de confirmación MD3 con el changelog de novedades. Si el usuario acepta, descarga el APK directamente en un hilo de fondo (`Dispatchers.IO`) mostrando una barra de progreso en la UI.
 - **Lanzador del Instalador:** Guarda el archivo temporalmente en la caché de la aplicación y ejecuta la instalación del APK compartiéndolo mediante `FileProvider` con los permisos necesarios, permitiendo al usuario actualizar la aplicación sin desinstalarla.
+
+### L. Sistema de Imágenes de Artistas Automático (`ArtistImageHelper`)
+- **Descarga de Retratos de Artistas:** Al renderizar la lista de artistas en la biblioteca o en el resumen musical, el componente `ArtistImage` comprueba de forma asíncrona si existe una foto de perfil del artista guardada localmente.
+- **Integración con Deezer API:** Si el retrato no existe localmente, realiza una petición en segundo plano (`Dispatchers.IO`) a la API pública de Deezer, descarga el retrato en alta resolución y lo almacena localmente en formato JPEG en el directorio privado de la aplicación (`artist_images/`).
+- **Control de Peticiones Duplicadas:** Utiliza cachés en memoria para evitar llamadas redundantes de descarga a la red para artistas que ya se están descargando o cuya búsqueda ha fallado en la sesión actual.
+- **Renderizado Reactivo y Fallbacks:** El componente se integra de manera transparente en la interfaz de Jetpack Compose, recargando reactivamente la imagen en cuanto se completa la descarga y cayendo al diseño de gradiente y avatar estándar como fallback.
 
 ---
 
