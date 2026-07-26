@@ -272,7 +272,7 @@ fun LibraryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .navigationBarsPadding()
-                .padding(bottom = if (player?.currentMediaItem != null) 160.dp else 90.dp)
+                .padding(bottom = if (player?.currentMediaItem != null) 164.dp else 88.dp)
         ) {
             if (currentSubView == null) {
                 // Primary Header
@@ -1163,7 +1163,7 @@ fun LibraryScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(start = 16.dp, end = 16.dp, bottom = 96.dp)
+                        .padding(start = 16.dp, end = 16.dp, bottom = 92.dp)
                         .fillMaxWidth()
                 ) {
                     MiniPlayer(
@@ -1197,7 +1197,7 @@ fun LibraryScreen(
             exit = if (disableAnims) ExitTransition.None else (slideOutVertically(targetOffsetY = { it }) + fadeOut()),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = if (player?.currentMediaItem != null) 176.dp else 96.dp)
+                .padding(bottom = if (player?.currentMediaItem != null) 172.dp else 92.dp)
                 .padding(horizontal = 24.dp)
         ) {
             Surface(

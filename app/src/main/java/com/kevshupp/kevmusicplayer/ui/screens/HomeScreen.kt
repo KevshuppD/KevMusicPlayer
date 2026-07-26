@@ -196,7 +196,7 @@ fun HomeScreen(
                     .fillMaxWidth()
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
-                    .padding(bottom = if (player?.currentMediaItem != null) 160.dp else 90.dp)
+                    .padding(bottom = if (player?.currentMediaItem != null) 164.dp else 88.dp)
             ) {
                 // Quick Actions Grid (Shuffle, Favorites, History, Recently Added)
                 Column(
@@ -306,7 +306,7 @@ fun HomeScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(start = 16.dp, end = 16.dp, bottom = 96.dp) // Offset above the BottomNavBar
+                        .padding(start = 16.dp, end = 16.dp, bottom = 92.dp) // Offset above the BottomNavBar
                         .fillMaxWidth()
                 ) {
                     MiniPlayer(

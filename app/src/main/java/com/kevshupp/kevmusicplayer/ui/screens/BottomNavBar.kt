@@ -33,15 +33,15 @@ fun BottomNavBar(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(80.dp),
+            .navigationBarsPadding(),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     ) {
         Row(
             modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
+                .fillMaxWidth()
+                .height(76.dp)
                 .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
@@ -53,9 +53,9 @@ fun BottomNavBar(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(16.dp))
                     .clickable { onTabSelected("home") }
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -63,12 +63,12 @@ fun BottomNavBar(
                     imageVector = Icons.Rounded.Home,
                     contentDescription = "Home",
                     tint = if (isHome) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(28.dp)
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = homeText,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     fontWeight = if (isHome) FontWeight.Bold else FontWeight.Medium,
                     color = if (isHome) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
@@ -78,9 +78,9 @@ fun BottomNavBar(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(16.dp))
                     .clickable { onTabSelected("library") }
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -88,12 +88,12 @@ fun BottomNavBar(
                     imageVector = Icons.Rounded.LibraryMusic,
                     contentDescription = "Library",
                     tint = if (isLibrary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(28.dp)
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = libraryText,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     fontWeight = if (isLibrary) FontWeight.Bold else FontWeight.Medium,
                     color = if (isLibrary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
