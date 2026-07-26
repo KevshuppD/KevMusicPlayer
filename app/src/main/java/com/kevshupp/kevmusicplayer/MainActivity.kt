@@ -46,6 +46,7 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 import com.kevshupp.kevmusicplayer.ui.screens.LibraryScreen
+import com.kevshupp.kevmusicplayer.ui.screens.HomeScreen
 import com.kevshupp.kevmusicplayer.ui.screens.PlayerScreen
 import com.kevshupp.kevmusicplayer.ui.screens.SettingsScreen
 import com.kevshupp.kevmusicplayer.ui.theme.KevMusicPlayerTheme
@@ -157,6 +158,8 @@ sealed interface Screen : NavKey {
     @Serializable
     data object PermissionRequest : Screen
     @Serializable
+    data object Home : Screen
+    @Serializable
     data object Library : Screen
     @Serializable
     data class Player(val fileId: Long) : Screen
@@ -170,12 +173,25 @@ fun AppNavigation() {
     val context = LocalContext.current
     val settingsPrefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
     val initialScreen = remember(context) {
-        if (checkInitialPermissions(context)) Screen.Library else Screen.PermissionRequest
+        if (checkInitialPermissions(context)) Screen.Home else Screen.PermissionRequest
     }
     val backStack = rememberNavBackStack(initialScreen as NavKey)
     val viewModel: MediaBrowserViewModel = viewModel()
     val scope = rememberCoroutineScope()
     val listDetailStrategy = rememberListDetailSceneStrategy<NavKey>()
+
+    val switchToTab: (Screen) -> Unit = { newScreen ->
+        val newList = backStack.toMutableList()
+        val homeOrLibIndex = newList.indexOfFirst { it is Screen.Home || it is Screen.Library }
+        if (homeOrLibIndex != -1) {
+            newList[homeOrLibIndex] = newScreen
+            backStack.clear()
+            backStack.addAll(newList as List<NavKey>)
+        } else {
+            backStack.clear()
+            backStack.add(newScreen)
+        }
+    }
 
     // Intercept system back gestures to pop screens from backstack instead of closing the app!
     BackHandler(enabled = backStack.size > 1) {
@@ -242,11 +258,45 @@ fun AppNavigation() {
                     PermissionRequestScreen(
                         onPermissionsGranted = {
                             backStack.clear()
-                            backStack.add(Screen.Library)
+                            backStack.add(Screen.Home)
                             if (!settingsPrefs.getBoolean("is_first_run", true)) {
                                 viewModel.connect()
                             }
                         }
+                    )
+                }
+                entry<Screen.Home>(
+                    metadata = ListDetailSceneStrategy.listPane(
+                        detailPlaceholder = {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("Select a song to start playing")
+                            }
+                        }
+                    )
+                ) {
+                    HomeScreen(
+                        audioFiles = viewModel.localAudioFiles,
+                        player = viewModel.browser.value,
+                        onFileClick = { file, customQueue ->
+                            viewModel.playFile(file, customQueue)
+                            if (backStack.none { it is Screen.Player && it.fileId == file.id }) {
+                                backStack.add(Screen.Player(file.id))
+                            }
+                        },
+                        onMiniPlayerClick = {
+                            val currentId = viewModel.browser.value?.currentMediaItem?.mediaId?.toLongOrNull() ?: 0L
+                            if (backStack.none { it is Screen.Player && it.fileId == currentId }) {
+                                backStack.add(Screen.Player(currentId))
+                            }
+                        },
+                        onSettingsClick = {
+                            backStack.add(Screen.Settings)
+                        },
+                        onNavigateToLibrary = {
+                            switchToTab(Screen.Library)
+                        },
+                        viewModel = viewModel,
+                        isActive = backStack.lastOrNull() == Screen.Home
                     )
                 }
                 entry<Screen.Library>(
@@ -276,6 +326,9 @@ fun AppNavigation() {
                         },
                         onSettingsClick = {
                             backStack.add(Screen.Settings)
+                        },
+                        onNavigateToHome = {
+                            switchToTab(Screen.Home)
                         },
                         enabledTabs = viewModel.enabledTabs.value,
                         sortBy = viewModel.sortBy.value,
@@ -326,8 +379,8 @@ fun AppNavigation() {
 
         var isFirstRun by remember { mutableStateOf(settingsPrefs.getBoolean("is_first_run", true)) }
         val permissionsGranted = checkInitialPermissions(context)
-        val hasLibraryScreen = backStack.any { it is Screen.Library }
-        val showOnboarding = isFirstRun && permissionsGranted && hasLibraryScreen
+        val hasMainScreen = backStack.any { it is Screen.Library || it is Screen.Home }
+        val showOnboarding = isFirstRun && permissionsGranted && hasMainScreen
 
         if (showOnboarding) {
             OnboardingFlow(

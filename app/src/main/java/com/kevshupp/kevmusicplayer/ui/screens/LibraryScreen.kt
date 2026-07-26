@@ -101,6 +101,7 @@ fun LibraryScreen(
     player: Player?,
     onMiniPlayerClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    onNavigateToHome: () -> Unit,
     enabledTabs: List<String>,
     sortBy: String,
     viewModel: MediaBrowserViewModel? = null,
@@ -271,7 +272,7 @@ fun LibraryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .navigationBarsPadding()
-                .padding(bottom = if (player?.currentMediaItem != null) 92.dp else 0.dp)
+                .padding(bottom = if (player?.currentMediaItem != null) 160.dp else 90.dp)
         ) {
             if (currentSubView == null) {
                 // Primary Header
@@ -1162,7 +1163,7 @@ fun LibraryScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                        .padding(start = 16.dp, end = 16.dp, bottom = 96.dp)
                         .fillMaxWidth()
                 ) {
                     MiniPlayer(
@@ -1173,6 +1174,17 @@ fun LibraryScreen(
                 }
             }
         }
+
+        // Glassmorphic Bottom Navigation Bar
+        BottomNavBar(
+            currentScreen = "library",
+            onTabSelected = { tab ->
+                if (tab == "home") {
+                    onNavigateToHome()
+                }
+            },
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
 
         // Settings are now handled by full screen SettingsScreen
 
@@ -1185,7 +1197,7 @@ fun LibraryScreen(
             exit = if (disableAnims) ExitTransition.None else (slideOutVertically(targetOffsetY = { it }) + fadeOut()),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = if (player?.currentMediaItem != null) 100.dp else 24.dp)
+                .padding(bottom = if (player?.currentMediaItem != null) 176.dp else 96.dp)
                 .padding(horizontal = 24.dp)
         ) {
             Surface(
