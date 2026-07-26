@@ -126,6 +126,7 @@ fun SettingsScreen(
         listOf(
             Triple("general", getLocalized("General", "General"), Icons.Rounded.Settings),
             Triple("audio", getLocalized("Audio", "Audio"), Icons.Rounded.Equalizer),
+            Triple("performance", getLocalized("Rendimiento", "Performance"), Icons.Rounded.Speed),
             Triple("system", getLocalized("Sistema", "System"), Icons.Rounded.Tune),
             Triple("library", getLocalized("Biblioteca", "Library"), Icons.Rounded.LibraryMusic),
             Triple("about", getLocalized("Acerca de", "About"), Icons.Rounded.Info)
@@ -203,7 +204,8 @@ fun SettingsScreen(
         includeSettings: Boolean = true,
         includeEqualizer: Boolean = true,
         includePlaylists: Boolean = true,
-        includeLyrics: Boolean = true
+        includeLyrics: Boolean = true,
+        includeStatistics: Boolean = true
     ) {
         try {
             val folderUri = Uri.parse(folderUriStr)
@@ -229,6 +231,7 @@ fun SettingsScreen(
                         includeEqualizer = includeEqualizer,
                         includePlaylists = includePlaylists,
                         includeLyrics = includeLyrics,
+                        includeStatistics = includeStatistics,
                         onSuccess = {
                             android.widget.Toast.makeText(context, getLocalized("Copia de seguridad guardada y sobrescrita con éxito en la carpeta fija", "Backup saved and overwritten successfully in the fixed folder"), android.widget.Toast.LENGTH_LONG).show()
                         },
@@ -467,12 +470,19 @@ fun SettingsScreen(
                                 getLocalized = getLocalized
                             )
                         }
-                        "system" -> {
-                            SystemSettingsSection(
+                        "performance" -> {
+                            PerformanceSettingsSection(
                                 selectedRefreshRate = selectedRefreshRate,
                                 onRefreshRateSelected = { selectedRefreshRate = it },
                                 disableAnimations = disableAnimations,
                                 onDisableAnimationsChanged = { disableAnimations = it },
+                                getLocalized = getLocalized,
+                                settingsPrefs = settingsPrefs,
+                                context = context
+                            )
+                        }
+                        "system" -> {
+                            SystemSettingsSection(
                                 audioGranted = audioGranted,
                                 notificationGranted = notificationGranted,
                                 isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,

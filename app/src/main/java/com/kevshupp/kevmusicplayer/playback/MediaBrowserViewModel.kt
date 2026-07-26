@@ -284,6 +284,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             getApplication(),
             ComponentName(getApplication(), PlaybackService::class.java)
         )
+        
+        // Explicitly start the service to ensure it transitions to the started state and doesn't get destroyed on client unbind
+        try {
+            val startIntent = android.content.Intent(getApplication(), PlaybackService::class.java)
+            getApplication<android.app.Application>().startService(startIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         val future = MediaBrowser.Builder(getApplication(), sessionToken).buildAsync()
         browserFuture = future
         
@@ -303,6 +312,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         savePlaybackState()
                         fetchLyricsForCurrentSong()
+                        preloadUpcomingArtwork()
                         if (mediaItem != null) {
                             val id = mediaItem.mediaId.toLongOrNull()
                             if (id != null) {
@@ -389,7 +399,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     fun restorePlaybackState() {
         val b = browser.value ?: return
-        if (b.currentMediaItem != null) return
+        if (b.currentMediaItem != null || b.mediaItemCount > 0) return
 
         val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
         val lastShuffleEnabled = prefs.getBoolean("last_shuffle_enabled", false)
@@ -409,6 +419,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 if (localAudioFiles.isEmpty()) return@launch
+
+                // Double check to ensure player hasn't synced/restored its queue during the delay
+                if (b.currentMediaItem != null || b.mediaItemCount > 0) return@launch
 
                 val (mediaItems, finalActiveIndex) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     val songsMap = localAudioFiles.associateBy { it.id }
@@ -488,6 +501,47 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     val safeIndex = finalActiveIndex.coerceIn(0, mediaItems.size - 1)
                     b.seekTo(safeIndex, lastPosition)
                     b.prepare()
+                }
+            }
+        }
+    }
+
+    fun preloadUpcomingArtwork() {
+        val b = browser.value ?: return
+        val context = getApplication<Application>()
+        val prefs = context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+        val preloadCount = prefs.getInt("preload_art_count", 5)
+        if (preloadCount <= 0) return
+
+        val totalItems = b.mediaItemCount
+        if (totalItems <= 1) return
+        val currentIndex = b.currentMediaItemIndex
+
+        val urisToPreload = mutableListOf<String>()
+        for (i in 1..preloadCount) {
+            val targetIndex = (currentIndex + i) % totalItems
+            if (targetIndex == currentIndex) break
+            if (targetIndex in 0 until totalItems) {
+                try {
+                    val mediaItem = b.getMediaItemAt(targetIndex)
+                    val uriString = mediaItem.requestMetadata.mediaUri?.toString()
+                    if (uriString != null) {
+                        urisToPreload.add(uriString)
+                    }
+                } catch (e: Exception) {
+                    // Ignore
+                }
+            }
+        }
+
+        if (urisToPreload.isEmpty()) return
+
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            for (uriString in urisToPreload) {
+                try {
+                    com.kevshupp.kevmusicplayer.ui.screens.preloadAlbumArt(context, uriString)
+                } catch (e: Exception) {
+                    // Ignore errors during preload
                 }
             }
         }
@@ -613,16 +667,116 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         return@withContext null
                     }
                     
-                    // 2. Map scanned files to database entities, preserving custom edited lyrics
+                    // 2. Map scanned files to database entities, preserving custom edited lyrics and metadata
                     val entities = filteredScanned.map { file ->
                         val existing = existingEntities[file.id]
-                        file.copy(
-                            lyrics = existing?.lyrics ?: file.lyrics,
-                            translatedLyrics = existing?.translatedLyrics ?: file.translatedLyrics,
-                            playCount = existing?.playCount ?: 0,
-                            lastPlayed = existing?.lastPlayed ?: 0L,
-                            replayGain = existing?.replayGain ?: file.replayGain
-                        )
+                        if (existing != null && existing.dateModified == file.dateModified) {
+                            // File has not been modified on disk. Preserve user's database metadata edits!
+                            file.copy(
+                                title = existing.title,
+                                artist = existing.artist,
+                                album = existing.album,
+                                genre = existing.genre,
+                                year = existing.year,
+                                lyrics = existing.lyrics,
+                                translatedLyrics = existing.translatedLyrics,
+                                playCount = existing.playCount,
+                                lastPlayed = existing.lastPlayed,
+                                replayGain = existing.replayGain,
+                                track = existing.track
+                            )
+                        } else if (existing != null) {
+                            // File HAS been modified on disk. Read physical tags directly!
+                            var finalTitle = file.title
+                            var finalArtist = file.artist
+                            var finalAlbum = file.album
+                            var finalGenre = file.genre
+                            var finalYear = file.year
+                            var finalTrack = file.track
+                            try {
+                                val path = getPhysicalPath(getApplication(), file.id, file.uriString)
+                                if (!path.isNullOrBlank()) {
+                                    val f = File(path)
+                                    if (f.exists() && f.isFile) {
+                                        val audioFile = org.jaudiotagger.audio.AudioFileIO.read(f)
+                                        val tag = audioFile.tag
+                                        if (tag != null) {
+                                            val t = tag.getFirst(org.jaudiotagger.tag.FieldKey.TITLE)
+                                            if (!t.isNullOrBlank()) finalTitle = t
+                                            val a = tag.getFirst(org.jaudiotagger.tag.FieldKey.ARTIST)
+                                            if (!a.isNullOrBlank()) finalArtist = a
+                                            val al = tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM)
+                                            if (!al.isNullOrBlank()) finalAlbum = al
+                                            val g = tag.getFirst(org.jaudiotagger.tag.FieldKey.GENRE)
+                                            if (!g.isNullOrBlank()) finalGenre = g
+                                            val y = tag.getFirst(org.jaudiotagger.tag.FieldKey.YEAR)
+                                            if (!y.isNullOrBlank()) finalYear = y
+                                            val tr = tag.getFirst(org.jaudiotagger.tag.FieldKey.TRACK)
+                                            val parsedTrack = tr?.substringBefore('/')?.toIntOrNull() ?: 0
+                                            if (parsedTrack > 0) finalTrack = parsedTrack
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                            file.copy(
+                                title = finalTitle,
+                                artist = finalArtist,
+                                album = finalAlbum,
+                                genre = finalGenre,
+                                year = finalYear,
+                                lyrics = existing.lyrics,
+                                translatedLyrics = existing.translatedLyrics,
+                                playCount = existing.playCount,
+                                lastPlayed = existing.lastPlayed,
+                                replayGain = existing.replayGain,
+                                track = finalTrack
+                            )
+                        } else {
+                            // New file. Read physical tags directly to avoid MediaStore lag/incorrect tags on first scan
+                            var finalTitle = file.title
+                            var finalArtist = file.artist
+                            var finalAlbum = file.album
+                            var finalGenre = file.genre
+                            var finalYear = file.year
+                            var finalTrack = file.track
+                            try {
+                                val path = getPhysicalPath(getApplication(), file.id, file.uriString)
+                                if (!path.isNullOrBlank()) {
+                                    val f = File(path)
+                                    if (f.exists() && f.isFile) {
+                                        val audioFile = org.jaudiotagger.audio.AudioFileIO.read(f)
+                                        val tag = audioFile.tag
+                                        if (tag != null) {
+                                            val t = tag.getFirst(org.jaudiotagger.tag.FieldKey.TITLE)
+                                            if (!t.isNullOrBlank()) finalTitle = t
+                                            val a = tag.getFirst(org.jaudiotagger.tag.FieldKey.ARTIST)
+                                            if (!a.isNullOrBlank()) finalArtist = a
+                                            val al = tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM)
+                                            if (!al.isNullOrBlank()) finalAlbum = al
+                                            val g = tag.getFirst(org.jaudiotagger.tag.FieldKey.GENRE)
+                                            if (!g.isNullOrBlank()) finalGenre = g
+                                            val y = tag.getFirst(org.jaudiotagger.tag.FieldKey.YEAR)
+                                            if (!y.isNullOrBlank()) finalYear = y
+                                            val tr = tag.getFirst(org.jaudiotagger.tag.FieldKey.TRACK)
+                                            val parsedTrack = tr?.substringBefore('/')?.toIntOrNull() ?: 0
+                                            if (parsedTrack > 0) finalTrack = parsedTrack
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                            file.copy(
+                                title = finalTitle,
+                                artist = finalArtist,
+                                album = finalAlbum,
+                                genre = finalGenre,
+                                year = finalYear,
+                                track = finalTrack
+                            )
+                        }
                     }
                     
                     // 3. Write to Room database (single transaction cache sync)
@@ -660,6 +814,14 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     fun playFile(file: AudioFile, customQueue: List<AudioFile>? = null) {
         val b = browser.value ?: return
+
+        // Ensure the service is started
+        try {
+            val startIntent = android.content.Intent(getApplication(), PlaybackService::class.java)
+            getApplication<android.app.Application>().startService(startIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         
         val fullQueue = customQueue ?: localAudioFiles
         val fullIndex = fullQueue.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
@@ -941,6 +1103,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         includeEqualizer: Boolean = true,
         includePlaylists: Boolean = true,
         includeLyrics: Boolean = true,
+        includeStatistics: Boolean = true,
         onSuccess: () -> Unit,
         onError: (Exception) -> Unit
     ) {
@@ -1063,6 +1226,29 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     json.put("cached_songs", cachedSongsArray)
                 }
 
+                // 3.5. Export library songs statistics & metadata (for resumen musical and edits)
+                if (includeStatistics) {
+                    val librarySongsArray = JSONArray()
+                    allEntities.forEach { entity ->
+                        val songJson = JSONObject()
+                        songJson.put("id", entity.id)
+                        songJson.put("title", entity.title)
+                        songJson.put("artist", entity.artist)
+                        songJson.put("album", entity.album)
+                        songJson.put("genre", entity.genre)
+                        songJson.put("year", entity.year)
+                        songJson.put("track", entity.track)
+                        songJson.put("duration", entity.duration)
+                        songJson.put("playCount", entity.playCount)
+                        songJson.put("lastPlayed", entity.lastPlayed)
+                        if (entity.replayGain != null) {
+                            songJson.put("replayGain", entity.replayGain.toDouble())
+                        }
+                        librarySongsArray.put(songJson)
+                    }
+                    json.put("library_songs", librarySongsArray)
+                }
+
                 // 4. Export songs metadata mapping for backup portability
                 val idsToExport = mutableSetOf<Long>()
                 if (includePlaylists) {
@@ -1080,6 +1266,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         if (!entity.lyrics.isNullOrBlank() || !entity.translatedLyrics.isNullOrBlank()) {
                             idsToExport.add(entity.id)
                         }
+                    }
+                }
+                if (includeStatistics) {
+                    allEntities.forEach { entity ->
+                        idsToExport.add(entity.id)
                     }
                 }
                 
@@ -1302,6 +1493,54 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                 }
 
+                // 3.5. Restore library songs data (statistics, ReplayGain, custom metadata)
+                if (json.has("library_songs")) {
+                    val librarySongsArray = json.getJSONArray("library_songs")
+                    val songsToUpdate = mutableListOf<AudioFile>()
+                    for (i in 0 until librarySongsArray.length()) {
+                        val songJson = librarySongsArray.getJSONObject(i)
+                        val oldId = songJson.getLong("id")
+                        val newId = translateId(oldId)
+                        if (newId != null) {
+                            val localSong = currentSongs.find { it.id == newId }
+                            if (localSong != null) {
+                                var updated = localSong
+                                if (songJson.has("playCount")) {
+                                    updated = updated.copy(playCount = songJson.getInt("playCount"))
+                                }
+                                if (songJson.has("lastPlayed")) {
+                                    updated = updated.copy(lastPlayed = songJson.getLong("lastPlayed"))
+                                }
+                                if (songJson.has("replayGain") && !songJson.isNull("replayGain")) {
+                                    updated = updated.copy(replayGain = songJson.getDouble("replayGain").toFloat())
+                                }
+                                if (songJson.has("genre") && !songJson.isNull("genre")) {
+                                    updated = updated.copy(genre = songJson.getString("genre"))
+                                }
+                                if (songJson.has("year") && !songJson.isNull("year")) {
+                                    updated = updated.copy(year = songJson.getString("year"))
+                                }
+                                if (songJson.has("track")) {
+                                    updated = updated.copy(track = songJson.getInt("track"))
+                                }
+                                if (songJson.has("title") && !songJson.isNull("title")) {
+                                    updated = updated.copy(title = songJson.getString("title"))
+                                }
+                                if (songJson.has("artist") && !songJson.isNull("artist")) {
+                                    updated = updated.copy(artist = songJson.getString("artist"))
+                                }
+                                if (songJson.has("album") && !songJson.isNull("album")) {
+                                    updated = updated.copy(album = songJson.getString("album"))
+                                }
+                                songsToUpdate.add(updated)
+                            }
+                        }
+                    }
+                    if (songsToUpdate.isNotEmpty()) {
+                        audioDao.insertAll(songsToUpdate)
+                    }
+                }
+
                 // Reload localAudioFiles from database to sync current in-memory lists instantly!
                 val allEntities = audioDao.getAllAudioFiles()
                 val updatedFiles = allEntities
@@ -1401,6 +1640,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     includeEqualizer = true,
                     includePlaylists = true,
                     includeLyrics = true,
+                    includeStatistics = true,
                     onSuccess = {
                         settingsPrefs.edit().putLong("last_backup_time", System.currentTimeMillis()).apply()
                     },
@@ -1431,6 +1671,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                 includeEqualizer = true,
                                 includePlaylists = true,
                                 includeLyrics = true,
+                                includeStatistics = true,
                                 onSuccess = {
                                     settingsPrefs.edit().putLong("last_backup_time", System.currentTimeMillis()).apply()
                                 },
@@ -1746,6 +1987,19 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
                     if (success) {
                         successCount++
+                        // Update MediaStore columns for this song
+                        try {
+                            val values = android.content.ContentValues().apply {
+                                put(android.provider.MediaStore.Audio.Media.ALBUM, newAlbumName)
+                                if (newArtist.isNotBlank()) {
+                                    put(android.provider.MediaStore.Audio.Media.ARTIST, newArtist)
+                                }
+                            }
+                            context.contentResolver.update(android.net.Uri.parse(song.uriString), values, null, null)
+                            android.util.Log.d("MetadataWrite", "Successfully updated MediaStore album/artist columns for ${song.uriString}")
+                        } catch (e: Exception) {
+                            android.util.Log.e("MetadataWrite", "Failed to update MediaStore album/artist columns for song ${song.id}", e)
+                        }
                     } else {
                         failCount++
                     }
@@ -1767,10 +2021,13 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 for (song in songs) {
                     val entity = allEntities.find { it.id == song.id }
                     if (entity != null) {
+                        val physicalPath = getPhysicalPath(context, song.id, entity.uriString)
+                        val newModTime = if (physicalPath != null) File(physicalPath).lastModified() else 0L
                         updatedEntities.add(
                             entity.copy(
                                 album = newAlbumName,
-                                artist = if (newArtist.isNotBlank()) newArtist else entity.artist
+                                artist = if (newArtist.isNotBlank()) newArtist else entity.artist,
+                                dateModified = newModTime
                             )
                         )
                     }
@@ -1786,9 +2043,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         val index = localAudioFiles.indexOfFirst { it.id == song.id }
                         if (index != -1) {
                             val currentSong = localAudioFiles[index]
+                            val physicalPath = getPhysicalPath(context, song.id, currentSong.uriString)
+                            val newModTime = if (physicalPath != null) File(physicalPath).lastModified() else 0L
                             localAudioFiles[index] = currentSong.copy(
                                 album = newAlbumName,
-                                artist = if (newArtist.isNotBlank()) newArtist else currentSong.artist
+                                artist = if (newArtist.isNotBlank()) newArtist else currentSong.artist,
+                                dateModified = newModTime
                             )
                         }
                     }
@@ -2343,15 +2603,48 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     throw Exception("Failed to write physical tags")
                 }
 
+                // 1.5. Update metadata in Android system MediaStore columns
+                val targetUri = songEntity?.uriString ?: android.content.ContentUris.withAppendedId(
+                    android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                    songId
+                ).toString()
+                try {
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Audio.Media.TITLE, title)
+                        put(android.provider.MediaStore.Audio.Media.ARTIST, artist)
+                        put(android.provider.MediaStore.Audio.Media.ALBUM, album)
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                            put(android.provider.MediaStore.Audio.Media.GENRE, genre)
+                        }
+                    }
+                    context.contentResolver.update(android.net.Uri.parse(targetUri), values, null, null)
+                    android.util.Log.d("MetadataWrite", "Successfully updated MediaStore columns for $targetUri")
+                } catch (e: Exception) {
+                    android.util.Log.e("MetadataWrite", "Failed to update MediaStore columns, attempting without genre", e)
+                    try {
+                        val values = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.Audio.Media.TITLE, title)
+                            put(android.provider.MediaStore.Audio.Media.ARTIST, artist)
+                            put(android.provider.MediaStore.Audio.Media.ALBUM, album)
+                        }
+                        context.contentResolver.update(android.net.Uri.parse(targetUri), values, null, null)
+                    } catch (ex: Exception) {
+                        android.util.Log.e("MetadataWrite", "Failed to update MediaStore columns even without genre", ex)
+                    }
+                }
+
                 // 2. Update metadata in Room Database
                 val allEntities = audioDao.getAllAudioFiles()
                 val targetEntity = allEntities.find { it.id == songId }
+                val physicalPath = getPhysicalPath(context, songId, targetEntity?.uriString)
+                val newModTime = if (physicalPath != null) File(physicalPath).lastModified() else 0L
                 if (targetEntity != null) {
                     val updatedEntity = targetEntity.copy(
                         title = title,
                         artist = artist,
                         album = album,
-                        genre = genre
+                        genre = genre,
+                        dateModified = newModTime
                     )
                     songUriString = updatedEntity.uriString
                     audioDao.insertAll(listOf(updatedEntity))
@@ -2359,7 +2652,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
                 // 3. Clear/Update in-memory artwork cache
                 if (coverBytes != null && songUriString != null) {
-                    com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(songUriString, coverBytes)
+                    val bitmap = android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
+                    if (bitmap != null) {
+                        com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(songUriString, bitmap)
+                    }
                 }
 
                 // 4. Update in-memory localAudioFiles on Main thread to instantly update UI
@@ -2373,7 +2669,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             artist = artist,
                             album = album,
                             genre = genre,
-                            playCount = currentSong.playCount
+                            playCount = currentSong.playCount,
+                            dateModified = newModTime
                         )
                     }
                     
@@ -2499,7 +2796,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     if (success) {
                         successCount++
                         // Update in-memory artwork cache
-                        com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, coverBytes)
+                        val bitmap = android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
+                        if (bitmap != null) {
+                            com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, bitmap)
+                        }
                     } else {
                         failCount++
                     }
@@ -2630,7 +2930,23 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         successCount++
                         // Update in-memory artwork cache if new cover provided
                         if (coverBytes != null) {
-                            com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, coverBytes)
+                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
+                            if (bitmap != null) {
+                                com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, bitmap)
+                            }
+                        }
+                        // Update system MediaStore columns
+                        try {
+                            val values = android.content.ContentValues().apply {
+                                put(android.provider.MediaStore.Audio.Media.ALBUM, newAlbumName)
+                                if (newArtist.isNotBlank()) {
+                                    put(android.provider.MediaStore.Audio.Media.ARTIST, newArtist)
+                                }
+                            }
+                            context.contentResolver.update(android.net.Uri.parse(song.uriString), values, null, null)
+                            android.util.Log.d("MetadataWrite", "Successfully updated MediaStore columns in updateAlbumMetadataAndCover for ${song.uriString}")
+                        } catch (e: Exception) {
+                            android.util.Log.e("MetadataWrite", "Failed to update MediaStore columns in updateAlbumMetadataAndCover for song ${song.id}", e)
                         }
                     } else {
                         failCount++
@@ -2654,10 +2970,13 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 for (song in songsInAlbum) {
                     val entity = allEntities.find { it.id == song.id }
                     if (entity != null) {
+                        val physicalPath = getPhysicalPath(context, song.id, entity.uriString)
+                        val newModTime = if (physicalPath != null) File(physicalPath).lastModified() else 0L
                         updatedEntities.add(
                             entity.copy(
                                 album = newAlbumName,
-                                artist = if (newArtist.isNotBlank()) newArtist else entity.artist
+                                artist = if (newArtist.isNotBlank()) newArtist else entity.artist,
+                                dateModified = newModTime
                             )
                         )
                     }
@@ -2674,9 +2993,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         val index = localAudioFiles.indexOfFirst { it.id == song.id }
                         if (index != -1) {
                             val currentSong = localAudioFiles[index]
+                            val physicalPath = getPhysicalPath(context, song.id, currentSong.uriString)
+                            val newModTime = if (physicalPath != null) File(physicalPath).lastModified() else 0L
                             localAudioFiles[index] = currentSong.copy(
                                 album = newAlbumName,
-                                artist = if (newArtist.isNotBlank()) newArtist else currentSong.artist
+                                artist = if (newArtist.isNotBlank()) newArtist else currentSong.artist,
+                                dateModified = newModTime
                             )
                         }
                     }

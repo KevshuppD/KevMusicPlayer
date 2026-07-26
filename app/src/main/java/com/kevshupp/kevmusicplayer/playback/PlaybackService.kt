@@ -95,6 +95,7 @@ class PlaybackService : MediaLibraryService() {
                     )
                     setupAudioEffects(sessionId)
                 }
+                savePlaybackState(player)
             }
 
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
@@ -135,6 +136,23 @@ class PlaybackService : MediaLibraryService() {
                         e.printStackTrace()
                     }
                 }
+                savePlaybackState(player)
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                savePlaybackState(player)
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                savePlaybackState(player)
+            }
+
+            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                savePlaybackState(player)
             }
 
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
@@ -158,6 +176,24 @@ class PlaybackService : MediaLibraryService() {
                     "ErrorCodeName: ${error.errorCodeName}, ErrorCode: ${error.errorCode}",
                     error
                 )
+
+                val locale = resources.configuration.locales[0]
+                val targetLang = locale.language
+                val songTitle = player.currentMediaItem?.mediaMetadata?.title?.toString() ?: ""
+                val msg = if (targetLang == "es") {
+                    if (songTitle.isNotEmpty()) "No se pudo reproducir: $songTitle" else "Error al reproducir la pista"
+                } else {
+                    if (songTitle.isNotEmpty()) "Could not play: $songTitle" else "Error playing track"
+                }
+
+                serviceScope.launch(Dispatchers.Main) {
+                    android.widget.Toast.makeText(this@PlaybackService, msg, android.widget.Toast.LENGTH_LONG).show()
+                    if (player.hasNextMediaItem()) {
+                        player.seekToNextMediaItem()
+                        player.prepare()
+                        player.play()
+                    }
+                }
             }
         }
         player.addListener(playerListener!!)
@@ -331,51 +367,50 @@ class PlaybackService : MediaLibraryService() {
                     val retriever = android.media.MediaMetadataRetriever()
                     var success = false
                     try {
-                        var isUriReadable = false
+                        var pfd: android.os.ParcelFileDescriptor? = null
                         try {
-                            contentResolver.openAssetFileDescriptor(Uri.parse(uriString), "r")?.use {
-                                isUriReadable = true
-                            }
-                        } catch (e: Exception) {
-                            // File not found or not readable
-                        }
-
-                        if (isUriReadable) {
-                            retriever.setDataSource(this@PlaybackService, Uri.parse(uriString))
-                            val picture = retriever.embeddedPicture
-                            if (picture != null) {
-                                val opts = android.graphics.BitmapFactory.Options().apply {
-                                    inJustDecodeBounds = true
-                                }
-                                android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, opts)
-                                
-                                val targetSize = 200
-                                var sampleSize = 1
-                                val largestDim = maxOf(opts.outWidth, opts.outHeight)
-                                if (largestDim > targetSize) {
-                                    sampleSize = Math.round(largestDim.toFloat() / targetSize)
-                                }
-                                
-                                val decodeOpts = android.graphics.BitmapFactory.Options().apply {
-                                    inSampleSize = sampleSize
-                                }
-                                val bitmap = android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, decodeOpts)
-                                if (bitmap != null) {
-                                    val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, targetSize, targetSize, true)
-                                    val tmpFile = java.io.File(cacheDir, "current_widget_art_tmp.png")
-                                    java.io.FileOutputStream(tmpFile).use { out ->
-                                        scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
+                            pfd = contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
+                            if (pfd != null) {
+                                retriever.setDataSource(pfd.fileDescriptor)
+                                val picture = retriever.embeddedPicture
+                                if (picture != null) {
+                                    val opts = android.graphics.BitmapFactory.Options().apply {
+                                        inJustDecodeBounds = true
                                     }
-                                    if (tmpFile.exists()) {
-                                        tmpFile.renameTo(artFile)
+                                    android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, opts)
+                                    
+                                    val targetSize = 200
+                                    var sampleSize = 1
+                                    val largestDim = maxOf(opts.outWidth, opts.outHeight)
+                                    if (largestDim > targetSize) {
+                                        sampleSize = Math.round(largestDim.toFloat() / targetSize)
                                     }
-                                    if (scaledBitmap != bitmap) {
-                                        bitmap.recycle()
+                                    
+                                    val decodeOpts = android.graphics.BitmapFactory.Options().apply {
+                                        inSampleSize = sampleSize
                                     }
-                                    scaledBitmap.recycle()
-                                    success = true
+                                    val bitmap = android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, decodeOpts)
+                                    if (bitmap != null) {
+                                        val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, targetSize, targetSize, true)
+                                        val tmpFile = java.io.File(cacheDir, "current_widget_art_tmp.png")
+                                        java.io.FileOutputStream(tmpFile).use { out ->
+                                            scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
+                                        }
+                                        if (tmpFile.exists()) {
+                                            tmpFile.renameTo(artFile)
+                                        }
+                                        if (scaledBitmap != bitmap) {
+                                            bitmap.recycle()
+                                        }
+                                        scaledBitmap.recycle()
+                                        success = true
+                                    }
                                 }
                             }
+                        } finally {
+                            try {
+                                pfd?.close()
+                            } catch (e: Exception) {}
                         }
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
@@ -423,6 +458,34 @@ class PlaybackService : MediaLibraryService() {
                     e
                 )
             }
+        }
+    }
+
+    private fun savePlaybackState(player: Player) {
+        val currentItem = player.currentMediaItem
+        val id = currentItem?.mediaId?.toLongOrNull() ?: -1L
+        val position = player.currentPosition
+        val activeIndex = player.currentMediaItemIndex
+        val shuffleModeEnabled = player.shuffleModeEnabled
+        
+        val mediaIds = ArrayList<String>(player.mediaItemCount)
+        for (i in 0 until player.mediaItemCount) {
+            val item = player.getMediaItemAt(i)
+            mediaIds.add(item.mediaId)
+        }
+
+        serviceScope.launch(Dispatchers.IO) {
+            val prefs = getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+            val editor = prefs.edit()
+                .putBoolean("last_shuffle_enabled", shuffleModeEnabled)
+            if (id != -1L) {
+                val mediaIdsString = mediaIds.joinToString(",")
+                editor.putLong("last_song_id", id)
+                    .putLong("last_position", position)
+                    .putInt("last_active_index", activeIndex)
+                    .putString("last_queue_ids", mediaIdsString)
+            }
+            editor.apply()
         }
     }
 
@@ -585,7 +648,8 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
-        return super.onStartCommand(intent, flags, startId)
+        super.onStartCommand(intent, flags, startId)
+        return START_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
@@ -603,6 +667,37 @@ class PlaybackService : MediaLibraryService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = mediaLibrarySession
 
     override fun onDestroy() {
+        // Save current playback state synchronously before destroying the service
+        mediaLibrarySession?.player?.let { player ->
+            try {
+                val prefs = getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+                val currentItem = player.currentMediaItem
+                val id = currentItem?.mediaId?.toLongOrNull() ?: -1L
+                val position = player.currentPosition
+                val activeIndex = player.currentMediaItemIndex
+                val shuffleModeEnabled = player.shuffleModeEnabled
+                
+                val mediaIds = ArrayList<String>(player.mediaItemCount)
+                for (i in 0 until player.mediaItemCount) {
+                    val item = player.getMediaItemAt(i)
+                    mediaIds.add(item.mediaId)
+                }
+
+                val editor = prefs.edit()
+                    .putBoolean("last_shuffle_enabled", shuffleModeEnabled)
+                if (id != -1L) {
+                    val mediaIdsString = mediaIds.joinToString(",")
+                    editor.putLong("last_song_id", id)
+                        .putLong("last_position", position)
+                        .putInt("last_active_index", activeIndex)
+                        .putString("last_queue_ids", mediaIdsString)
+                }
+                editor.commit()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
         serviceScope.cancel()
         try {
             if (wakeLock?.isHeld == true) {
@@ -1138,10 +1233,18 @@ class PlaybackService : MediaLibraryService() {
             if (next) {
                 if (player.hasNextMediaItem()) {
                     player.seekToNextMediaItem()
+                    if (player.playbackState == Player.STATE_IDLE) {
+                        player.prepare()
+                        player.play()
+                    }
                 }
             } else {
                 if (player.hasPreviousMediaItem()) {
                     player.seekToPreviousMediaItem()
+                    if (player.playbackState == Player.STATE_IDLE) {
+                        player.prepare()
+                        player.play()
+                    }
                 }
             }
             

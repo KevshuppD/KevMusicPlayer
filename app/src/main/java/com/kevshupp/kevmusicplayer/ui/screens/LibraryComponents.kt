@@ -97,7 +97,8 @@ fun SongListView(
     onSongSelectToggle: ((AudioFile) -> Unit)? = null,
     onSelectionChanged: ((Set<AudioFile>) -> Unit)? = null,
     onPlayDirectly: ((AudioFile) -> Unit)? = null,
-    listState: LazyListState = rememberLazyListState()
+    listState: LazyListState = rememberLazyListState(),
+    showTrackNumbers: Boolean = false
 ) {
     val coroutineScope = rememberCoroutineScope()
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -328,37 +329,53 @@ fun SongListView(
                             modifier = Modifier.padding(end = 12.dp).size(24.dp)
                         )
                     }
-                    // Sleek Gradient Song Icon
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape)
-                            .background(getGradientForString(song.title)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val artBytes = rememberAlbumArt(song.uriString)
-                        SubcomposeAsyncImage(
-                            model = artBytes,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                            loading = {
-                                Icon(
-                                    imageVector = Icons.Rounded.MusicNote,
-                                    contentDescription = null,
-                                    tint = Color.White.copy(alpha = 0.8f),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            },
-                            error = {
-                                Icon(
-                                    imageVector = Icons.Rounded.MusicNote,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        )
+                    if (showTrackNumbers) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val trackNum = if (song.track > 0) (song.track % 1000) else (index + 1)
+                            Text(
+                                text = trackNum.toString(),
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                fontSize = 15.sp
+                            )
+                        }
+                    } else {
+                        // Sleek Gradient Song Icon
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape)
+                                .background(getGradientForString(song.title)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val artBytes = rememberAlbumArt(song.uriString)
+                            SubcomposeAsyncImage(
+                                model = artBytes,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                                loading = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.MusicNote,
+                                        contentDescription = null,
+                                        tint = Color.White.copy(alpha = 0.8f),
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                },
+                                error = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.MusicNote,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(16.dp))
@@ -1071,30 +1088,163 @@ data class PlayerStateInfo(
 )
 
 // ---------------- ALBUM ART CACHE & ASYNC LOADER ----------------
-val albumArtCache = LruCache<String, ByteArray>(100) // Cache up to 100 album arts in memory for blazing fast startup!
+val albumArtCache = LruCache<String, android.graphics.Bitmap>(
+    try {
+        val app = com.kevshupp.kevmusicplayer.KevMusicPlayerApplication.instance
+        val prefs = app.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+        prefs.getInt("cover_cache_capacity", 150)
+    } catch (e: Exception) {
+        150
+    }
+)
 var albumArtVersion by androidx.compose.runtime.mutableStateOf(0)
 
+fun updateAlbumArtCacheSize(maxSize: Int) {
+    try {
+        albumArtCache.resize(maxSize)
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+
+private fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    val height = options.outHeight
+    val width = options.outWidth
+    var inSampleSize = 1
+    if (height > reqHeight || width > reqWidth) {
+        val halfHeight = height / 2
+        val halfWidth = width / 2
+        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+            inSampleSize *= 2
+        }
+    }
+    return inSampleSize
+}
+
+private fun decodeSampledBitmap(bytes: ByteArray, reqWidth: Int, reqHeight: Int): android.graphics.Bitmap? {
+    val options = android.graphics.BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+    options.inJustDecodeBounds = false
+    return try {
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    } catch (e: OutOfMemoryError) {
+        System.gc()
+        try {
+            options.inSampleSize *= 2
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        } catch (t: Throwable) {
+            null
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+
+fun preloadAlbumArt(context: android.content.Context, uriString: String) {
+    if (albumArtCache.get(uriString) != null) return
+    val retriever = android.media.MediaMetadataRetriever()
+    var pfd: android.os.ParcelFileDescriptor? = null
+    try {
+        pfd = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
+        if (pfd != null) {
+            retriever.setDataSource(pfd.fileDescriptor)
+            val picture = retriever.embeddedPicture
+            if (picture != null) {
+                val res = try {
+                    context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
+                } catch (ex: Exception) {
+                    500
+                }
+                val decoded = decodeSampledBitmap(picture, res, res)
+                if (decoded != null) {
+                    albumArtCache.put(uriString, decoded)
+                }
+            }
+        }
+    } catch (e: Exception) {
+        try {
+            retriever.setDataSource(context, Uri.parse(uriString))
+            val picture = retriever.embeddedPicture
+            if (picture != null) {
+                val res = try {
+                    context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
+                } catch (ex: Exception) {
+                    500
+                }
+                val decoded = decodeSampledBitmap(picture, res, res)
+                if (decoded != null) {
+                    albumArtCache.put(uriString, decoded)
+                }
+            }
+        } catch (ex: Exception) {
+            // Ignore
+        }
+    } finally {
+        try {
+            pfd?.close()
+        } catch (e: Exception) {}
+        try {
+            retriever.release()
+        } catch (e: Exception) {}
+    }
+}
+
 @Composable
-fun rememberAlbumArt(uriString: String?): ByteArray? {
+fun rememberAlbumArt(uriString: String?): android.graphics.Bitmap? {
     if (uriString == null) return null
     val context = LocalContext.current
     val version = albumArtVersion
-    var artBytes by remember(uriString, version) { mutableStateOf(albumArtCache.get(uriString)) }
+    var bitmap by remember(uriString, version) { mutableStateOf(albumArtCache.get(uriString)) }
 
-    if (artBytes == null) {
+    if (bitmap == null) {
         LaunchedEffect(uriString, version) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val retriever = android.media.MediaMetadataRetriever()
+                var pfd: android.os.ParcelFileDescriptor? = null
                 try {
-                    retriever.setDataSource(context, Uri.parse(uriString))
-                    val picture = retriever.embeddedPicture
-                    if (picture != null) {
-                        albumArtCache.put(uriString, picture)
-                        artBytes = picture
+                    pfd = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
+                    if (pfd != null) {
+                        retriever.setDataSource(pfd.fileDescriptor)
+                        val picture = retriever.embeddedPicture
+                        if (picture != null) {
+                            val res = try {
+                                context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
+                            } catch (ex: Exception) {
+                                500
+                            }
+                            val decoded = decodeSampledBitmap(picture, res, res)
+                            if (decoded != null) {
+                                albumArtCache.put(uriString, decoded)
+                                bitmap = decoded
+                            }
+                        }
                     }
                 } catch (e: Exception) {
-                    // Ignore
+                    try {
+                        retriever.setDataSource(context, Uri.parse(uriString))
+                        val picture = retriever.embeddedPicture
+                        if (picture != null) {
+                            val res = try {
+                                context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
+                            } catch (ex: Exception) {
+                                500
+                            }
+                            val decoded = decodeSampledBitmap(picture, res, res)
+                            if (decoded != null) {
+                                albumArtCache.put(uriString, decoded)
+                                bitmap = decoded
+                            }
+                        }
+                    } catch (ex: Exception) {
+                        // Ignore
+                    }
                 } finally {
+                    try {
+                        pfd?.close()
+                    } catch (e: Exception) {}
                     try {
                         retriever.release()
                     } catch (e: Exception) {}
@@ -1102,8 +1252,9 @@ fun rememberAlbumArt(uriString: String?): ByteArray? {
             }
         }
     }
-    return artBytes
+    return bitmap
 }
+
 
 fun savePlaylistCoverLocally(context: android.content.Context, playlistName: String, uri: Uri): String? {
     return try {

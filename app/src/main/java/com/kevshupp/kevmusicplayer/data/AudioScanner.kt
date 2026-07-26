@@ -20,7 +20,9 @@ class AudioScanner(private val context: Context) {
             MediaStore.Audio.Media.DATA,
             MediaStore.Audio.Media.DATE_ADDED,
             MediaStore.Audio.Media.GENRE,
-            MediaStore.Audio.Media.YEAR
+            MediaStore.Audio.Media.YEAR,
+            MediaStore.Audio.Media.DATE_MODIFIED,
+            MediaStore.Audio.Media.TRACK
         )
 
         // Query ALL audio files on the device (selection = null) to ensure absolutely NO songs are missed
@@ -45,6 +47,8 @@ class AudioScanner(private val context: Context) {
                 val dateAddedColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
                 val genreColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.GENRE)
                 val yearColumn = cursor.getColumnIndex(MediaStore.Audio.Media.YEAR)
+                val dateModifiedColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
+                val trackColumn = cursor.getColumnIndex(MediaStore.Audio.Media.TRACK)
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idColumn)
@@ -55,6 +59,8 @@ class AudioScanner(private val context: Context) {
                     val dataPath = cursor.getString(dataColumn) ?: ""
                     val dateAddedSec = cursor.getLong(dateAddedColumn)
                     val dateAddedMs = dateAddedSec * 1000L
+                    val dateModifiedSec = cursor.getLong(dateModifiedColumn)
+                    val dateModifiedMs = dateModifiedSec * 1000L
 
                     // Skip audio files that are shorter than 5 seconds (notification sounds, short recordings)
                     // but capture all actual music files on the phone
@@ -89,6 +95,7 @@ class AudioScanner(private val context: Context) {
                     // Extract year from MediaStore
                     val yearVal = if (yearColumn != -1) cursor.getInt(yearColumn) else 0
                     val year = if (yearVal > 0) yearVal.toString() else ""
+                    val trackVal = if (trackColumn != -1) cursor.getInt(trackColumn) else 0
 
                     // Try to get ReplayGain metadata.
                     // Check local DB cache first to avoid extremely slow synchronous physical disk read/write on every startup scan!
@@ -108,7 +115,9 @@ class AudioScanner(private val context: Context) {
                             folderName = folderName,
                             dateAdded = dateAddedMs,
                             replayGain = replayGain,
-                            year = year
+                            year = year,
+                            dateModified = dateModifiedMs,
+                            track = trackVal
                         )
                     )
                 }

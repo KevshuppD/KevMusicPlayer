@@ -837,11 +837,414 @@ fun GeneralSettingsSection(
 }
 
 @Composable
-fun SystemSettingsSection(
+fun PerformanceSettingsSection(
     selectedRefreshRate: String,
     onRefreshRateSelected: (String) -> Unit,
     disableAnimations: Boolean,
     onDisableAnimationsChanged: (Boolean) -> Unit,
+    getLocalized: (String, String) -> String,
+    settingsPrefs: android.content.SharedPreferences,
+    context: android.content.Context
+) {
+    var preloadCount by remember { mutableStateOf(settingsPrefs.getInt("preload_art_count", 5)) }
+    var cacheCapacity by remember { mutableStateOf(settingsPrefs.getInt("cover_cache_capacity", 150)) }
+    var artResolution by remember { mutableStateOf(settingsPrefs.getInt("art_resolution", 500)) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        // CARD 1: PANTALLA Y RENDIMIENTO GRÁFICO (Display & Graphics Card)
+        Column {
+            Text(
+                text = getLocalized("RENDIMIENTO GRÁFICO Y PANTALLA", "GRAPHICS & DISPLAY PERFORMANCE"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp,
+                modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
+            )
+
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = settingsCardContainerColor()
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // 1. Refresh Rate Selector
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Speed,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = getLocalized("Tasa de Refresco", "Refresh Rate"),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = getLocalized(
+                                    "Forzar tasa alta (120Hz) para máxima fluidez o 60Hz para ahorrar batería",
+                                    "Enforce high rate (120Hz) for fluid scrolling or 60Hz to save battery"
+                                ),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            listOf("60", "120").forEach { rate ->
+                                val isSelected = selectedRefreshRate == rate
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isSelected) MaterialTheme.colorScheme.primary 
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                        )
+                                        .clickable {
+                                            onRefreshRateSelected(rate)
+                                            settingsPrefs.edit().putString("refresh_rate", rate).apply()
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = "$rate Hz",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+
+                    // 2. Disable Animations Mode Toggle
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.FlashOn,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = getLocalized("Modo sin Animaciones", "Disable Animations Mode"),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = getLocalized(
+                                    "Desactiva transiciones y efectos visuales para máxima velocidad en la app",
+                                    "Disable transitions and visual effects for absolute speed and efficiency"
+                                ),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+
+                        Switch(
+                            checked = disableAnimations,
+                            onCheckedChange = { checked ->
+                                onDisableAnimationsChanged(checked)
+                                settingsPrefs.edit().putBoolean("disable_animations", checked).apply()
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        // CARD 2: RECURSOS Y CACHÉ (Resources & Cache Card)
+        Column {
+            Text(
+                text = getLocalized("RENDIMIENTO DE MEMORIA Y RECURSOS", "MEMORY & RESOURCES PERFORMANCE"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp,
+                modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
+            )
+
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = settingsCardContainerColor()
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // 1. Artwork Preloading Toggle
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Image,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = getLocalized("Precarga de Carátulas", "Artwork Preloading"),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = getLocalized(
+                                    "Precarga portadas de las siguientes canciones en cola para transiciones instantáneas",
+                                    "Preload covers of upcoming songs in queue for instantaneous transitions"
+                                ),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            listOf(0, 3, 5, 10).forEach { count ->
+                                val isSelected = preloadCount == count
+                                val label = if (count == 0) getLocalized("Off", "Off") else "$count"
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isSelected) MaterialTheme.colorScheme.primary 
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                        )
+                                        .clickable {
+                                            preloadCount = count
+                                            settingsPrefs.edit().putInt("preload_art_count", count).apply()
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+
+                    // 2. Cache Capacity Option
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.SdStorage,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = getLocalized("Capacidad de Caché", "Cache Capacity"),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = getLocalized(
+                                    "Número máximo de portadas guardadas en RAM (más caché = scroll más rápido)",
+                                    "Maximum number of album arts kept in RAM (more cache = faster list scrolling)"
+                                ),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            listOf(50, 150, 300).forEach { cap ->
+                                val isSelected = cacheCapacity == cap
+                                val label = when (cap) {
+                                    50 -> getLocalized("Baja", "Low")
+                                    150 -> getLocalized("Med", "Med")
+                                    else -> getLocalized("Alta", "High")
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isSelected) MaterialTheme.colorScheme.primary 
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                        )
+                                        .clickable {
+                                            cacheCapacity = cap
+                                            settingsPrefs.edit().putInt("cover_cache_capacity", cap).apply()
+                                            updateAlbumArtCacheSize(cap)
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = "$cap ($label)",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+
+                    // 3. Decoding Cover Quality Option
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.HighQuality,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = getLocalized("Calidad de Carátulas", "Artwork Quality"),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = getLocalized(
+                                    "Resolución de decodificación (baja resolución ahorra RAM y CPU significativamente)",
+                                    "Decoding resolution (lower resolution saves significant RAM and CPU usage)"
+                                ),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            listOf(250, 500, 800).forEach { res ->
+                                val isSelected = artResolution == res
+                                val label = when (res) {
+                                    250 -> getLocalized("250p", "250p")
+                                    500 -> getLocalized("500p", "500p")
+                                    else -> getLocalized("800p", "800p")
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isSelected) MaterialTheme.colorScheme.primary 
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                        )
+                                        .clickable {
+                                            artResolution = res
+                                            settingsPrefs.edit().putInt("art_resolution", res).apply()
+                                            albumArtCache.evictAll()
+                                            albumArtVersion++
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SystemSettingsSection(
     audioGranted: Boolean,
     notificationGranted: Boolean,
     isIgnoringBatteryOptimizations: Boolean,
@@ -851,10 +1254,10 @@ fun SystemSettingsSection(
     settingsPrefs: android.content.SharedPreferences,
     context: android.content.Context
 ) {
-    // 1. Rendimiento & Animaciones (Display & Performance Card)
+    // 1. Diagnóstico y Servicios (Diagnostics & Services Card)
     Column {
         Text(
-            text = getLocalized("RENDIMIENTO Y PANTALLA", "PERFORMANCE & DISPLAY"),
+            text = getLocalized("DIAGNÓSTICO Y SERVICIOS", "DIAGNOSTICS & SERVICES"),
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
@@ -873,127 +1276,7 @@ fun SystemSettingsSection(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // 1. Refresh Rate Selector
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Speed,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(14.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = getLocalized("Tasa de Refresco", "Refresh Rate"),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = getLocalized(
-                                "Forzar tasa alta (120Hz) para máxima fluidez o 60Hz para ahorrar batería",
-                                "Enforce high rate (120Hz) for fluid scrolling or 60Hz to save battery"
-                            ),
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                    }
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        listOf("60", "120").forEach { rate ->
-                            val isSelected = selectedRefreshRate == rate
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        if (isSelected) MaterialTheme.colorScheme.primary 
-                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                                    )
-                                    .clickable {
-                                        onRefreshRateSelected(rate)
-                                        settingsPrefs.edit().putString("refresh_rate", rate).apply()
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = "$rate Hz",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-
-                // 2. Disable Animations Mode Toggle
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.FlashOn,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(14.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = getLocalized("Modo sin Animaciones", "Disable Animations Mode"),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = getLocalized(
-                                "Desactiva transiciones y efectos visuales para máxima velocidad en la app",
-                                "Disable transitions and visual effects for absolute speed and efficiency"
-                            ),
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                    }
-
-                    Switch(
-                        checked = disableAnimations,
-                        onCheckedChange = { checked ->
-                            onDisableAnimationsChanged(checked)
-                            settingsPrefs.edit().putBoolean("disable_animations", checked).apply()
-                        }
-                    )
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-
-                // 3. Automatic Translation Toggle
+                // 1. Automatic Translation Toggle
                 var autoTranslate by remember { mutableStateOf(settingsPrefs.getBoolean("auto_translate", false)) }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1044,7 +1327,7 @@ fun SystemSettingsSection(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
 
-                // 4. Telemetry Switch
+                // 2. Telemetry Switch
                 var telemetryEnabled by remember { mutableStateOf(com.kevshupp.kevmusicplayer.data.TelemetryLogger.isEnabled(context)) }
                 var showTelemetryDialog by remember { mutableStateOf(false) }
 
@@ -1842,7 +2125,7 @@ fun LibrarySettingsSection(
     selectBackupFolderLauncher: androidx.activity.result.ActivityResultLauncher<Uri?>,
     openDocumentLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>,
     createDocumentLauncher: androidx.activity.result.ActivityResultLauncher<String>,
-    performExportToFolder: (String, Boolean, Boolean, Boolean, Boolean) -> Unit,
+    performExportToFolder: (String, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit,
     getLocalized: (String, String) -> String,
     isRenaming: Boolean,
     setIsRenaming: (Boolean) -> Unit,
@@ -1875,6 +2158,7 @@ fun LibrarySettingsSection(
     var exportEqualizer by remember { mutableStateOf(true) }
     var exportPlaylists by remember { mutableStateOf(true) }
     var exportLyrics by remember { mutableStateOf(true) }
+    var exportStatistics by remember { mutableStateOf(true) }
 
     var totalSongs by remember { mutableStateOf(settingsPrefs.getInt("cached_total_songs", viewModel.localAudioFiles.size)) }
     var totalSizeMb by remember { mutableStateOf(settingsPrefs.getFloat("cached_total_size_mb", 0f)) }
@@ -3034,6 +3318,30 @@ fun LibrarySettingsSection(
                             onCheckedChange = { exportLyrics = it }
                         )
                     }
+
+                    // 5. Statistics Option
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { exportStatistics = !exportStatistics },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = getLocalized("Estadísticas e Historial", "Statistics & History"),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = settingsTextColor()
+                            )
+                            Text(
+                                text = getLocalized("Contadores de reproducción, última fecha reproducida, ReplayGain y ediciones de metadatos.", "Play counts, last played timestamps, ReplayGain, and metadata edits."),
+                                fontSize = 11.sp,
+                                color = settingsTextMutedColor()
+                            )
+                        }
+                        Switch(
+                            checked = exportStatistics,
+                            onCheckedChange = { exportStatistics = it }
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -3053,6 +3361,7 @@ fun LibrarySettingsSection(
                                         includeEqualizer = exportEqualizer,
                                         includePlaylists = exportPlaylists,
                                         includeLyrics = exportLyrics,
+                                        includeStatistics = exportStatistics,
                                         onSuccess = {
                                             android.widget.Toast.makeText(context, getLocalized("Copia de seguridad creada con éxito", "Backup created successfully"), android.widget.Toast.LENGTH_LONG).show()
                                         },
@@ -3067,11 +3376,11 @@ fun LibrarySettingsSection(
                         } else {
                             val currentDirUri = backupDirUri
                             if (currentDirUri != null) {
-                                performExportToFolder(currentDirUri, exportSettings, exportEqualizer, exportPlaylists, exportLyrics)
+                                performExportToFolder(currentDirUri, exportSettings, exportEqualizer, exportPlaylists, exportLyrics, exportStatistics)
                             }
                         }
                     },
-                    enabled = exportSettings || exportEqualizer || exportPlaylists || exportLyrics,
+                    enabled = exportSettings || exportEqualizer || exportPlaylists || exportLyrics || exportStatistics,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary

@@ -32,6 +32,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.media3.common.Player
 import coil.compose.SubcomposeAsyncImage
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
 import androidx.compose.ui.res.stringResource
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 import kotlinx.coroutines.Dispatchers
@@ -743,385 +745,388 @@ fun PlayerScreen(
                 }
             }
 
-            if (showLyrics) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(vertical = 12.dp)
-                ) {
-                    ScrollingLyricsView(
-                        lyricLines = lyricLines,
-                        positionMs = playerState.position,
-                        songTitle = title,
-                        songArtist = artist,
-                        translatedLines = if (showTranslation) translatedLyricLines else null,
-                        isTranslating = isTranslating,
-                        onTranslateClick = {
-                            if (translatedLyricLines != null) {
-                                showTranslation = !showTranslation
-                            } else {
+            AnimatedContent(
+                targetState = showLyrics,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(400)) + scaleIn(initialScale = 0.95f, animationSpec = tween(400)) togetherWith
+                    fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 0.95f, animationSpec = tween(300))
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                label = "LyricsTransition"
+            ) { targetShowLyrics ->
+                if (targetShowLyrics) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(vertical = 12.dp)
+                    ) {
+                        ScrollingLyricsView(
+                            lyricLines = lyricLines,
+                            positionMs = playerState.position,
+                            songTitle = title,
+                            songArtist = artist,
+                            translatedLines = if (showTranslation) translatedLyricLines else null,
+                            isTranslating = isTranslating,
+                            onTranslateClick = {
+                                if (translatedLyricLines != null) {
+                                    showTranslation = !showTranslation
+                                } else {
+                                    scope.launch {
+                                        translateLyrics()
+                                        showTranslation = true
+                                    }
+                                }
+                            },
+                            onTranslateLongClick = {
                                 scope.launch {
                                     translateLyrics()
                                     showTranslation = true
                                 }
-                            }
-                        },
-                        onTranslateLongClick = {
-                            scope.launch {
-                                translateLyrics()
-                                showTranslation = true
-                            }
-                        },
-                        onLineClick = { timeMs -> player.seekTo(timeMs) },
-                        onEditClick = {
-                            editLyricsText = lyricsText ?: ""
-                            showEditLyricsDialog = true
-                        },
-                        onSearchOnlineClick = {
-                            if (currentSongFile != null) {
-                                searchArtist = currentSongFile.artist
-                                searchTitle = currentSongFile.title
-                                searchStatusMessage = ""
-                                searchLyricsResults = emptyList()
-                                showSearchLyricsDialog = true
-                            }
-                        },
-                        isSearchingOnline = isSearchingOnline || isAutoSearchingLyrics,
-                        isInstrumental = currentSongFile?.lyrics == "[[Instrumental]]",
-                        onMarkInstrumentalClick = {
-                            if (currentSongFile != null) {
-                                viewModel?.updateSongLyrics(currentSongFile.id, "[[Instrumental]]")
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            } else {
-                val currentMediaItemIndex = playerState.currentMediaItemIndex
-                val pagerState = rememberPagerState(
-                    initialPage = currentMediaItemIndex,
-                    pageCount = { playerState.mediaItemCount }
-                )
-
-                LaunchedEffect(currentMediaItemIndex) {
-                    if (currentMediaItemIndex in 0 until playerState.mediaItemCount && pagerState.currentPage != currentMediaItemIndex) {
-                        pagerState.scrollToPage(currentMediaItemIndex)
+                            },
+                            onLineClick = { timeMs -> player.seekTo(timeMs) },
+                            onEditClick = {
+                                editLyricsText = lyricsText ?: ""
+                                showEditLyricsDialog = true
+                            },
+                            onSearchOnlineClick = {
+                                if (currentSongFile != null) {
+                                    searchArtist = currentSongFile.artist
+                                    searchTitle = currentSongFile.title
+                                    searchStatusMessage = ""
+                                    searchLyricsResults = emptyList()
+                                    showSearchLyricsDialog = true
+                                }
+                            },
+                            isSearchingOnline = isSearchingOnline || isAutoSearchingLyrics,
+                            isInstrumental = currentSongFile?.lyrics == "[[Instrumental]]",
+                            onMarkInstrumentalClick = {
+                                if (currentSongFile != null) {
+                                    viewModel?.updateSongLyrics(currentSongFile.id, "[[Instrumental]]")
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
-                }
-
-                LaunchedEffect(pagerState.currentPage) {
-                    if (pagerState.currentPage != playerState.currentMediaItemIndex && pagerState.currentPage in 0 until playerState.mediaItemCount) {
-                        player.seekTo(pagerState.currentPage, 0)
-                        player.play()
-                    }
-                }
-
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) { page ->
-                    val pageSong = remember(page, playerState.currentSong, playerState.playlistVersion) {
-                        if (page in 0 until playerState.mediaItemCount) player.getMediaItemAt(page) else null
-                    }
-                    val pageSongFile = remember(pageSong?.mediaId) {
-                        derivedStateOf {
-                            viewModel?.localAudioFiles?.find { it.id.toString() == pageSong?.mediaId }
-                        }
-                    }.value
-                    val pageTitle = pageSong?.mediaMetadata?.title?.toString() ?: "Unknown Title"
-                    val pageArtist = pageSong?.mediaMetadata?.artist?.toString() ?: "Unknown Artist"
-                    val pageUriString = remember(pageSong?.mediaId) {
-                        if (pageSong?.mediaId != null) "content://media/external/audio/media/${pageSong.mediaId}" else null
-                    }
-                    val pageIsFavorite = remember(pageSongFile, viewModel?.playlists) {
-                        val favList = viewModel?.playlists?.get("Favoritos") ?: emptyList()
-                        favList.any { it.id == pageSongFile?.id }
-                    }
-                    val pageFileInfo by produceState(initialValue = Pair("MP3", "320 kbps"), key1 = pageSong?.mediaId) {
-                        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            getAudioFileInfo(context, pageUriString)
-                        }
-                    }
-                    val pageArtGradient = remember(pageTitle) {
-                        getGradientForString(pageTitle)
-                    }
-
+                } else {
                     Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(pageSong?.mediaId) {
-                                detectTapGestures(
-                                    onDoubleTap = { offset ->
-                                        if (pageSongFile != null && viewModel != null) {
-                                            val favExists = viewModel.playlists.containsKey("Favoritos")
-                                            if (!favExists) {
-                                                viewModel.createPlaylist("Favoritos")
-                                            }
-                                            if (pageIsFavorite) {
-                                                viewModel.removeSongFromPlaylist("Favoritos", pageSongFile.id)
-                                            } else {
-                                                viewModel.addSongToPlaylist("Favoritos", pageSongFile.id)
-                                            }
-                                        }
-                                        heartPosition = offset
-                                        showHeartAnimation = true
-                                    },
-                                    onTap = {
-                                        showLyrics = !showLyrics
-                                    }
-                                )
-                            }
-                            .pointerInput(pageSong?.mediaId) {
-                                var totalY = 0f
-                                detectVerticalDragGestures(
-                                    onDragStart = { totalY = 0f },
-                                    onDragEnd = {
-                                        if (totalY < -100f) {
-                                            showLyrics = true
-                                        } else if (totalY > 100f) {
-                                            onBack()
-                                        }
-                                    },
-                                    onVerticalDrag = { change, dragAmount ->
-                                        change.consume()
-                                        totalY += dragAmount
-                                    }
-                                )
-                            }
+                        modifier = Modifier.fillMaxSize()
                     ) {
-                        Spacer(modifier = Modifier.weight(0.2f))
+                        val currentMediaItemIndex = playerState.currentMediaItemIndex
+                        val pagerState = rememberPagerState(
+                            initialPage = currentMediaItemIndex,
+                            pageCount = { playerState.mediaItemCount }
+                        )
 
-                        // Premium Album Art Container with rich shadow and organic roundings
-                        Card(
+                        LaunchedEffect(currentMediaItemIndex) {
+                            if (currentMediaItemIndex in 0 until playerState.mediaItemCount && pagerState.currentPage != currentMediaItemIndex) {
+                                pagerState.scrollToPage(currentMediaItemIndex)
+                            }
+                        }
+
+                        LaunchedEffect(pagerState.currentPage) {
+                            if (pagerState.currentPage != playerState.currentMediaItemIndex && pagerState.currentPage in 0 until playerState.mediaItemCount) {
+                                player.seekTo(pagerState.currentPage, 0)
+                                player.play()
+                            }
+                        }
+
+                        HorizontalPager(
+                            state = pagerState,
                             modifier = Modifier
-                                .fillMaxWidth(0.9f)
-                                .aspectRatio(1f)
-                                .shadow(
-                                    elevation = 32.dp,
-                                    shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(32.dp) else androidx.compose.ui.graphics.RectangleShape,
-                                    clip = false,
-                                    ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                                    spotColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)
-                                ),
-                            shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(32.dp) else androidx.compose.ui.graphics.RectangleShape,
-                            colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-                        ) {
-                            Box(
+                                .weight(1f)
+                                .fillMaxWidth()
+                        ) { page ->
+                            val pageSong = remember(page, playerState.currentSong, playerState.playlistVersion) {
+                                if (page in 0 until playerState.mediaItemCount) player.getMediaItemAt(page) else null
+                            }
+                            val pageSongFile = remember(pageSong?.mediaId) {
+                                derivedStateOf {
+                                    viewModel?.localAudioFiles?.find { it.id.toString() == pageSong?.mediaId }
+                                }
+                            }.value
+                            val pageTitle = pageSong?.mediaMetadata?.title?.toString() ?: "Unknown Title"
+                            val pageArtist = pageSong?.mediaMetadata?.artist?.toString() ?: "Unknown Artist"
+                            val pageUriString = remember(pageSong?.mediaId) {
+                                if (pageSong?.mediaId != null) "content://media/external/audio/media/${pageSong.mediaId}" else null
+                            }
+                            val pageIsFavorite = remember(pageSongFile, viewModel?.playlists) {
+                                val favList = viewModel?.playlists?.get("Favoritos") ?: emptyList()
+                                favList.any { it.id == pageSongFile?.id }
+                            }
+                            val pageFileInfo by produceState(initialValue = Pair("MP3", "320 kbps"), key1 = pageSong?.mediaId) {
+                                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    getAudioFileInfo(context, pageUriString)
+                                }
+                            }
+                            val pageArtGradient = remember(pageTitle) {
+                                getGradientForString(pageTitle)
+                            }
+
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.SpaceBetween,
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .background(pageArtGradient),
-                                contentAlignment = Alignment.Center
+                                    .pointerInput(pageSong?.mediaId) {
+                                        detectTapGestures(
+                                            onDoubleTap = { offset ->
+                                                if (pageSongFile != null && viewModel != null) {
+                                                    val favExists = viewModel.playlists.containsKey("Favoritos")
+                                                    if (!favExists) {
+                                                        viewModel.createPlaylist("Favoritos")
+                                                    }
+                                                    if (pageIsFavorite) {
+                                                        viewModel.removeSongFromPlaylist("Favoritos", pageSongFile.id)
+                                                    } else {
+                                                        viewModel.addSongToPlaylist("Favoritos", pageSongFile.id)
+                                                    }
+                                                }
+                                                heartPosition = offset
+                                                showHeartAnimation = true
+                                            },
+                                            onTap = {
+                                                showLyrics = !showLyrics
+                                            }
+                                        )
+                                    }
+                                    .pointerInput(pageSong?.mediaId) {
+                                        var totalY = 0f
+                                        detectVerticalDragGestures(
+                                            onDragStart = { totalY = 0f },
+                                            onDragEnd = {
+                                                if (totalY < -100f) {
+                                                    showLyrics = true
+                                                } else if (totalY > 100f) {
+                                                    onBack()
+                                                }
+                                            },
+                                            onVerticalDrag = { change, dragAmount ->
+                                                change.consume()
+                                                totalY += dragAmount
+                                            }
+                                        )
+                                    }
                             ) {
-                                val pageArtBytes = rememberAlbumArt(pageUriString)
-                                SubcomposeAsyncImage(
-                                    model = pageArtBytes,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize(),
-                                    loading = {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize(0.92f)
-                                                .clip(CircleShape)
-                                                .background(Color.Black.copy(alpha = 0.08f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.MusicNote,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(110.dp),
-                                                tint = Color.White.copy(alpha = 0.95f)
-                                            )
-                                        }
-                                    },
-                                    error = {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize(0.92f)
-                                                .clip(CircleShape)
-                                                .background(Color.Black.copy(alpha = 0.08f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.MusicNote,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(110.dp),
-                                                tint = Color.White.copy(alpha = 0.95f)
-                                            )
-                                        }
-                                    }
-                                )
+                                Spacer(modifier = Modifier.weight(0.2f))
 
-                                if (showHeartAnimation && page == pagerState.currentPage) {
-                                    LaunchedEffect(showHeartAnimation) {
-                                        if (showHeartAnimation) {
-                                            kotlinx.coroutines.delay(800)
-                                            showHeartAnimation = false
-                                        }
-                                    }
-
-                                    val scale by animateFloatAsState(
-                                        targetValue = if (showHeartAnimation) 1.5f else 0f,
-                                        animationSpec = androidx.compose.animation.core.spring(
-                                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
-                                            stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+                                // Premium Album Art Container with rich shadow and organic roundings
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.9f)
+                                        .aspectRatio(1f)
+                                        .shadow(
+                                            elevation = 32.dp,
+                                            shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(32.dp) else androidx.compose.ui.graphics.RectangleShape,
+                                            clip = false,
+                                            ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                                            spotColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)
                                         ),
-                                        label = "heartScale"
-                                    )
-
-                                    val hPos = heartPosition ?: androidx.compose.ui.geometry.Offset.Zero
-                                    Icon(
-                                        imageVector = if (pageIsFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                        contentDescription = null,
-                                        tint = if (pageIsFavorite) Color.Red else Color.White.copy(alpha = 0.8f),
+                                    shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(32.dp) else androidx.compose.ui.graphics.RectangleShape,
+                                    colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                                ) {
+                                    Box(
                                         modifier = Modifier
-                                            .offset {
-                                                androidx.compose.ui.unit.IntOffset(
-                                                    (hPos.x - 48.dp.toPx()).toInt(),
-                                                    (hPos.y - 48.dp.toPx()).toInt()
+                                            .fillMaxSize()
+                                            .background(pageArtGradient),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        val pageArtBytes = rememberAlbumArt(pageUriString)
+                                        if (pageArtBytes != null) {
+                                            Image(
+                                                bitmap = pageArtBytes.asImageBitmap(),
+                                                contentDescription = null,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize(0.92f)
+                                                    .clip(CircleShape)
+                                                    .background(Color.Black.copy(alpha = 0.08f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.MusicNote,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(110.dp),
+                                                    tint = Color.White.copy(alpha = 0.95f)
                                                 )
                                             }
-                                            .size(96.dp)
-                                            .graphicsLayer {
-                                                scaleX = scale
-                                                scaleY = scale
-                                                alpha = (1f - (scale - 1f).coerceIn(0f, 1f))
+                                        }
+
+                                        if (showHeartAnimation && page == pagerState.currentPage) {
+                                            LaunchedEffect(showHeartAnimation) {
+                                                if (showHeartAnimation) {
+                                                    kotlinx.coroutines.delay(800)
+                                                    showHeartAnimation = false
+                                                }
+                                            }
+
+                                            val scale by animateFloatAsState(
+                                                targetValue = if (showHeartAnimation) 1.5f else 0f,
+                                                animationSpec = androidx.compose.animation.core.spring(
+                                                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                                                    stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+                                                ),
+                                                label = "heartScale"
+                                            )
+
+                                            val hPos = heartPosition ?: androidx.compose.ui.geometry.Offset.Zero
+                                            Icon(
+                                                imageVector = if (pageIsFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                                contentDescription = null,
+                                                tint = if (pageIsFavorite) Color.Red else Color.White.copy(alpha = 0.8f),
+                                                modifier = Modifier
+                                                    .offset {
+                                                        androidx.compose.ui.unit.IntOffset(
+                                                            (hPos.x - 48.dp.toPx()).toInt(),
+                                                            (hPos.y - 48.dp.toPx()).toInt()
+                                                        )
+                                                    }
+                                                    .size(96.dp)
+                                                    .graphicsLayer {
+                                                        scaleX = scale
+                                                        scaleY = scale
+                                                        alpha = (1f - (scale - 1f).coerceIn(0f, 1f))
+                                                    }
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (isVisualizerEnabled) {
+                                    val waveColor = animatedColor
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(60.dp)
+                                            .padding(vertical = 8.dp)
+                                            .clickable {
+                                                isVisualizerEnabled = false
+                                                settingsPrefs.edit().putBoolean("show_visualizer", false).apply()
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        FFTVisualizer(
+                                            fftData = fftData,
+                                            hasAudioPermission = hasAudioPermission,
+                                            audioSessionId = audioSessionId,
+                                            waveColor = waveColor,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
+                                } else {
+                                    Spacer(
+                                        modifier = Modifier
+                                            .weight(0.3f)
+                                            .clickable {
+                                                val recordPermission = android.Manifest.permission.RECORD_AUDIO
+                                                val hasPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                                                    context,
+                                                    recordPermission
+                                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                                                if (!hasPermission) {
+                                                    permissionLauncher.launch(recordPermission)
+                                                } else {
+                                                    isVisualizerEnabled = true
+                                                    settingsPrefs.edit().putBoolean("show_visualizer", true).apply()
+                                                }
                                             }
                                     )
                                 }
-                            }
-                        }
 
-                        if (isVisualizerEnabled) {
-                            val waveColor = animatedColor
-                            val barWidth = 6.dp
-                            val barSpacing = 4.dp
+                                // Title and Artist with clean spacing
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = pageTitle,
+                                        style = MaterialTheme.typography.headlineMedium.copy(
+                                            fontWeight = FontWeight.Black,
+                                            letterSpacing = (-0.5).sp
+                                        ),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        textAlign = TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
 
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(60.dp)
-                                    .padding(vertical = 8.dp)
-                                    .clickable {
-                                        isVisualizerEnabled = false
-                                        settingsPrefs.edit().putBoolean("show_visualizer", false).apply()
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                FFTVisualizer(
-                                    fftData = fftData,
-                                    hasAudioPermission = hasAudioPermission,
-                                    audioSessionId = audioSessionId,
-                                    waveColor = waveColor,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                        } else {
-                            Spacer(
-                                modifier = Modifier
-                                    .weight(0.3f)
-                                    .clickable {
-                                        val recordPermission = android.Manifest.permission.RECORD_AUDIO
-                                        val hasPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-                                            context,
-                                            recordPermission
-                                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                    Spacer(modifier = Modifier.height(6.dp))
 
-                                        if (!hasPermission) {
-                                            permissionLauncher.launch(recordPermission)
-                                        } else {
-                                            isVisualizerEnabled = true
-                                            settingsPrefs.edit().putBoolean("show_visualizer", true).apply()
+                                    Text(
+                                        text = pageArtist,
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Medium
+                                        ),
+                                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.clickable {
+                                            if (pageArtist != "Unknown Artist" && pageArtist.isNotBlank()) {
+                                                onNavigateToArtist(pageArtist)
+                                                onBack()
+                                            }
+                                        }
+                                    )
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        // Extension Badge
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier.height(20.dp)
+                                        ) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier.padding(horizontal = 8.dp)
+                                            ) {
+                                                Text(
+                                                    text = pageFileInfo.first,
+                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        letterSpacing = 0.5.sp
+                                                    ),
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                                )
+                                            }
+                                        }
+
+                                        // Bitrate Badge
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier.height(20.dp)
+                                        ) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier.padding(horizontal = 8.dp)
+                                            ) {
+                                                Text(
+                                                    text = pageFileInfo.second,
+                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                        fontWeight = FontWeight.Bold
+                                                    ),
+                                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
+                                                )
+                                            }
                                         }
                                     }
-                            )
-                        }
-
-                        // Title and Artist with clean spacing
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = pageTitle,
-                                style = MaterialTheme.typography.headlineMedium.copy(
-                                    fontWeight = FontWeight.Black,
-                                    letterSpacing = (-0.5).sp
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            Text(
-                                text = pageArtist,
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.Medium
-                                ),
-                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center
-                            )
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // Extension Badge
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    shape = RoundedCornerShape(6.dp),
-                                    modifier = Modifier.height(20.dp)
-                                ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier.padding(horizontal = 8.dp)
-                                    ) {
-                                        Text(
-                                            text = pageFileInfo.first,
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                fontWeight = FontWeight.ExtraBold,
-                                                letterSpacing = 0.5.sp
-                                            ),
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                                        )
-                                    }
                                 }
 
-                                // Bitrate Badge
-                                Surface(
-                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f),
-                                    shape = RoundedCornerShape(6.dp),
-                                    modifier = Modifier.height(20.dp)
-                                ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier.padding(horizontal = 8.dp)
-                                    ) {
-                                        Text(
-                                            text = pageFileInfo.second,
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                fontWeight = FontWeight.Bold
-                                            ),
-                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
-                                        )
-                                    }
-                                }
+                                Spacer(modifier = Modifier.weight(0.2f))
                             }
                         }
-
-                        Spacer(modifier = Modifier.weight(0.2f))
                     }
                 }
             }
@@ -1220,6 +1225,10 @@ fun PlayerScreen(
                             )
                         } else {
                             player.seekToPrevious()
+                            if (player.playbackState == Player.STATE_IDLE) {
+                                player.prepare()
+                                player.play()
+                            }
                         }
                     },
                     modifier = Modifier.size(54.dp)
@@ -1246,7 +1255,14 @@ fun PlayerScreen(
                             )
                         )
                         .clickable {
-                            if (playerState.isPlaying) player.pause() else player.play()
+                            if (playerState.isPlaying) {
+                                player.pause()
+                            } else {
+                                if (player.playbackState == Player.STATE_IDLE) {
+                                    player.prepare()
+                                }
+                                player.play()
+                            }
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -1270,6 +1286,10 @@ fun PlayerScreen(
                             )
                         } else {
                             player.seekToNext()
+                            if (player.playbackState == Player.STATE_IDLE) {
+                                player.prepare()
+                                player.play()
+                            }
                         }
                     },
                     modifier = Modifier.size(54.dp)
@@ -1409,7 +1429,12 @@ fun PlayerScreen(
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text("Technical Audio Info", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = if (targetLang == "es") "Información técnica de audio" else "Technical Audio Info",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
 
                     // Option 2: Share Song File
@@ -1425,7 +1450,8 @@ fun PlayerScreen(
                                         putExtra(android.content.Intent.EXTRA_STREAM, uri)
                                         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     }
-                                    context.startActivity(android.content.Intent.createChooser(shareIntent, "Share Music Track"))
+                                    val chooserTitle = if (targetLang == "es") "Compartir pista de música" else "Share Music Track"
+                                    context.startActivity(android.content.Intent.createChooser(shareIntent, chooserTitle))
                                 } catch (e: Exception) {
                                     e.printStackTrace()
                                 }
@@ -1440,7 +1466,12 @@ fun PlayerScreen(
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text("Share Audio File", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = if (targetLang == "es") "Compartir archivo de audio" else "Share Audio File",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
 
                     // Option 3: Go to Artist
@@ -1462,7 +1493,12 @@ fun PlayerScreen(
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text("Go to Artist", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = if (targetLang == "es") "Ir al artista" else "Go to Artist",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
 
                     // Option 4: Go to Album
@@ -1485,7 +1521,12 @@ fun PlayerScreen(
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text("Go to Album", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = if (targetLang == "es") "Ir al álbum" else "Go to Album",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
 
                     // Option: Edit Metadata
@@ -1532,7 +1573,12 @@ fun PlayerScreen(
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text("Delete Track", color = MaterialTheme.colorScheme.error, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = if (targetLang == "es") "Eliminar pista" else "Delete Track",
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
 
                     // Gorgeous premium Option: Delete Translation (only shown if translation exists)
@@ -2033,23 +2079,21 @@ fun PlayerScreen(
 }
 
 @Composable
-fun rememberDominantColor(artBytes: ByteArray?): Color {
+fun rememberDominantColor(bitmap: android.graphics.Bitmap?): Color {
     val defaultColor = MaterialTheme.colorScheme.surfaceVariant
-    var dominantColor by remember(artBytes) { mutableStateOf(defaultColor) }
+    var dominantColor by remember(bitmap) { mutableStateOf(defaultColor) }
 
-    LaunchedEffect(artBytes) {
-        if (artBytes != null) {
+    LaunchedEffect(bitmap) {
+        if (bitmap != null) {
             withContext(Dispatchers.IO) {
                 try {
-                    val bitmap = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
-                    if (bitmap != null) {
-                        val palette = Palette.from(bitmap).generate()
-                        val color = palette.getVibrantColor(
-                            palette.getDominantColor(defaultColor.toArgb())
-                        )
-                        dominantColor = Color(color)
-                        bitmap.recycle()
-                    }
+                    val palette = Palette.from(bitmap).generate()
+                    val color = palette.getVibrantColor(
+                        palette.getDominantColor(defaultColor.toArgb())
+                    )
+                    dominantColor = Color(color)
+                    // Note: We MUST NOT call bitmap.recycle() here, because the bitmap is cached
+                    // globally in albumArtCache and will be drawn/reused by rememberAlbumArt.
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
