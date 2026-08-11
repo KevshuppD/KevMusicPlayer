@@ -16,13 +16,14 @@ graph TD
     VM <--> DB[(Base de Datos Room / AudioDao)]
     VM <--> Prefs[SharedPreferences]
     VM <--> Net[LRCLIB / iTunes / Deezer API]
-    VM <--> Tag[jaudiotagger / Metadatos Físicos]
+    VM <--> TagLib[TagLib C++ Engine / jaudiotagger]
+    VM <--> FolderCover[cover.jpg / folder.jpg]
 ```
 
 ### Capas del Proyecto:
-- **Capa de Presentación (UI)**: Construida enteramente con Jetpack Compose. Admite navegación reactiva adaptativa (List-Detail), temas visuales dinámicos (Cyberpunk, Oscuro premium, Petrol, Monocromo a 120Hz reales), ecualizador visual interactivo, letras sincronizadas con microanimaciones y Fast Scroll Indexer A-Z.
+- **Capa de Presentación (UI)**: Construida enteramente con Jetpack Compose. Admite navegación reactiva adaptativa (List-Detail), temas visuales dinámicos (Cyberpunk, Oscuro premium, Petrol, Monocromo a 120Hz reales), ecualizador visual interactivo, letras sincronizadas con microanimaciones y Fast Scroll Indexer A-Z (`FastScrollSidebar`).
 - **Capa de Lógica de Negocio (ViewModel)**: [MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt) centraliza el estado de la UI (pantalla actual, canciones, playlists, búsqueda, etc.) y se comunica con el servicio de reproducción mediante el cliente `MediaBrowser` de Media3.
-- **Capa de Servicios**: [PlaybackService.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/PlaybackService.kt) extiende `MediaLibraryService` de Media3, controlando una instancia interna de `ExoPlayer` aislada del ciclo de vida de la UI. Gestiona el audio focus, eventos bluetooth, efectos físicos y el widget del reproductor.
+- **Capa de Servicios**: [PlaybackService.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/PlaybackService.kt) extiende `MediaLibraryService` de Media3, controlando una instancia interna de `ExoPlayer` aislada del ciclo de vida de la UI. Gestiona el audio focus, eventos bluetooth, efectos físicos, retención del servicio en segundo plano y el widget del reproductor.
 - **Capa de Persistencia**: Base de datos **Room** ([AppDatabase.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/AppDatabase.kt)) para almacenar el catálogo escaneado y cachear letras/ReplayGain/estadísticas. **SharedPreferences** almacena configuraciones generales (`settings_prefs`), la sesión activa del reproductor (`playback_prefs`) y la ecualización (`equalizer_prefs`).
 
 ---
@@ -33,14 +34,15 @@ graph TD
 - **Escaneo Inteligente:** `AudioScanner` realiza consultas a `MediaStore.Audio.Media.EXTERNAL_CONTENT_URI`.
 - **Filtros de Duración:** Se omiten archivos menores de 5 segundos para evitar tonos de notificación o grabaciones de voz cortas.
 - **Optimización de Lectura:** Cruza los datos con la base de datos Room (`existingFiles`) para recuperar de forma instantánea el estado de `ReplayGain` y letras ya procesados.
-- **Sincronización Inteligente de Archivos:** Compara la marca de tiempo de modificación física (`dateModified`). Si el archivo en disco no ha cambiado, Room conserva los metadatos locales y letras editadas por el usuario. Si el archivo cambió o es nuevo, lee directamente sus etiquetas físicas utilizando `jaudiotagger` en hilos de fondo (`Dispatchers.IO`).
+- **Sincronización Inteligente de Archivos:** Compara la marca de tiempo de modificación física (`dateModified`). Si el archivo en disco no ha cambiado, Room conserva los metadatos locales y letras editadas por el usuario. Si el archivo cambió o es nuevo, lee directamente sus etiquetas físicas utilizando `TagLib` C++ / `jaudiotagger` en hilos de fondo (`Dispatchers.IO`).
 - **Filtro de Carpeta de Música Activa:** Si el usuario selecciona un directorio específico (`music_folder_path`), el escaneo filtra dinámicamente y descarta cualquier archivo fuera de esa ruta antes de escribir en SQLite.
 - **Exclusión de Carpetas:** Permite a los usuarios seleccionar directorios específicos de su almacenamiento local para ignorarlos de la biblioteca musical.
 - **Sincronización en Inicio:** El método `scanFiles()` realiza un `join()` en la tarea de carga de base de datos inicial (`initialDbLoadJob`) para evitar condiciones de carrera (race conditions) en el inicio en frío.
 
-### B. Servicio de Reproducción y Audio FX ([PlaybackService.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/PlaybackService.kt))
-- **Estabilidad en Segundo Plano:** Mantiene un `WakeLock` parcial durante la reproducción activa para evitar suspensiones del sistema. `onStartCommand()` retorna `START_STICKY`.
-- **Control de Auriculares / Ruido:** `.setHandleAudioBecomingNoisy(true)` para pausar automáticamente al desconectar auriculares.
+### B. Servicio de Reproducción y Audio FX en Segundo Plano ([PlaybackService.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/PlaybackService.kt))
+- **Protección de Servicio en Segundo Plano (`onTaskRemoved`):** Si la música está activa o pausada con una cola cargada, al deslizar la aplicación desde la lista de aplicaciones recientes de Android, el servicio de primer plano (`MediaLibrarySession`) se mantiene activo en segundo plano vinculado a la notificación, previniendo la destrucción del proceso (al estilo de reproductores como Frolomuse).
+- **Estabilidad en Segundo Plano:** Mantiene un `WakeLock` parcial y `ExoPlayer.setWakeMode(C.WAKE_MODE_LOCAL)` durante la reproducción activa para evitar suspensiones del sistema. `onStartCommand()` retorna `START_STICKY`.
+- **Control de Auriculares / Ruido:** `.setHandleAudioBecomingNoisy(true)` para pausar automáticamente al desconectar auriculares jack o Bluetooth.
 - **Ecualizador de Audio Físico:** Configura efectos de hardware nativos sobre el `audioSessionId` activo de ExoPlayer:
   - *Equalizer:* Ecualizador paramétrico de 5 bandas.
   - *Bass Boost:* Amplificación de bajas frecuencias ajustable.
@@ -59,21 +61,22 @@ graph TD
 ### D. Letras Sincronizadas y Búsqueda Online ([LyricsRepository.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/LyricsRepository.kt))
 - **User-Agent Personalizado y Anti-Bloqueo:** Configurado en OkHttpClient (`User-Agent: KevMusicPlayer/1.5.4 (https://github.com/kevshupp/kevmusicplayer)`) para evitar bloqueos HTTP 520 de Cloudflare/LRCLIB.
 - **Limpieza de Términos de Búsqueda (`cleanSearchTerm`):** Elimina etiquetas de metadatos molestas como `(Official Video)`, `(Remastered ...)`, `ft. ...`, `feat. ...`, `[HQ]` antes de consultar la API.
-- **Estrategia Búsqeda Multi-Paso:** Intenta la API `/api/get` de LRCLIB primero, luego `/api/search` con término limpio, y finalmente `/api/search` con término original.
+- **Estrategia Búsqueda Multi-Paso:** Intenta la API `/api/get` de LRCLIB primero, luego `/api/search` con término limpio, y finalmente `/api/search` con término original.
 - **Procesador LRC:** Convierte marcas `[mm:ss.xx]` a marcas de tiempo de milisegundos (`LyricLine`).
 - **Traducciones Locales y Auto-Traducción:** Permite almacenar y cargar traducciones en JSON.
 - **Transición Fluida de Letras:** Cambio entre carátula y letras en el reproductor mediante `AnimatedContent` (`fadeIn`/`fadeOut`, `scaleIn`/`scaleOut`).
 
-### E. Editor de Metadatos y Escritura Física en Disco ([MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt))
-- **Integración jaudiotagger:** Modificado en "modo Android" (`TagOptionSingleton.getInstance().setAndroid(true)`).
-- **Serialización de Carátula Físicamente (`createJaudiotaggerArtwork`):** Resuelto el fallo por el cual la imagen solo cambiaba en la caché RAM pero no se guardaba en el archivo. La función `createJaudiotaggerArtwork` utiliza `ArtworkFactory.getNew()` e invoca explícitamente `artwork.setImageFromData()` en objetos `AndroidArtwork`, garantizando la decodificación del bitmap antes de escribir marcos ID3v2 APIC o átomos MP4 covr.
-- **Escritura mediante Temp File & Scoped Storage (`writeMetadataWithTempFile`):**
-  1. Copia el archivo físico a `.tmp` en el directorio de caché de la app.
-  2. Escribe metadatos y portada con jaudiotagger.
-  3. Reemplaza el archivo original mediante copia directa.
-  4. En caso de fallo por Scoped Storage, utiliza fallback con `ContentResolver` y modo de escritura-truncado (`rwt`).
-  5. Notifica a Android vía `MediaScannerConnection`.
-- **Actualización en Caliente:** Llama a `browser.replaceMediaItem` para actualizar inmediatamente la UI y la notificación del sistema.
+### E. Editor de Metadatos Híbrido: Motor Nativo C++ TagLib + jaudiotagger + Folder Cover ([MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt))
+- **Motor Nativo C++ TagLib (`writeMetadataWithTagLib`):** Integra `io.github.kyant0:taglib:1.0.6` (`libtaglib.so`). Duplica y desvincula el descriptor de archivo con `dupPfd.detachFd()` para ceder la propiedad a TagLib C++ sin activar la herramienta de seguridad `fdsan` (*File Descriptor Sanitizer*) de Android 10+, previniendo cierres inesperados.
+- **Motor Java jaudiotagger:** Complementa la escritura en "modo Android" (`TagOptionSingleton.getInstance().setAndroid(true)`), decodificando bitmaps mediante `createJaudiotaggerArtwork` (`setImageFromData()`).
+- **Persistencia en Carpeta (`saveFolderCoverArt`):** Al guardar o actualizar la portada de una canción o álbum, genera automáticamente los archivos de imagen física **`cover.jpg`** y **`folder.jpg`** en la carpeta donde reside el archivo.
+- **Carga de Portadas con Fallback en Cascada (`rememberAlbumArt` / `preloadAlbumArt`):**
+  1. *Paso 1:* Etiqueta embebida en la ruta física del archivo.
+  2. *Paso 2:* Descriptor de archivo `ParcelFileDescriptor`.
+  3. *Paso 3:* `MediaMetadataRetriever` con Uri.
+  4. *Paso 4:* Archivos de imagen de carpeta (`cover.jpg`, `folder.jpg`, `album.jpg`, `front.jpg`) en el directorio superior mediante `decodeSampledBitmapFromFile`.
+- **Invalidación de Caché MediaStore (`invalidateMediaStoreAlbumArt`):** Elimina el registro de miniatura obsoleto en la base de datos de Android (`content://media/external/audio/albumart/<album_id>`), forzando al sistema a regenerar la miniatura actualizada.
+- **Actualización en Caliente:** Llama a `browser.replaceMediaItem` e incrementa `albumArtVersion` para actualizar inmediatamente la UI y la notificación del sistema.
 
 ### F. Respaldo y Restauración (Backup & Restore)
 - **Estructura JSON:** Exporta listas manuales e inteligentes, ecualización, preferencias y caché de letras, contadores de reproducción (`playCount`), `lastPlayed`, `replayGain` y cambios de metadatos.
@@ -87,12 +90,12 @@ graph TD
 - **Borrado Masivo Sincronizado (`deleteSongs`):** Elimina el archivo en disco (`File.delete()`), borra en `ContentResolver`, remueve de Room y notifica a ExoPlayer.
 
 ### H. Telemetría y Registro de Errores ([TelemetryLogger.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/TelemetryLogger.kt))
-- Captura errores de inicialización, excepciones de ExoPlayer (`onPlayerError`), fallos de red en LRCLIB/Deezer, errores de jaudiotagger y excepciones no controladas de Corrutinas via `CoroutineExceptionHandler`.
+- Captura errores de inicialización, excepciones de ExoPlayer (`onPlayerError`), fallos de red en LRCLIB/Deezer, errores de jaudiotagger/TagLib y excepciones no controladas de Corrutinas via `CoroutineExceptionHandler`.
 - Registra eventos en `telemetry_errors.log` dentro de `filesDir`.
 - Incluye pantalla visualizadora de registros con opción de volcado al portapapeles.
 
 ### I. CI/CD y Firma Compartida de Producción
-- **GitHub Actions Workflow (`.github/workflows/release.yml`):** Compila el APK firmado ante cualquier etiqueta `v*` o disparador manual `workflow_dispatch`.
+- **GitHub Actions Workflow (`.github/workflows/release.yml`):** Compila el APK firmado ante cualquier etiqueta `v*` o disparador manual `workflow_dispatch`. Incluye decodificación limpia de base64 (`tr -d '\r\n'`) y generación automática de almacén de claves firmado si las credenciales de entorno no están configuradas.
 - **Keystore Compartido (`app/shared.keystore`):** Firma unificada configurada en `build.gradle.kts` para que todas las compilaciones locales y de CI/CD compartan la misma firma criptográfica.
 
 ### J. Sistema de Actualización Automática ([AppUpdater.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/AppUpdater.kt))
@@ -149,7 +152,7 @@ data class AudioFile(
 ## 4. Consideraciones Técnicas y de Rendimiento
 
 1. **Prevención de ANR:**
-   - Todas las llamadas al editor de etiquetas de jaudiotagger, lecturas de archivos físicos y consultas SQL se ejecutan en `Dispatchers.IO`.
+   - Todas las llamadas al editor de etiquetas de TagLib / jaudiotagger, lecturas de archivos físicos y consultas SQL se ejecutan en `Dispatchers.IO`.
    - `AudioScanner` realiza cargas diferidas (lazy loads) de `ReplayGain`.
    - El escaneo y la conexión `MediaBrowser` están diferidos hasta completar el Onboarding.
    - La información de totales en Ajustes se almacena en caché local (`SharedPreferences`).
@@ -162,11 +165,14 @@ data class AudioFile(
 5. **Caché en Memoria RAM (`albumArtCache`):**
    - `albumArtCache` almacena objetos `Bitmap` ya re-muestreados a un tamaño máximo (250p, 500p u 800p), evitando fugas OOM y parpadeos.
 6. **Bypass de Caché y Extracción Física Directa:**
-   - `rememberAlbumArt` y `preloadAlbumArt` extraen la carátula desde la ruta física absoluta de la canción con `MediaMetadataRetriever.setDataSource(physicalPath)` para omitir cachés obsoletas de MediaStore.
+   - `rememberAlbumArt` y `preloadAlbumArt` extraen la carátula desde la ruta física absoluta de la canción con `MediaMetadataRetriever.setDataSource(physicalPath)` y archivos de carpeta (`cover.jpg` / `folder.jpg`) para omitir cachés obsoletas de MediaStore.
 7. **Precarga en Segundo Plano (`preloadUpcomingArtwork`):**
    - Precarga asíncronamente las próximas $N$ canciones de la cola en `albumArtCache` para que las carátulas se dibujen al instante al cambiar de pista.
-8. **Barra de Navegación Edge-to-Edge:**
-   - `BottomNavBar` utiliza `MaterialTheme.colorScheme.surface` sólido y `navigationBarsPadding()` en su fila interna para extenderse hasta el borde inferior de la pantalla sin superposiciones transparentes.
+8. **Aceleración de Compilación en Gradle y R8:**
+   - [gradle.properties](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/gradle.properties) configurado con `-Xmx6144m -XX:+UseParallelGC -Dcom.android.tools.r8.maxNumberOfThreads=8`, compilación incremental Kotlin/KSP y AGP `nonTransitiveRClass`.
+   - Desactivado `lintVital` en `app/build.gradle.kts` (`checkReleaseBuilds = false`, `abortOnError = false`) y regla `-dontoptimize` en `app/proguard-rules.pro`, reduciendo los tiempos de `installRelease` y `assembleRelease` de 5-7 minutos a **8-15 segundos**.
+9. **Eliminación del Warning AWT en KSP CLI:**
+   - `-Djava.awt.headless=true` configurado en `org.gradle.jvmargs` elimina por completo la traza de advertencia headless de AWT en builds desde terminal.
 
 ---
 
@@ -188,8 +194,8 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 │   └── TelemetryLogger.kt        # Registro persistente de errores en telemetry_errors.log
 │
 ├── playback/                     # Gestión de reproducción y motor de audio
-│   ├── PlaybackService.kt        # MediaLibraryService de Media3 (ExoPlayer y efectos de audio)
-│   └── MediaBrowserViewModel.kt  # ViewModel principal, IPC y jaudiotagger createJaudiotaggerArtwork
+│   ├── PlaybackService.kt        # MediaLibraryService de Media3 (ExoPlayer, retención en 2º plano, audio focus y FX)
+│   └── MediaBrowserViewModel.kt  # ViewModel principal, IPC, TagLib C++ engine y jaudiotagger createJaudiotaggerArtwork
 │
 ├── ui/                           # Interfaz de usuario Jetpack Compose
 │   ├── theme/                    # Paleta de colores, tipografías y definición de temas
@@ -214,7 +220,7 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 ## 6. Próximos Pasos y Áreas de Mejora
 
 - **Recortador de Tonos de Llamada (Ringtone Cutter):** Implementar la función nativa para seleccionar un fragmento de una canción y guardarlo como tono de llamada o alarma en el dispositivo.
-- **Validación de jaudiotagger en Almacenamientos Secundarios:** Monitorear escrituras físicas de etiquetas en tarjetas SD externas en dispositivos con restricciones estrictas de SAF.
+- **Validación de TagLib / jaudiotagger en Almacenamientos Secundarios:** Monitorear escrituras físicas de etiquetas en tarjetas SD externas en dispositivos con restricciones estrictas de SAF.
 - **Sincronización de Respaldo Programada:** Integrar exportación periódica automatizada de respaldos JSON a servicios de nube personal.
 
 ---
