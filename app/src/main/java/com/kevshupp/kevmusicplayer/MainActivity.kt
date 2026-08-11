@@ -366,11 +366,19 @@ fun AppNavigation() {
                             viewModel.requestedTab.value = "Artists"
                             viewModel.requestedSubViewType.value = "Artist"
                             viewModel.requestedSubViewName.value = artistName
+                            if (backStack.lastOrNull() is Screen.Player) {
+                                backStack.removeAt(backStack.size - 1)
+                            }
+                            switchToTab(Screen.Library)
                         },
                         onNavigateToAlbum = { albumName ->
                             viewModel.requestedTab.value = "Albums"
                             viewModel.requestedSubViewType.value = "Album"
                             viewModel.requestedSubViewName.value = albumName
+                            if (backStack.lastOrNull() is Screen.Player) {
+                                backStack.removeAt(backStack.size - 1)
+                            }
+                            switchToTab(Screen.Library)
                         }
                     )
                 }

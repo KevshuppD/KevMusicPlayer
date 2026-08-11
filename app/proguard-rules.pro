@@ -12,6 +12,9 @@
 #   public *;
 #}
 
+# Bypass R8 multi-pass optimization passes to speed up Release compilation significantly
+-dontoptimize
+
 # Preserve the line number information and source files for debugging release stack traces
 -keepattributes SourceFile,LineNumberTable
 

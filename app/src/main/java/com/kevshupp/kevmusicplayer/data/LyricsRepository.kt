@@ -31,7 +31,21 @@ object LyricsRepository {
         .connectTimeout(25, TimeUnit.SECONDS)
         .readTimeout(25, TimeUnit.SECONDS)
         .writeTimeout(25, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            val original = chain.request()
+            val request = original.newBuilder()
+                .header("User-Agent", "KevMusicPlayer/1.5.4 (https://github.com/kevshupp/kevmusicplayer)")
+                .build()
+            chain.proceed(request)
+        }
         .build()
+
+    fun cleanSearchTerm(text: String): String {
+        return text
+            .replace(Regex("(?i)\\s*[\\[(](?:official|music|video|lyric|audio|hd|hq|4k|remastered|remaster|live|ft\\.|feat\\.).*?[\\])]"), "")
+            .replace(Regex("(?i)\\s*(?:ft\\.|feat\\.).*"), "")
+            .trim()
+    }
 
     fun parseLrc(lrcText: String?): List<LyricLine> {
         if (lrcText.isNullOrBlank()) return emptyList()
@@ -65,20 +79,38 @@ object LyricsRepository {
 
     suspend fun searchLyricsOptionsFromLrcLib(artist: String, title: String): List<LrcLibSearchResult> {
         return withContext(Dispatchers.IO) {
-            val query = URLEncoder.encode("$artist $title", "UTF-8")
-            val request = Request.Builder()
-                .url("https://lrclib.net/api/search?q=$query")
-                .build()
             val list = mutableListOf<LrcLibSearchResult>()
-            var attempt = 0
-            val maxAttempts = 3
+            val cleanedTitle = cleanSearchTerm(title)
+            val cleanedArtist = cleanSearchTerm(artist)
+
+            // Prepare query candidates
+            val queriesToTry = mutableListOf<String>()
+            val cleanQuery = if (cleanedArtist.isBlank() || cleanedArtist.contains("Unknown", ignoreCase = true)) {
+                cleanedTitle
+            } else {
+                "$cleanedArtist $cleanedTitle"
+            }.trim()
+            if (cleanQuery.isNotBlank()) queriesToTry.add(cleanQuery)
+
+            val rawQuery = if (artist.isBlank() || artist.contains("Unknown", ignoreCase = true)) {
+                title
+            } else {
+                "$artist $title"
+            }.trim()
+            if (rawQuery.isNotBlank() && rawQuery != cleanQuery) queriesToTry.add(rawQuery)
+
             var lastException: Exception? = null
 
-            while (attempt < maxAttempts) {
+            for (q in queriesToTry) {
+                val encodedQuery = URLEncoder.encode(q, "UTF-8")
+                val request = Request.Builder()
+                    .url("https://lrclib.net/api/search?q=$encodedQuery")
+                    .build()
+
                 try {
                     client.newCall(request).execute().use { response ->
                         if (response.isSuccessful) {
-                            val body = response.body?.string() ?: return@withContext emptyList()
+                            val body = response.body?.string() ?: return@use
                             val jsonArray = JSONArray(body)
                             for (i in 0 until jsonArray.length()) {
                                 val obj = jsonArray.getJSONObject(i)
@@ -87,62 +119,92 @@ object LyricsRepository {
                                 val artistName = obj.optString("artistName", "")
                                 val albumName = obj.optString("albumName", "")
                                 val duration = obj.optInt("duration", 0)
-                                
+
                                 var synced = obj.optString("syncedLyrics", "")
                                 if (synced.isEmpty() || synced == "null") synced = ""
-                                
+
                                 var plain = obj.optString("plainLyrics", "")
                                 if (plain.isEmpty() || plain == "null") plain = ""
-                                
-                                list.add(
-                                    LrcLibSearchResult(
-                                        id = id,
-                                        trackName = trackName,
-                                        artistName = artistName,
-                                        albumName = albumName,
-                                        durationSeconds = duration,
-                                        syncedLyrics = if (synced.isNotEmpty()) synced else null,
-                                        plainLyrics = if (plain.isNotEmpty()) plain else null
+
+                                if (list.none { it.id == id }) {
+                                    list.add(
+                                        LrcLibSearchResult(
+                                            id = id,
+                                            trackName = trackName,
+                                            artistName = artistName,
+                                            albumName = albumName,
+                                            durationSeconds = duration,
+                                            syncedLyrics = if (synced.isNotEmpty()) synced else null,
+                                            plainLyrics = if (plain.isNotEmpty()) plain else null
+                                        )
                                     )
-                                )
-                            }
-                            lastException = null
-                            break // Success!
-                        } else {
-                            if (response.code == 429 || response.code >= 500) {
-                                throw java.io.IOException("HTTP error code: ${response.code}")
-                            } else {
-                                break // Non-retryable error
+                                }
                             }
                         }
                     }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     lastException = e
-                    val isNetworkError = e is java.net.SocketTimeoutException || 
-                                         e is java.net.ConnectException || 
-                                         e is java.net.UnknownHostException || 
-                                         e is java.net.SocketException ||
-                                         e is java.io.IOException
-                    if (!isNetworkError) {
-                        break
-                    }
-                    kotlinx.coroutines.delay(1000L * (attempt + 1))
                 }
-                attempt++
+
+                if (list.isNotEmpty()) break
+            }
+
+            // Also try explicit track_name and artist_name search if search results are empty
+            if (list.isEmpty() && cleanedTitle.isNotBlank() && cleanedArtist.isNotBlank() && !cleanedArtist.contains("Unknown", ignoreCase = true)) {
+                try {
+                    val encTrack = URLEncoder.encode(cleanedTitle, "UTF-8")
+                    val encArtist = URLEncoder.encode(cleanedArtist, "UTF-8")
+                    val request = Request.Builder()
+                        .url("https://lrclib.net/api/search?track_name=$encTrack&artist_name=$encArtist")
+                        .build()
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val body = response.body?.string() ?: ""
+                            val jsonArray = JSONArray(body)
+                            for (i in 0 until jsonArray.length()) {
+                                val obj = jsonArray.getJSONObject(i)
+                                val id = obj.optLong("id", 0L)
+                                val trackName = obj.optString("trackName", "")
+                                val artistName = obj.optString("artistName", "")
+                                val albumName = obj.optString("albumName", "")
+                                val duration = obj.optInt("duration", 0)
+
+                                var synced = obj.optString("syncedLyrics", "")
+                                if (synced.isEmpty() || synced == "null") synced = ""
+
+                                var plain = obj.optString("plainLyrics", "")
+                                if (plain.isEmpty() || plain == "null") plain = ""
+
+                                if (list.none { it.id == id }) {
+                                    list.add(
+                                        LrcLibSearchResult(
+                                            id = id,
+                                            trackName = trackName,
+                                            artistName = artistName,
+                                            albumName = albumName,
+                                            durationSeconds = duration,
+                                            syncedLyrics = if (synced.isNotEmpty()) synced else null,
+                                            plainLyrics = if (plain.isNotEmpty()) plain else null
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    lastException = e
+                }
             }
 
             val exceptionToLog = lastException
-            if (exceptionToLog != null) {
-                val isNetworkError = exceptionToLog is java.net.SocketTimeoutException || 
-                                     exceptionToLog is java.net.ConnectException || 
-                                     exceptionToLog is java.net.UnknownHostException || 
-                                     exceptionToLog is java.net.SocketException
+            if (exceptionToLog != null && list.isEmpty()) {
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     KevMusicPlayerApplication.instance,
                     "LyricsSearch",
                     "Failed search from LrcLib for $artist - $title: ${exceptionToLog.localizedMessage ?: exceptionToLog.message}",
-                    if (isNetworkError) null else exceptionToLog
+                    exceptionToLog
                 )
             }
 
@@ -154,77 +216,47 @@ object LyricsRepository {
 
     suspend fun fetchLyricsFromLrcLib(artist: String, title: String): String? {
         return withContext(Dispatchers.IO) {
-            val query = URLEncoder.encode("$artist $title", "UTF-8")
-            val request = Request.Builder()
-                .url("https://lrclib.net/api/search?q=$query")
-                .build()
-            var attempt = 0
-            val maxAttempts = 3
-            var lastException: Exception? = null
+            val cleanedTitle = cleanSearchTerm(title)
+            val cleanedArtist = cleanSearchTerm(artist)
 
-            while (attempt < maxAttempts) {
+            // Pass 1: Try direct GET endpoint first (/api/get)
+            if (cleanedTitle.isNotBlank() && cleanedArtist.isNotBlank() && !cleanedArtist.contains("Unknown", ignoreCase = true)) {
                 try {
+                    val encTrack = URLEncoder.encode(cleanedTitle, "UTF-8")
+                    val encArtist = URLEncoder.encode(cleanedArtist, "UTF-8")
+                    val request = Request.Builder()
+                        .url("https://lrclib.net/api/get?artist_name=$encArtist&track_name=$encTrack")
+                        .build()
                     client.newCall(request).execute().use { response ->
                         if (response.isSuccessful) {
-                            val body = response.body?.string() ?: return@withContext null
-                            val jsonArray = JSONArray(body)
-                            if (jsonArray.length() > 0) {
-                                // First pass: try to find a match with synced lyrics
-                                for (i in 0 until jsonArray.length()) {
-                                    val match = jsonArray.getJSONObject(i)
-                                    val syncedLyrics = match.optString("syncedLyrics")
-                                    if (!syncedLyrics.isNullOrEmpty() && syncedLyrics != "null") {
-                                        return@withContext syncedLyrics
-                                    }
+                            val body = response.body?.string()
+                            if (!body.isNullOrEmpty()) {
+                                val obj = JSONObject(body)
+                                val syncedLyrics = obj.optString("syncedLyrics")
+                                if (!syncedLyrics.isNullOrEmpty() && syncedLyrics != "null") {
+                                    return@withContext syncedLyrics
                                 }
-                                // Second pass: fallback to the first match with plain lyrics
-                                for (i in 0 until jsonArray.length()) {
-                                    val match = jsonArray.getJSONObject(i)
-                                    val plainLyrics = match.optString("plainLyrics")
-                                    if (!plainLyrics.isNullOrEmpty() && plainLyrics != "null") {
-                                        return@withContext plainLyrics
-                                    }
+                                val plainLyrics = obj.optString("plainLyrics")
+                                if (!plainLyrics.isNullOrEmpty() && plainLyrics != "null") {
+                                    return@withContext plainLyrics
                                 }
-                            }
-                            lastException = null
-                            return@withContext null
-                        } else {
-                            if (response.code == 429 || response.code >= 500) {
-                                throw java.io.IOException("HTTP error code: ${response.code}")
-                            } else {
-                                break // Non-retryable error
                             }
                         }
                     }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
-                    lastException = e
-                    val isNetworkError = e is java.net.SocketTimeoutException || 
-                                         e is java.net.ConnectException || 
-                                         e is java.net.UnknownHostException || 
-                                         e is java.net.SocketException ||
-                                         e is java.io.IOException
-                    if (!isNetworkError) {
-                        break
-                    }
-                    kotlinx.coroutines.delay(1000L * (attempt + 1))
                 }
-                attempt++
             }
 
-            val exceptionToLog = lastException
-            if (exceptionToLog != null) {
-                val isNetworkError = exceptionToLog is java.net.SocketTimeoutException || 
-                                     exceptionToLog is java.net.ConnectException || 
-                                     exceptionToLog is java.net.UnknownHostException || 
-                                     exceptionToLog is java.net.SocketException
-                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                    KevMusicPlayerApplication.instance,
-                    "LyricsFetch",
-                    "Failed fetch from LrcLib for $artist - $title: ${exceptionToLog.localizedMessage ?: exceptionToLog.message}",
-                    if (isNetworkError) null else exceptionToLog
-                )
+            // Pass 2: Search with searchLyricsOptionsFromLrcLib
+            val results = searchLyricsOptionsFromLrcLib(artist, title)
+            if (results.isNotEmpty()) {
+                val syncedMatch = results.firstOrNull { !it.syncedLyrics.isNullOrBlank() }
+                if (syncedMatch != null) return@withContext syncedMatch.syncedLyrics
+                val plainMatch = results.firstOrNull { !it.plainLyrics.isNullOrBlank() }
+                if (plainMatch != null) return@withContext plainMatch.plainLyrics
             }
+
             null
         }
     }

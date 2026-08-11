@@ -12,6 +12,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -63,6 +64,8 @@ sealed interface SubView {
     data class GenreDetail(val genreName: String) : SubView
     data class FolderDetail(val folderName: String) : SubView
     data class PlaylistDetail(val playlistName: String) : SubView
+    data object HistoryDetail : SubView
+    data object RecentlyAddedDetail : SubView
 }
 
 val SubViewSaver = Saver<SubView?, Any>(
@@ -73,6 +76,8 @@ val SubViewSaver = Saver<SubView?, Any>(
             is SubView.GenreDetail -> listOf("Genre", subView.genreName)
             is SubView.FolderDetail -> listOf("Folder", subView.folderName)
             is SubView.PlaylistDetail -> listOf("Playlist", subView.playlistName)
+            is SubView.HistoryDetail -> listOf("History", "")
+            is SubView.RecentlyAddedDetail -> listOf("RecentlyAdded", "")
             null -> null
         }
     },
@@ -87,6 +92,8 @@ val SubViewSaver = Saver<SubView?, Any>(
                 "Genre" -> SubView.GenreDetail(name)
                 "Folder" -> SubView.FolderDetail(name)
                 "Playlist" -> SubView.PlaylistDetail(name)
+                "History" -> SubView.HistoryDetail
+                "RecentlyAdded" -> SubView.RecentlyAddedDetail
                 else -> null
             }
         } else null
@@ -125,15 +132,32 @@ fun LibraryScreen(
     var isMultiSelectMode by remember { mutableStateOf(false) }
     val selectedSongs = remember { mutableStateListOf<AudioFile>() }
 
+    val subViewHistory = remember { mutableStateListOf<SubView>() }
+
+    val navigateToSubView: (SubView) -> Unit = { newSubView ->
+        currentSubView?.let { subViewHistory.add(it) }
+        currentSubView = newSubView
+    }
+
+    val navigateBack: () -> Unit = {
+        if (subViewHistory.isNotEmpty()) {
+            currentSubView = subViewHistory.removeAt(subViewHistory.size - 1)
+        } else {
+            currentSubView = null
+        }
+    }
+
     // Intercept system back gestures to exit active subview details, clear search queries, or exit multi-select first
-    BackHandler(enabled = isActive && (isMultiSelectMode || searchQuery.isNotEmpty() || currentSubView != null)) {
+    BackHandler(enabled = isActive && (isMultiSelectMode || searchQuery.isNotEmpty() || currentSubView != null || showInsights)) {
         if (isMultiSelectMode) {
             isMultiSelectMode = false
             selectedSongs.clear()
         } else if (searchQuery.isNotEmpty()) {
             searchQuery = ""
+        } else if (showInsights) {
+            showInsights = false
         } else {
-            currentSubView = null
+            navigateBack()
         }
     }
 
@@ -166,11 +190,15 @@ fun LibraryScreen(
                 viewModel.requestedTab.value = null
             }
             if (reqType != null && reqName != null) {
+                subViewHistory.clear()
                 currentSubView = when (reqType) {
                     "Album" -> SubView.AlbumDetail(reqName)
                     "Artist" -> SubView.ArtistDetail(reqName)
                     "Genre" -> SubView.GenreDetail(reqName)
                     "Folder" -> SubView.FolderDetail(reqName)
+                    "Playlist" -> SubView.PlaylistDetail(reqName)
+                    "History" -> SubView.HistoryDetail
+                    "RecentlyAdded" -> SubView.RecentlyAddedDetail
                     else -> null
                 }
                 viewModel.requestedSubViewType.value = null
@@ -187,11 +215,19 @@ fun LibraryScreen(
     // Filter audio files by search query
     val filteredFiles by remember {
         derivedStateOf {
-            val filtered = audioFiles.filter {
-                it.title.contains(searchQuery, ignoreCase = true) ||
-                it.artist.contains(searchQuery, ignoreCase = true) ||
-                it.album.contains(searchQuery, ignoreCase = true) ||
-                it.genre.contains(searchQuery, ignoreCase = true)
+            val queryClean = searchQuery.stripAccents().trim()
+            val filtered = if (queryClean.isEmpty()) {
+                audioFiles
+            } else {
+                val terms = queryClean.split(Regex("\\s+"))
+                audioFiles.filter { song ->
+                    val titleNorm = song.title.stripAccents()
+                    val artistNorm = song.artist.stripAccents()
+                    val albumNorm = song.album.stripAccents()
+                    val genreNorm = song.genre.stripAccents()
+                    val fullText = "$titleNorm $artistNorm $albumNorm $genreNorm"
+                    terms.all { term -> fullText.contains(term, ignoreCase = true) }
+                }
             }
             when (sortBy) {
                 "Alphabetical" -> filtered.sortedWith { songA, songB ->
@@ -241,6 +277,10 @@ fun LibraryScreen(
                     is SubView.PlaylistDetail -> {
                         viewModel?.smartPlaylists?.get(sv.playlistName)
                             ?: viewModel?.playlists?.get(sv.playlistName) ?: emptyList()
+                    }
+                    is SubView.HistoryDetail -> {
+                        filteredFiles.filter { it.lastPlayed > 0L }
+                            .sortedByDescending { it.lastPlayed }
                     }
                     else -> emptyList()
                 }
@@ -600,7 +640,7 @@ fun LibraryScreen(
                                 "Albums" -> {
                                     AlbumGridView(
                                         albums = albums,
-                                        onAlbumClick = { currentSubView = SubView.AlbumDetail(it) },
+                                        onAlbumClick = { navigateToSubView(SubView.AlbumDetail(it)) },
                                         onDeleteAlbum = { name, songs -> albumToDelete = Pair(name, songs) },
                                         onAddAlbumToPlaylist = { name, songs -> albumForPlaylist = Pair(name, songs) },
                                         onEditAlbum = { name, songs -> albumToEdit = Pair(name, songs) },
@@ -610,19 +650,19 @@ fun LibraryScreen(
                                 "Artists" -> {
                                     ArtistListView(
                                         artists = artists,
-                                        onArtistClick = { currentSubView = SubView.ArtistDetail(it) }
+                                        onArtistClick = { navigateToSubView(SubView.ArtistDetail(it)) }
                                     )
                                 }
                                 "Genres" -> {
                                     GenreGridView(
                                         genres = genres,
-                                        onGenreClick = { currentSubView = SubView.GenreDetail(it) }
+                                        onGenreClick = { navigateToSubView(SubView.GenreDetail(it)) }
                                     )
                                 }
                                 "Folders" -> {
                                     FolderGridView(
                                         folders = folders,
-                                        onFolderClick = { currentSubView = SubView.FolderDetail(it) }
+                                        onFolderClick = { navigateToSubView(SubView.FolderDetail(it)) }
                                     )
                                 }
                                 "Playlists" -> {
@@ -646,7 +686,7 @@ fun LibraryScreen(
                                         onCreateSmartPlaylist = { name, rule, limit, isAdvanced, advRule ->
                                             viewModel?.createSmartPlaylist(name, rule, limit, isAdvanced, advRule)
                                         },
-                                        onPlaylistClick = { currentSubView = SubView.PlaylistDetail(it) },
+                                        onPlaylistClick = { navigateToSubView(SubView.PlaylistDetail(it)) },
                                         onDeletePlaylist = { viewModel?.deletePlaylist(it) }
                                     )
                                 }
@@ -663,6 +703,8 @@ fun LibraryScreen(
                     is SubView.GenreDetail -> subView.genreName
                     is SubView.FolderDetail -> subView.folderName
                     is SubView.PlaylistDetail -> subView.playlistName
+                    is SubView.HistoryDetail -> if (systemLang == "es") "Historial de Reproducción" else "Playback History"
+                    is SubView.RecentlyAddedDetail -> if (systemLang == "es") "Canciones Nuevas" else "Recently Added"
                 }
                 val typeLabel = when (subView) {
                     is SubView.AlbumDetail -> "Album"
@@ -670,6 +712,8 @@ fun LibraryScreen(
                     is SubView.GenreDetail -> "Genre"
                     is SubView.FolderDetail -> "Folder"
                     is SubView.PlaylistDetail -> "Playlist"
+                    is SubView.HistoryDetail -> if (systemLang == "es") "Historial" else "History"
+                    is SubView.RecentlyAddedDetail -> if (systemLang == "es") "Nuevas" else "New Added"
                 }
                  val subSongs = remember(filteredFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy) {
                     val baseList = when (subView) {
@@ -680,6 +724,13 @@ fun LibraryScreen(
                         is SubView.PlaylistDetail -> {
                             viewModel?.smartPlaylists?.get(subView.playlistName)
                                 ?: viewModel?.playlists?.get(subView.playlistName) ?: emptyList()
+                        }
+                        is SubView.HistoryDetail -> {
+                            filteredFiles.filter { it.lastPlayed > 0L }
+                                .sortedByDescending { it.lastPlayed }
+                        }
+                        is SubView.RecentlyAddedDetail -> {
+                            filteredFiles.sortedByDescending { it.dateAdded }
                         }
                     }
                     if (subView is SubView.PlaylistDetail) {
@@ -738,7 +789,7 @@ fun LibraryScreen(
                             .padding(horizontal = 8.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { currentSubView = null }) {
+                        IconButton(onClick = { navigateBack() }) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                                 contentDescription = "Back",
@@ -849,308 +900,421 @@ fun LibraryScreen(
                         }
                     }
                     
-                    // Centered Spacious Header
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        // Large Header Image
-                        if (subView is SubView.PlaylistDetail) {
-                            val currentCover = viewModel?.playlistCovers?.get(subView.playlistName)
-                            Box(
-                                modifier = Modifier
-                                    .size(160.dp)
-                                    .shadow(8.dp, RoundedCornerShape(24.dp))
-                                    .clip(RoundedCornerShape(24.dp))
-                                    .background(if (currentCover != null) SolidColor(Color.Transparent) else getGradientForString(subView.playlistName))
-                                    .clickable(enabled = !isSmart) {
-                                        coverPickerLauncher.launch("image/*")
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (currentCover != null) {
-                                    coil.compose.SubcomposeAsyncImage(
-                                        model = java.io.File(currentCover),
-                                        contentDescription = "Playlist Cover",
-                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize(),
-                                        error = {
-                                            Icon(Icons.Rounded.Image, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
-                                        }
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = if (isSmart) Icons.Rounded.AutoAwesome else Icons.Rounded.Edit,
-                                        contentDescription = if (isSmart) "Smart Playlist" else "Edit Cover",
-                                        tint = Color.White.copy(alpha = 0.8f),
-                                        modifier = Modifier.size(48.dp)
-                                    )
-                                }
-                            }
-                        } else if (subView is SubView.AlbumDetail) {
-                            val firstSong = subSongs.firstOrNull()
-                            val artBytes = rememberAlbumArt(firstSong?.uriString)
-                            Box(
-                                modifier = Modifier
-                                    .size(160.dp)
-                                    .shadow(8.dp, RoundedCornerShape(24.dp))
-                                    .clip(RoundedCornerShape(24.dp))
-                                    .background(getGradientForString(subView.albumName))
-                                    .clickable { albumForCoverEditing = subView.albumName },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                coil.compose.SubcomposeAsyncImage(
-                                    model = artBytes,
-                                    contentDescription = "Album Cover",
-                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize(),
-                                    loading = {
-                                        Icon(
-                                            imageVector = Icons.Rounded.MusicNote,
-                                            contentDescription = null,
-                                            tint = Color.White.copy(alpha = 0.8f),
-                                            modifier = Modifier.size(48.dp)
-                                        )
-                                    },
-                                    error = {
-                                        Icon(
-                                            imageVector = Icons.Rounded.MusicNote,
-                                            contentDescription = null,
-                                            tint = Color.White.copy(alpha = 0.8f),
-                                            modifier = Modifier.size(48.dp)
-                                        )
-                                    }
-                                )
-                                // Sleek edit overlay icon
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(Color.Black.copy(alpha = 0.2f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Edit,
-                                        contentDescription = "Edit Album Cover",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                            }
-                        } else if (subView is SubView.ArtistDetail) {
-                            Box(
-                                modifier = Modifier
-                                    .size(160.dp)
-                                    .shadow(8.dp, CircleShape)
-                                    .clip(CircleShape)
-                                    .background(getGradientForString(subView.artistName))
-                                    .clickable { artistImagePickerLauncher.launch("image/*") },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                ArtistImage(
-                                    artist = subView.artistName,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                                // Sleek edit overlay icon
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(Color.Black.copy(alpha = 0.2f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Edit,
-                                        contentDescription = "Edit Artist Image",
-                                        tint = Color.White.copy(alpha = 0.8f),
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                            }
-                        } else {
-                            val placeholderText = title.firstOrNull()?.uppercase() ?: "?"
-                            Box(
-                                modifier = Modifier
-                                    .size(160.dp)
-                                    .shadow(8.dp, RoundedCornerShape(24.dp))
-                                    .clip(RoundedCornerShape(24.dp))
-                                    .background(getGradientForString(title)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = placeholderText,
-                                    fontSize = 48.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        Text(
-                            text = if (isSmart) "LISTA INTELIGENTE" else typeLabel.uppercase(),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            letterSpacing = 1.5.sp
-                        )
-                        
-                        Spacer(modifier = Modifier.height(4.dp))
-                        
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(horizontal = 32.dp)
-                        )
-                        
-                        val songCountText = "${subSongs.size} ${if (subSongs.size == 1) "canción" else "canciones"}"
-                        val totalDurationMs = subSongs.sumOf { it.duration }
-                        val durationText = formatDuration(totalDurationMs)
-                        val subtitleText = when (subView) {
-                            is SubView.AlbumDetail -> {
-                                val artistName = subSongs.firstOrNull()?.artist ?: "Artista Desconocido"
-                                "$artistName • $songCountText • $durationText"
-                            }
-                            else -> "$songCountText • $durationText"
-                        }
-                        
-                        Spacer(modifier = Modifier.height(6.dp))
-                        
-                        Text(
-                            text = subtitleText,
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 32.dp)
-                        )
-                        
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        // Play & Shuffle Row
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Button(
-                                onClick = {
-                                    if (subSongs.isNotEmpty()) {
-                                        onFileClick(subSongs.first(), subSongs)
-                                    }
-                                },
-                                shape = RoundedCornerShape(50),
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
-                            ) {
-                                Icon(Icons.Rounded.PlayArrow, contentDescription = "Play")
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Reproducir", fontWeight = FontWeight.Bold)
-                            }
-                            
-                            FilledTonalButton(
-                                onClick = {
-                                    if (subSongs.isNotEmpty()) {
-                                        val randomSong = subSongs.random()
-                                        onFileClick(randomSong, subSongs)
-                                        player?.shuffleModeEnabled = true
-                                    }
-                                },
-                                shape = RoundedCornerShape(50),
-                                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
-                            ) {
-                                Icon(Icons.Rounded.Shuffle, contentDescription = "Shuffle")
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Aleatorio", fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                    
-                    // Floating button indicator spacer if current song is inside
-                    val showLocateButtonSub = scrollTargetIndex != -1
-                    if (showLocateButtonSub) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp),
-                            contentAlignment = Alignment.CenterEnd
-                        ) {
-                            IconButton(
-                                onClick = {
-                                    coroutineScope.launch {
-                                        subViewSongsListState.animateScrollToItem(scrollTargetIndex)
-                                    }
-                                },
-                                colors = IconButtonDefaults.iconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                ),
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.MusicNote,
-                                    contentDescription = "Ir a canción actual",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
                     // Songs listing under the sub-view
-                    SongListView(
-                        songs = subSongs,
-                        showTrackNumbers = subView is SubView.AlbumDetail,
-                        listState = subViewSongsListState,
-                        onSongClick = { song ->
-                            songForOptionsSheet = song
-                            playlistContextForOptionsSheet = if (subView is SubView.PlaylistDetail) {
-                                val isSmart = viewModel?.smartPlaylists?.containsKey(subView.playlistName) == true || subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
-                                if (isSmart) null else subView.playlistName
-                            } else null
-                        },
-                        onEditTagsClick = { songForTagEditing = it },
-                        onSongLongClick = { song ->
-                            if (!isMultiSelectMode) {
-                                isMultiSelectMode = true
-                            }
-                            if (selectedSongs.contains(song)) {
-                                selectedSongs.remove(song)
-                                if (selectedSongs.isEmpty()) {
-                                    isMultiSelectMode = false
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        SongListView(
+                            songs = subSongs,
+                            showTrackNumbers = subView is SubView.AlbumDetail,
+                            listState = subViewSongsListState,
+                            onSongClick = { song ->
+                                songForOptionsSheet = song
+                                playlistContextForOptionsSheet = if (subView is SubView.PlaylistDetail) {
+                                    val isSmart = viewModel?.smartPlaylists?.containsKey(subView.playlistName) == true || subView.playlistName == "Más Escuchadas" || subView.playlistName.startsWith("Recomendaciones")
+                                    if (isSmart) null else subView.playlistName
+                                } else null
+                            },
+                            onEditTagsClick = { songForTagEditing = it },
+                            onSongLongClick = { song ->
+                                if (!isMultiSelectMode) {
+                                    isMultiSelectMode = true
                                 }
-                            } else {
-                                selectedSongs.add(song)
-                            }
-                        },
-                        playlistContextName = if (subView is SubView.PlaylistDetail) subView.playlistName else null,
-                        onPlayNextClick = { viewModel?.playNext(it) },
-                        onAddToQueueClick = { viewModel?.addToQueue(it) },
-                        onAddToPlaylistClick = { songForPlaylist = it },
-                        onRemoveFromPlaylistClick = { viewModel?.removeSongFromPlaylist((subView as? SubView.PlaylistDetail)?.playlistName ?: "", it.id) },
-                        selectedSongs = selectedSongs.toSet(),
-                        isMultiSelectMode = isMultiSelectMode,
-                        onSongSelectToggle = { song ->
-                            if (selectedSongs.contains(song)) {
-                                selectedSongs.remove(song)
-                                if (selectedSongs.isEmpty()) {
-                                    isMultiSelectMode = false
+                                if (selectedSongs.contains(song)) {
+                                    selectedSongs.remove(song)
+                                    if (selectedSongs.isEmpty()) {
+                                        isMultiSelectMode = false
+                                    }
+                                } else {
+                                    selectedSongs.add(song)
                                 }
-                            } else {
-                                selectedSongs.add(song)
+                            },
+                            playlistContextName = if (subView is SubView.PlaylistDetail) subView.playlistName else null,
+                            onPlayNextClick = { viewModel?.playNext(it) },
+                            onAddToQueueClick = { viewModel?.addToQueue(it) },
+                            onAddToPlaylistClick = { songForPlaylist = it },
+                            onRemoveFromPlaylistClick = { viewModel?.removeSongFromPlaylist((subView as? SubView.PlaylistDetail)?.playlistName ?: "", it.id) },
+                            selectedSongs = selectedSongs.toSet(),
+                            isMultiSelectMode = isMultiSelectMode,
+                            onSongSelectToggle = { song ->
+                                if (selectedSongs.contains(song)) {
+                                    selectedSongs.remove(song)
+                                    if (selectedSongs.isEmpty()) {
+                                        isMultiSelectMode = false
+                                    }
+                                } else {
+                                    selectedSongs.add(song)
+                                }
+                            },
+                            onSelectionChanged = { newSelection ->
+                                selectedSongs.clear()
+                                selectedSongs.addAll(newSelection)
+                                isMultiSelectMode = newSelection.isNotEmpty()
+                            },
+                            onPlayDirectly = { song ->
+                                onFileClick(song, subSongs)
+                            },
+                            headerContent = {
+                                item {
+                                    // Centered Spacious Header
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 24.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        // Large Header Image
+                                        if (subView is SubView.PlaylistDetail) {
+                                            val currentCover = viewModel?.playlistCovers?.get(subView.playlistName)
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(160.dp)
+                                                    .shadow(8.dp, RoundedCornerShape(24.dp))
+                                                    .clip(RoundedCornerShape(24.dp))
+                                                    .background(if (currentCover != null) SolidColor(Color.Transparent) else getGradientForString(subView.playlistName))
+                                                    .clickable(enabled = !isSmart) {
+                                                        coverPickerLauncher.launch("image/*")
+                                                    },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                if (currentCover != null) {
+                                                    coil.compose.SubcomposeAsyncImage(
+                                                        model = java.io.File(currentCover),
+                                                        contentDescription = "Playlist Cover",
+                                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        error = {
+                                                            Icon(Icons.Rounded.Image, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
+                                                        }
+                                                    )
+                                                } else {
+                                                    Icon(
+                                                        imageVector = if (isSmart) Icons.Rounded.AutoAwesome else Icons.Rounded.Edit,
+                                                        contentDescription = if (isSmart) "Smart Playlist" else "Edit Cover",
+                                                        tint = Color.White.copy(alpha = 0.8f),
+                                                        modifier = Modifier.size(48.dp)
+                                                    )
+                                                }
+                                            }
+                                        } else if (subView is SubView.AlbumDetail) {
+                                            val firstSong = subSongs.firstOrNull()
+                                            val artBytes = rememberAlbumArt(firstSong?.uriString)
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(160.dp)
+                                                    .shadow(8.dp, RoundedCornerShape(24.dp))
+                                                    .clip(RoundedCornerShape(24.dp))
+                                                    .background(getGradientForString(subView.albumName))
+                                                    .clickable { albumForCoverEditing = subView.albumName },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                coil.compose.SubcomposeAsyncImage(
+                                                    model = artBytes,
+                                                    contentDescription = "Album Cover",
+                                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    loading = {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.MusicNote,
+                                                            contentDescription = null,
+                                                            tint = Color.White.copy(alpha = 0.8f),
+                                                            modifier = Modifier.size(48.dp)
+                                                        )
+                                                    },
+                                                    error = {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.MusicNote,
+                                                            contentDescription = null,
+                                                            tint = Color.White.copy(alpha = 0.8f),
+                                                            modifier = Modifier.size(48.dp)
+                                                        )
+                                                    }
+                                                )
+                                                // Sleek edit overlay icon
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .background(Color.Black.copy(alpha = 0.2f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.Edit,
+                                                        contentDescription = "Edit Album Cover",
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                }
+                                            }
+                                        } else if (subView is SubView.ArtistDetail) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(160.dp)
+                                                    .shadow(8.dp, CircleShape)
+                                                    .clip(CircleShape)
+                                                    .background(getGradientForString(subView.artistName))
+                                                    .clickable { artistImagePickerLauncher.launch("image/*") },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                ArtistImage(
+                                                    artist = subView.artistName,
+                                                    modifier = Modifier.fillMaxSize()
+                                                )
+                                                // Sleek edit overlay icon
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .background(Color.Black.copy(alpha = 0.2f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.Edit,
+                                                        contentDescription = "Edit Artist Image",
+                                                        tint = Color.White.copy(alpha = 0.8f),
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                }
+                                            }
+                                        } else if (subView is SubView.HistoryDetail) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(160.dp)
+                                                    .shadow(8.dp, RoundedCornerShape(24.dp))
+                                                    .clip(RoundedCornerShape(24.dp))
+                                                    .background(Brush.linearGradient(listOf(Color(0xFF00F0FF), Color(0xFF0083B0)))),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.History,
+                                                    contentDescription = null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(64.dp)
+                                                )
+                                            }
+                                        } else if (subView is SubView.RecentlyAddedDetail) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(160.dp)
+                                                    .shadow(8.dp, RoundedCornerShape(24.dp))
+                                                    .clip(RoundedCornerShape(24.dp))
+                                                    .background(Brush.linearGradient(listOf(Color(0xFF11998E), Color(0xFF38EF7D)))),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.NewReleases,
+                                                    contentDescription = null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(64.dp)
+                                                )
+                                            }
+                                        } else {
+                                            val placeholderText = title.firstOrNull()?.uppercase() ?: "?"
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(160.dp)
+                                                    .shadow(8.dp, RoundedCornerShape(24.dp))
+                                                    .clip(RoundedCornerShape(24.dp))
+                                                    .background(getGradientForString(title)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = placeholderText,
+                                                    fontSize = 48.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
+                                            }
+                                        }
+                                        
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        
+                                        Text(
+                                            text = if (isSmart) "LISTA INTELIGENTE" else typeLabel.uppercase(),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            letterSpacing = 1.5.sp
+                                        )
+                                        
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        
+                                        Text(
+                                            text = title,
+                                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.onBackground,
+                                            modifier = Modifier.padding(horizontal = 32.dp)
+                                        )
+                                        
+                                        val songCountText = "${subSongs.size} ${if (subSongs.size == 1) "canción" else "canciones"}"
+                                        val totalDurationMs = subSongs.sumOf { it.duration }
+                                        val durationText = formatDuration(totalDurationMs)
+                                        val subtitleText = when (subView) {
+                                            is SubView.AlbumDetail -> {
+                                                val artistName = subSongs.firstOrNull()?.artist ?: "Artista Desconocido"
+                                                "$artistName • $songCountText • $durationText"
+                                            }
+                                            else -> "$songCountText • $durationText"
+                                        }
+                                        
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        
+                                        Text(
+                                            text = subtitleText,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                            modifier = Modifier.padding(horizontal = 32.dp)
+                                        )
+                                        
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        
+                                        // Play & Shuffle Row
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Button(
+                                                onClick = {
+                                                    if (subSongs.isNotEmpty()) {
+                                                        onFileClick(subSongs.first(), subSongs)
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(50),
+                                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
+                                            ) {
+                                                Icon(Icons.Rounded.PlayArrow, contentDescription = "Play")
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text("Reproducir", fontWeight = FontWeight.Bold)
+                                            }
+                                            
+                                            FilledTonalButton(
+                                                onClick = {
+                                                    if (subSongs.isNotEmpty()) {
+                                                        val randomSong = subSongs.random()
+                                                        onFileClick(randomSong, subSongs)
+                                                        player?.shuffleModeEnabled = true
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(50),
+                                                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
+                                            ) {
+                                                Icon(Icons.Rounded.Shuffle, contentDescription = "Shuffle")
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text("Aleatorio", fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                val showLocateButtonSub = scrollTargetIndex != -1
+                                if (showLocateButtonSub) {
+                                    item {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                                            contentAlignment = Alignment.CenterEnd
+                                        ) {
+                                            IconButton(
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        subViewSongsListState.animateScrollToItem(scrollTargetIndex)
+                                                    }
+                                                },
+                                                colors = IconButtonDefaults.iconButtonColors(
+                                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                ),
+                                                modifier = Modifier.size(40.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.MusicNote,
+                                                    contentDescription = "Ir a canción actual",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                if (subView is SubView.ArtistDetail) {
+                                    item {
+                                        val artistAlbums = remember(subSongs) {
+                                            subSongs.groupBy { it.album }.filterKeys { it.isNotBlank() }
+                                        }
+                                        if (artistAlbums.isNotEmpty()) {
+                                            Text(
+                                                text = getLocalized("Álbumes", "Albums"),
+                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = MaterialTheme.colorScheme.onBackground,
+                                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
+                                            )
+                                            LazyRow(
+                                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                                            ) {
+                                                items(artistAlbums.keys.toList()) { albumName ->
+                                                    val albumSongs = artistAlbums[albumName] ?: emptyList()
+                                                    val firstSong = albumSongs.firstOrNull()
+                                                    val artBytes = rememberAlbumArt(firstSong?.uriString)
+                                                    
+                                                    Column(
+                                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                                        modifier = Modifier
+                                                            .width(100.dp)
+                                                            .clickable {
+                                                                navigateToSubView(SubView.AlbumDetail(albumName))
+                                                            }
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(100.dp)
+                                                                .shadow(4.dp, RoundedCornerShape(16.dp))
+                                                                .clip(RoundedCornerShape(16.dp))
+                                                                .background(getGradientForString(albumName)),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            SubcomposeAsyncImage(
+                                                                model = artBytes,
+                                                                contentDescription = null,
+                                                                contentScale = ContentScale.Crop,
+                                                                modifier = Modifier.fillMaxSize(),
+                                                                error = {
+                                                                    Icon(
+                                                                        imageVector = Icons.Rounded.MusicNote,
+                                                                        contentDescription = null,
+                                                                        tint = Color.White.copy(alpha = 0.8f),
+                                                                        modifier = Modifier.size(32.dp)
+                                                                    )
+                                                                }
+                                                            )
+                                                        }
+                                                        Spacer(modifier = Modifier.height(6.dp))
+                                                        Text(
+                                                            text = albumName,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            color = MaterialTheme.colorScheme.onBackground
+                                                        )
+                                                        Text(
+                                                            text = "${albumSongs.size} ${if (albumSongs.size == 1) getLocalized("Tema", "Track") else getLocalized("Temas", "Tracks")}",
+                                                            fontSize = 10.sp,
+                                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                                            maxLines = 1
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                        },
-                        onSelectionChanged = { newSelection ->
-                            selectedSongs.clear()
-                            selectedSongs.addAll(newSelection)
-                            isMultiSelectMode = newSelection.isNotEmpty()
-                        },
-                        onPlayDirectly = { song ->
-                            onFileClick(song, subSongs)
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }
@@ -1692,3 +1856,9 @@ fun LibraryScreen(
     )
 
 }
+
+fun String.stripAccents(): String {
+    val normalized = java.text.Normalizer.normalize(this, java.text.Normalizer.Form.NFD)
+    return Regex("\\p{InCombiningDiacriticalMarks}+").replace(normalized, "")
+}
+

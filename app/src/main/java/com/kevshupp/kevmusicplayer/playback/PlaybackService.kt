@@ -39,12 +39,84 @@ class PlaybackService : MediaLibraryService() {
     private var skipToPrevWhenRestored = false
     private var playerListener: Player.Listener? = null
 
+    private var playOnFocusGain = false
+    private var focusRequest: android.media.AudioFocusRequest? = null
+
+    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        val player = mediaLibrarySession?.player ?: return@OnAudioFocusChangeListener
+        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+        val isCallActive = audioManager.mode == AudioManager.MODE_IN_CALL || 
+                           audioManager.mode == AudioManager.MODE_IN_COMMUNICATION
+                           
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                if (playOnFocusGain) {
+                    player.play()
+                    playOnFocusGain = false
+                }
+                player.volume = 1.0f
+            }
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                player.pause()
+                playOnFocusGain = false
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                if (isCallActive) {
+                    if (player.isPlaying) {
+                        playOnFocusGain = true
+                        player.pause()
+                    }
+                } else {
+                    // Duck instead of pausing on transient focus losses like Instagram or notifications
+                    player.volume = 0.2f
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                player.volume = 0.2f
+            }
+        }
+    }
+
+    private fun requestAudioFocus(): Boolean {
+        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val playbackAttributes = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+            focusRequest = android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(playbackAttributes)
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                .build()
+            audioManager.requestAudioFocus(focusRequest!!) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(
+                audioFocusChangeListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN
+            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(audioFocusChangeListener)
+        }
+    }
+
     companion object {
         const val CHANNEL_ID = "playback_channel"
     }
 
     override fun onCreate() {
         super.onCreate()
+        createNotificationChannelIfNeeded()
         
         val powerManager = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
         wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "KevMusicPlayer:PlaybackWakeLock")
@@ -55,7 +127,7 @@ class PlaybackService : MediaLibraryService() {
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .setUsage(C.USAGE_MEDIA)
                     .build(),
-                true // handle audio focus
+                false // handle audio focus manually to prevent Instagram/other apps from cutting music
             )
             .setHandleAudioBecomingNoisy(true) // pause when headphones unplugged
             .setWakeMode(C.WAKE_MODE_LOCAL)
@@ -120,6 +192,7 @@ class PlaybackService : MediaLibraryService() {
                 updateWidgetState(title, artist, isPlaying, uriString)
 
                 if (isPlaying) {
+                    requestAudioFocus()
                     try {
                         if (wakeLock?.isHeld == false) {
                             wakeLock?.acquire()
@@ -128,6 +201,7 @@ class PlaybackService : MediaLibraryService() {
                         e.printStackTrace()
                     }
                 } else {
+                    abandonAudioFocus()
                     try {
                         if (wakeLock?.isHeld == true) {
                             wakeLock?.release()
@@ -367,50 +441,71 @@ class PlaybackService : MediaLibraryService() {
                     val retriever = android.media.MediaMetadataRetriever()
                     var success = false
                     try {
-                        var pfd: android.os.ParcelFileDescriptor? = null
+                        var picture: ByteArray? = null
+                        
+                        // 1. Try reading directly from absolute physical path
                         try {
-                            pfd = contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
-                            if (pfd != null) {
-                                retriever.setDataSource(pfd.fileDescriptor)
-                                val picture = retriever.embeddedPicture
-                                if (picture != null) {
-                                    val opts = android.graphics.BitmapFactory.Options().apply {
-                                        inJustDecodeBounds = true
-                                    }
-                                    android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, opts)
-                                    
-                                    val targetSize = 200
-                                    var sampleSize = 1
-                                    val largestDim = maxOf(opts.outWidth, opts.outHeight)
-                                    if (largestDim > targetSize) {
-                                        sampleSize = Math.round(largestDim.toFloat() / targetSize)
-                                    }
-                                    
-                                    val decodeOpts = android.graphics.BitmapFactory.Options().apply {
-                                        inSampleSize = sampleSize
-                                    }
-                                    val bitmap = android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, decodeOpts)
-                                    if (bitmap != null) {
-                                        val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, targetSize, targetSize, true)
-                                        val tmpFile = java.io.File(cacheDir, "current_widget_art_tmp.png")
-                                        java.io.FileOutputStream(tmpFile).use { out ->
-                                            scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
-                                        }
-                                        if (tmpFile.exists()) {
-                                            tmpFile.renameTo(artFile)
-                                        }
-                                        if (scaledBitmap != bitmap) {
-                                            bitmap.recycle()
-                                        }
-                                        scaledBitmap.recycle()
-                                        success = true
-                                    }
+                            val songId = uriString.substringAfterLast("/").toLongOrNull()
+                            val physicalPath = if (songId != null) getPhysicalPath(this@PlaybackService, songId, uriString) else null
+                            if (!physicalPath.isNullOrBlank()) {
+                                val file = java.io.File(physicalPath)
+                                if (file.exists() && file.isFile) {
+                                    retriever.setDataSource(physicalPath)
+                                    picture = retriever.embeddedPicture
                                 }
                             }
-                        } finally {
+                        } catch (e: Exception) {
+                            android.util.Log.w("Widget_Art_Extract", "Failed direct physical path extraction: $uriString", e)
+                        }
+                        
+                        // 2. Fallback to ParcelFileDescriptor method
+                        if (picture == null) {
+                            var pfd: android.os.ParcelFileDescriptor? = null
                             try {
-                                pfd?.close()
-                            } catch (e: Exception) {}
+                                pfd = contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
+                                if (pfd != null) {
+                                    retriever.setDataSource(pfd.fileDescriptor)
+                                    picture = retriever.embeddedPicture
+                                }
+                            } finally {
+                                try {
+                                    pfd?.close()
+                                } catch (e: Exception) {}
+                            }
+                        }
+                        
+                        if (picture != null) {
+                            val opts = android.graphics.BitmapFactory.Options().apply {
+                                inJustDecodeBounds = true
+                            }
+                            android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, opts)
+                            
+                            val targetSize = 200
+                            var sampleSize = 1
+                            val largestDim = maxOf(opts.outWidth, opts.outHeight)
+                            if (largestDim > targetSize) {
+                                sampleSize = Math.round(largestDim.toFloat() / targetSize)
+                            }
+                            
+                            val decodeOpts = android.graphics.BitmapFactory.Options().apply {
+                                inSampleSize = sampleSize
+                            }
+                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, decodeOpts)
+                            if (bitmap != null) {
+                                val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, targetSize, targetSize, true)
+                                val tmpFile = java.io.File(cacheDir, "current_widget_art_tmp.png")
+                                java.io.FileOutputStream(tmpFile).use { out ->
+                                    scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
+                                }
+                                if (tmpFile.exists()) {
+                                    tmpFile.renameTo(artFile)
+                                }
+                                if (scaledBitmap != bitmap) {
+                                    bitmap.recycle()
+                                }
+                                scaledBitmap.recycle()
+                                success = true
+                            }
                         }
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
@@ -654,12 +749,9 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
         val player = mediaLibrarySession?.player
-        if (player != null) {
-            if (!player.playWhenReady || player.mediaItemCount == 0) {
-                stopSelf()
-            }
-        } else {
-            stopSelf()
+        if (player != null && (player.isPlaying || player.playWhenReady)) {
+            // Keep foreground service active if music is playing or active in queue
+            return
         }
         super.onTaskRemoved(rootIntent)
     }

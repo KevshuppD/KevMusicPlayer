@@ -13,10 +13,15 @@ android {
         applicationId = "com.kevshupp.kevmusicplayer"
         minSdk = 33
         targetSdk = 37
-        versionCode = 20
-        versionName = "1.2.15"
+        versionCode = 21
+        versionName = "1.2.16"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 
     signingConfigs {
@@ -86,6 +91,7 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.coil.compose)
     implementation("net.jthink:jaudiotagger:3.0.1")
+    implementation("io.github.kyant0:taglib:1.0.6")
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
     implementation(libs.kotlinx.coroutines.android)

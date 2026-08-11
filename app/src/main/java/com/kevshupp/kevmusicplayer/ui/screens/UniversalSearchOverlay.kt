@@ -58,27 +58,34 @@ fun UniversalSearchOverlay(
 
     // Process search results
     val searchResults = remember(query, audioFiles, viewModel?.playlists, viewModel?.smartPlaylists) {
-        if (query.isBlank()) {
+        val cleanQuery = query.stripAccents().trim()
+        if (cleanQuery.isBlank()) {
             return@remember SearchResults(emptyList(), emptyList(), emptyList(), emptyList())
         }
+        val terms = cleanQuery.split(Regex("\\s+"))
 
-        val songs = audioFiles.filter {
-            it.title.contains(query, ignoreCase = true) || it.artist.contains(query, ignoreCase = true)
+        val songs = audioFiles.filter { song ->
+            val fullText = "${song.title.stripAccents()} ${song.artist.stripAccents()} ${song.album.stripAccents()} ${song.genre.stripAccents()}"
+            terms.all { term -> fullText.contains(term, ignoreCase = true) }
         }
-        val albums = audioFiles.filter {
-            it.album.contains(query, ignoreCase = true)
+        val albums = audioFiles.filter { song ->
+            val albumNorm = song.album.stripAccents()
+            terms.all { term -> albumNorm.contains(term, ignoreCase = true) }
         }.map { it.album }.distinct()
 
-        val artists = audioFiles.filter {
-            it.artist.contains(query, ignoreCase = true)
+        val artists = audioFiles.filter { song ->
+            val artistNorm = song.artist.stripAccents()
+            terms.all { term -> artistNorm.contains(term, ignoreCase = true) }
         }.map { it.artist }.distinct()
 
         val playlists = mutableListOf<String>()
         viewModel?.playlists?.keys?.forEach { name ->
-            if (name.contains(query, ignoreCase = true)) playlists.add(name)
+            val normName = name.stripAccents()
+            if (terms.all { term -> normName.contains(term, ignoreCase = true) }) playlists.add(name)
         }
         viewModel?.smartPlaylists?.keys?.forEach { name ->
-            if (name.contains(query, ignoreCase = true)) playlists.add(name)
+            val normName = name.stripAccents()
+            if (terms.all { term -> normName.contains(term, ignoreCase = true) }) playlists.add(name)
         }
 
         SearchResults(songs, albums, artists, playlists.distinct())

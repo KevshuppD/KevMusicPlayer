@@ -2557,8 +2557,13 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     t.printStackTrace()
                 }
 
-                // 1. Write metadata tags directly to physical file using jaudiotagger
+                // 0. Try writing tags using native C++ TagLib engine
                 val songEntity = audioDao.getAudioFileById(songId)
+                val pathForTagLib = getPhysicalPath(context, songId, songEntity?.uriString)
+                if (!pathForTagLib.isNullOrBlank()) {
+                    writeMetadataWithTagLib(context, pathForTagLib, title, artist, album, genre, coverBytes)
+                }
+                
                 var songUriString: String? = null
                 
                 val writeSuccess = writeMetadataWithTempFile(context, songId, songEntity?.uriString) { audioFile ->
@@ -2569,29 +2574,22 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     tag.setField(FieldKey.GENRE, genre)
                     if (coverBytes != null) {
                         try {
-                            tag.deleteArtworkField()
-                            val artwork = AndroidArtwork().apply {
-                                setBinaryData(coverBytes)
-                                setMimeType(getMimeTypeFromBytes(coverBytes))
-                                setPictureType(org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID)
+                            val artwork = createJaudiotaggerArtwork(coverBytes)
+                            if (artwork != null) {
                                 try {
-                                    val options = android.graphics.BitmapFactory.Options().apply {
-                                        inJustDecodeBounds = true
+                                    tag.deleteArtworkField()
+                                } catch (e: Throwable) {}
+                                try {
+                                    tag.setField(artwork)
+                                } catch (e: Throwable) {
+                                    try {
+                                        tag.addField(artwork)
+                                    } catch (e2: Throwable) {
+                                        val field = tag.createField(artwork)
+                                        tag.setField(field)
                                     }
-                                    android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, options)
-                                    if (options.outWidth > 0 && options.outHeight > 0) {
-                                        setWidth(options.outWidth)
-                                        setHeight(options.outHeight)
-                                    } else {
-                                        setWidth(800)
-                                        setHeight(800)
-                                    }
-                                } catch (e: Exception) {
-                                    setWidth(800)
-                                    setHeight(800)
                                 }
                             }
-                            tag.setField(artwork)
                         } catch (e: Throwable) {
                             e.printStackTrace()
                             com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "MetadataArtwork", "Failed to set artwork field for songId $songId", e)
@@ -2637,6 +2635,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 val allEntities = audioDao.getAllAudioFiles()
                 val targetEntity = allEntities.find { it.id == songId }
                 val physicalPath = getPhysicalPath(context, songId, targetEntity?.uriString)
+                if (coverBytes != null && !physicalPath.isNullOrBlank()) {
+                    saveFolderCoverArt(context, physicalPath, coverBytes)
+                    invalidateMediaStoreAlbumArt(context, songId, targetEntity?.uriString)
+                }
                 val newModTime = if (physicalPath != null) File(physicalPath).lastModified() else 0L
                 if (targetEntity != null) {
                     val updatedEntity = targetEntity.copy(
@@ -2760,32 +2762,30 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 var successCount = 0
                 var failCount = 0
                 for (song in songsInAlbum) {
+                    val pathForTagLib = getPhysicalPath(context, song.id, song.uriString)
+                    if (!pathForTagLib.isNullOrBlank()) {
+                        writeMetadataWithTagLib(context, pathForTagLib, coverBytes = coverBytes)
+                    }
+
                     val success = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
                         val tag = audioFile.getTagOrCreateAndSetDefault()
                         try {
-                            tag.deleteArtworkField()
-                            val artwork = AndroidArtwork().apply {
-                                setBinaryData(coverBytes)
-                                setMimeType(getMimeTypeFromBytes(coverBytes))
-                                setPictureType(org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID)
+                            val artwork = createJaudiotaggerArtwork(coverBytes)
+                            if (artwork != null) {
                                 try {
-                                    val options = android.graphics.BitmapFactory.Options().apply {
-                                        inJustDecodeBounds = true
+                                    tag.deleteArtworkField()
+                                } catch (e: Throwable) {}
+                                try {
+                                    tag.setField(artwork)
+                                } catch (e: Throwable) {
+                                    try {
+                                        tag.addField(artwork)
+                                    } catch (e2: Throwable) {
+                                        val field = tag.createField(artwork)
+                                        tag.setField(field)
                                     }
-                                    android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, options)
-                                    if (options.outWidth > 0 && options.outHeight > 0) {
-                                        setWidth(options.outWidth)
-                                        setHeight(options.outHeight)
-                                    } else {
-                                        setWidth(800)
-                                        setHeight(800)
-                                    }
-                                } catch (e: Exception) {
-                                    setWidth(800)
-                                    setHeight(800)
                                 }
                             }
-                            tag.setField(artwork)
                         } catch (e: Throwable) {
                             e.printStackTrace()
                             com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumCoverArtwork", "Failed to set artwork field in updateAlbumCover for songId ${song.id}", e)
@@ -2814,6 +2814,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
                 if (successCount == 0 && songsInAlbum.isNotEmpty()) {
                     throw Exception("Failed to write cover art to any songs in the album")
+                }
+
+                if (songsInAlbum.isNotEmpty()) {
+                    val firstSong = songsInAlbum.first()
+                    val path = getPhysicalPath(context, firstSong.id, firstSong.uriString)
+                    if (!path.isNullOrBlank()) {
+                        saveFolderCoverArt(context, path, coverBytes)
+                        invalidateMediaStoreAlbumArt(context, firstSong.id, firstSong.uriString)
+                    }
                 }
 
                 // Force UI update by refreshing the localAudioFiles in-memory list
@@ -2887,6 +2896,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 var successCount = 0
                 var failCount = 0
                 for (song in songsInAlbum) {
+                    val pathForTagLib = getPhysicalPath(context, song.id, song.uriString)
+                    if (!pathForTagLib.isNullOrBlank()) {
+                        writeMetadataWithTagLib(context, pathForTagLib, album = newAlbumName, artist = if (newArtist.isNotBlank()) newArtist else null, coverBytes = coverBytes)
+                    }
+
                     val success = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
                         val tag = audioFile.getTagOrCreateAndSetDefault()
                         tag.setField(FieldKey.ALBUM, newAlbumName)
@@ -2895,29 +2909,22 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         }
                         if (coverBytes != null) {
                             try {
-                                tag.deleteArtworkField()
-                                val artwork = AndroidArtwork().apply {
-                                    setBinaryData(coverBytes)
-                                    setMimeType(getMimeTypeFromBytes(coverBytes))
-                                    setPictureType(org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID)
+                                val artwork = createJaudiotaggerArtwork(coverBytes)
+                                if (artwork != null) {
                                     try {
-                                        val options = android.graphics.BitmapFactory.Options().apply {
-                                            inJustDecodeBounds = true
+                                        tag.deleteArtworkField()
+                                    } catch (e: Throwable) {}
+                                    try {
+                                        tag.setField(artwork)
+                                    } catch (e: Throwable) {
+                                        try {
+                                            tag.addField(artwork)
+                                        } catch (e2: Throwable) {
+                                            val field = tag.createField(artwork)
+                                            tag.setField(field)
                                         }
-                                        android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, options)
-                                        if (options.outWidth > 0 && options.outHeight > 0) {
-                                            setWidth(options.outWidth)
-                                            setHeight(options.outHeight)
-                                        } else {
-                                            setWidth(800)
-                                            setHeight(800)
-                                        }
-                                    } catch (e: Exception) {
-                                        setWidth(800)
-                                        setHeight(800)
                                     }
                                 }
-                                tag.setField(artwork)
                             } catch (e: Throwable) {
                                 e.printStackTrace()
                                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumMetadataArtwork", "Failed to set artwork field in updateAlbumMetadata for songId ${song.id}", e)
@@ -2958,6 +2965,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         context, "AlbumMetadataUpdate",
                         "Failed to update metadata for $failCount out of ${songsInAlbum.size} songs in album $oldAlbumName"
                     )
+                }
+
+                if (coverBytes != null && songsInAlbum.isNotEmpty()) {
+                    val firstSong = songsInAlbum.first()
+                    val path = getPhysicalPath(context, firstSong.id, firstSong.uriString)
+                    if (!path.isNullOrBlank()) {
+                        saveFolderCoverArt(context, path, coverBytes)
+                        invalidateMediaStoreAlbumArt(context, firstSong.id, firstSong.uriString)
+                    }
                 }
 
                 if (successCount == 0 && songsInAlbum.isNotEmpty()) {
@@ -3785,6 +3801,61 @@ fun getMimeTypeFromBytes(bytes: ByteArray?): String {
     }
 }
 
+fun createJaudiotaggerArtwork(coverBytes: ByteArray): org.jaudiotagger.tag.images.Artwork? {
+    if (coverBytes.isEmpty()) return null
+    val mimeType = getMimeTypeFromBytes(coverBytes)
+
+    return try {
+        val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
+        artwork.binaryData = coverBytes
+        artwork.mimeType = mimeType
+        artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+
+        if (artwork is org.jaudiotagger.tag.images.AndroidArtwork) {
+            try {
+                artwork.setImageFromData()
+            } catch (t: Throwable) {
+                android.util.Log.w("createArtwork", "setImageFromData failed", t)
+            }
+        }
+
+        try {
+            val options = android.graphics.BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, options)
+            if (options.outWidth > 0 && options.outHeight > 0) {
+                artwork.width = options.outWidth
+                artwork.height = options.outHeight
+            } else {
+                artwork.width = 800
+                artwork.height = 800
+            }
+        } catch (e: Throwable) {
+            artwork.width = 800
+            artwork.height = 800
+        }
+
+        artwork
+    } catch (e: Throwable) {
+        android.util.Log.e("createArtwork", "Failed to create Artwork via ArtworkFactory", e)
+        try {
+            val androidArtwork = org.jaudiotagger.tag.images.AndroidArtwork()
+            androidArtwork.binaryData = coverBytes
+            androidArtwork.mimeType = mimeType
+            androidArtwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+            try {
+                androidArtwork.setImageFromData()
+            } catch (t: Throwable) {}
+            androidArtwork.width = 800
+            androidArtwork.height = 800
+            androidArtwork
+        } catch (ex: Throwable) {
+            null
+        }
+    }
+}
+
 class SafeMp4FileReader : org.jaudiotagger.audio.mp4.Mp4FileReader() {
     override fun getEncodingInfo(path: java.nio.file.Path): org.jaudiotagger.audio.generic.GenericAudioHeader {
         return try {
@@ -3793,6 +3864,121 @@ class SafeMp4FileReader : org.jaudiotagger.audio.mp4.Mp4FileReader() {
             android.util.Log.w("SafeMp4FileReader", "Caught error in getEncodingInfo for MP4/M4A, returning empty audio header", e)
             org.jaudiotagger.audio.generic.GenericAudioHeader()
         }
+    }
+}
+
+fun writeMetadataWithTagLib(context: android.content.Context, physicalPath: String, title: String? = null, artist: String? = null, album: String? = null, genre: String? = null, coverBytes: ByteArray? = null): Boolean {
+    return try {
+        val file = java.io.File(physicalPath)
+        if (!file.exists() || !file.canWrite()) return false
+
+        val pfd = android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_WRITE) ?: return false
+        val dupPfd = pfd.dup()
+        val fd = dupPfd.detachFd()
+        try {
+            if (fd > 0) {
+                val existingMetadata = try { com.kyant.taglib.TagLib.getMetadata(fd, false) } catch (e: Exception) { null }
+                val map = existingMetadata?.propertyMap ?: java.util.HashMap()
+
+                if (!title.isNullOrBlank()) map["TITLE"] = arrayOf(title)
+                if (!artist.isNullOrBlank()) map["ARTIST"] = arrayOf(artist)
+                if (!album.isNullOrBlank()) map["ALBUM"] = arrayOf(album)
+                if (!genre.isNullOrBlank()) map["GENRE"] = arrayOf(genre)
+
+                try {
+                    com.kyant.taglib.TagLib.savePropertyMap(fd, map)
+                } catch (e: Throwable) {
+                    android.util.Log.w("TagLibWrite", "Failed savePropertyMap for $physicalPath", e)
+                }
+
+                if (coverBytes != null && coverBytes.isNotEmpty()) {
+                    val mimeType = getMimeTypeFromBytes(coverBytes)
+                    val picture = com.kyant.taglib.Picture(coverBytes, "Front Cover", "FrontCover", mimeType)
+                    try {
+                        com.kyant.taglib.TagLib.savePictures(fd, arrayOf(picture))
+                        android.util.Log.d("TagLibWrite", "Successfully saved picture with TagLib for $physicalPath")
+                    } catch (e: Throwable) {
+                        android.util.Log.w("TagLibWrite", "Failed savePictures for $physicalPath", e)
+                    }
+                }
+            }
+        } finally {
+            try { pfd.close() } catch (e: Exception) {}
+        }
+        true
+    } catch (e: Throwable) {
+        android.util.Log.w("TagLibWrite", "Error in writeMetadataWithTagLib for $physicalPath", e)
+        false
+    }
+}
+
+fun saveFolderCoverArt(context: android.content.Context, physicalPath: String, coverBytes: ByteArray) {
+    try {
+        val audioFile = java.io.File(physicalPath)
+        val parentDir = audioFile.parentFile
+        if (parentDir != null && parentDir.exists() && parentDir.isDirectory) {
+            val coverNames = listOf("cover.jpg", "folder.jpg", "album.jpg", "Front.jpg")
+            val pathsToScan = mutableListOf<String>()
+            coverNames.forEach { name ->
+                try {
+                    val coverFile = java.io.File(parentDir, name)
+                    coverFile.outputStream().use { out ->
+                        out.write(coverBytes)
+                    }
+                    pathsToScan.add(coverFile.absolutePath)
+                } catch (e: Exception) {
+                    android.util.Log.w("FolderCover", "Failed writing $name in ${parentDir.absolutePath}", e)
+                }
+            }
+            if (pathsToScan.isNotEmpty()) {
+                android.media.MediaScannerConnection.scanFile(
+                    context,
+                    pathsToScan.toTypedArray(),
+                    arrayOf("image/jpeg")
+                ) { _, _ -> }
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("FolderCover", "Error in saveFolderCoverArt for $physicalPath", e)
+    }
+}
+
+fun invalidateMediaStoreAlbumArt(context: android.content.Context, songId: Long, uriString: String?) {
+    try {
+        val songUri = if (!uriString.isNullOrBlank()) android.net.Uri.parse(uriString) else null
+        val songIdFromUri = songUri?.lastPathSegment?.toLongOrNull() ?: songId
+
+        var albumId: Long? = null
+        val projection = arrayOf(android.provider.MediaStore.Audio.Media.ALBUM_ID)
+        val selection = "${android.provider.MediaStore.Audio.Media._ID} = ?"
+        val selectionArgs = arrayOf(songIdFromUri.toString())
+
+        context.contentResolver.query(
+            android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            projection,
+            selection,
+            selectionArgs,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                albumId = cursor.getLong(0)
+            }
+        }
+
+        if (albumId != null && albumId!! > 0) {
+            val albumArtUri = android.content.ContentUris.withAppendedId(
+                android.net.Uri.parse("content://media/external/audio/albumart"),
+                albumId!!
+            )
+            try {
+                context.contentResolver.delete(albumArtUri, null, null)
+                android.util.Log.d("MediaStoreArt", "Invalidated MediaStore album art URI: $albumArtUri")
+            } catch (e: Exception) {
+                android.util.Log.w("MediaStoreArt", "Could not delete MediaStore album art entry", e)
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("MediaStoreArt", "Error invalidating MediaStore album art", e)
     }
 }
 

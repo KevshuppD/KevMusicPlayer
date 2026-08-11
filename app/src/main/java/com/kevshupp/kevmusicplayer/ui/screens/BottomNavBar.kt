@@ -32,15 +32,15 @@ fun BottomNavBar(
 
     Surface(
         modifier = modifier
-            .fillMaxWidth()
-            .navigationBarsPadding(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+            .fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
                 .height(76.dp)
                 .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceAround,

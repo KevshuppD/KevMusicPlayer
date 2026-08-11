@@ -701,7 +701,7 @@ fun TagEditorDialog(
                                     scope.launch {
                                         isSearchingOnline = true
                                         searchStatus = getLocalized("Buscando en LRCLIB...", "Searching LRCLIB...")
-                                        val results = LyricsRepository.searchLyricsOptionsFromLrcLib("", searchQuery)
+                                        val results = LyricsRepository.searchLyricsOptionsFromLrcLib(artist, searchQuery)
                                         searchResults = results
                                         isSearchingOnline = false
                                         if (results.isEmpty()) {

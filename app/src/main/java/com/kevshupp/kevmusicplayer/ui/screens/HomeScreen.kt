@@ -71,23 +71,29 @@ fun HomeScreen(
     val coroutineScope = rememberCoroutineScope()
 
     // 1. Recently Played
-    val recentlyPlayed = remember(audioFiles) {
-        audioFiles.filter { it.lastPlayed > 0L }
-            .sortedByDescending { it.lastPlayed }
-            .take(10)
+    val recentlyPlayed by remember {
+        derivedStateOf {
+            audioFiles.filter { it.lastPlayed > 0L }
+                .sortedByDescending { it.lastPlayed }
+                .take(10)
+        }
     }
 
     // 2. Most Played
-    val mostPlayed = remember(audioFiles) {
-        audioFiles.filter { it.playCount > 0 }
-            .sortedByDescending { it.playCount }
-            .take(10)
+    val mostPlayed by remember {
+        derivedStateOf {
+            audioFiles.filter { it.playCount > 0 }
+                .sortedByDescending { it.playCount }
+                .take(10)
+        }
     }
 
     // 3. Recently Added
-    val recentlyAdded = remember(audioFiles) {
-        audioFiles.sortedByDescending { it.dateAdded }
-            .take(10)
+    val recentlyAdded by remember {
+        derivedStateOf {
+            audioFiles.sortedByDescending { it.dateAdded }
+                .take(10)
+        }
     }
 
     Box(
@@ -223,14 +229,19 @@ fun HomeScreen(
                             modifier = Modifier.weight(1f)
                         )
                         QuickActionCard(
-                            title = if (isEs) "Favoritas" else "Top Hits",
+                            title = if (isEs) "Favoritas" else "Favorites",
                             icon = Icons.Rounded.Favorite,
                             gradient = Brush.linearGradient(listOf(Color(0xFFFF007F), Color(0xFFE0115F))),
                             onClick = {
-                                if (mostPlayed.isNotEmpty()) {
-                                    onFileClick(mostPlayed.first(), mostPlayed)
-                                } else if (audioFiles.isNotEmpty()) {
-                                    onFileClick(audioFiles.first(), audioFiles)
+                                if (viewModel != null) {
+                                    val favExists = viewModel.playlists.containsKey("Favoritos")
+                                    if (!favExists) {
+                                        viewModel.createPlaylist("Favoritos")
+                                    }
+                                    viewModel.requestedTab.value = "Playlists"
+                                    viewModel.requestedSubViewType.value = "Playlist"
+                                    viewModel.requestedSubViewName.value = "Favoritos"
+                                    onNavigateToLibrary()
                                 }
                             },
                             modifier = Modifier.weight(1f)
@@ -246,8 +257,11 @@ fun HomeScreen(
                             icon = Icons.Rounded.History,
                             gradient = Brush.linearGradient(listOf(Color(0xFF00F0FF), Color(0xFF0083B0))),
                             onClick = {
-                                if (recentlyPlayed.isNotEmpty()) {
-                                    onFileClick(recentlyPlayed.first(), recentlyPlayed)
+                                if (viewModel != null) {
+                                    viewModel.requestedTab.value = "Songs"
+                                    viewModel.requestedSubViewType.value = "History"
+                                    viewModel.requestedSubViewName.value = "History"
+                                    onNavigateToLibrary()
                                 }
                             },
                             modifier = Modifier.weight(1f)
@@ -256,11 +270,14 @@ fun HomeScreen(
                             title = if (isEs) "Nuevas" else "New Added",
                             icon = Icons.Rounded.NewReleases,
                             gradient = Brush.linearGradient(listOf(Color(0xFF11998E), Color(0xFF38EF7D))),
-                            onClick = {
-                                if (recentlyAdded.isNotEmpty()) {
-                                    onFileClick(recentlyAdded.first(), recentlyAdded)
-                                }
-                            },
+                             onClick = {
+                                 if (viewModel != null) {
+                                     viewModel.requestedTab.value = "Songs"
+                                     viewModel.requestedSubViewType.value = "RecentlyAdded"
+                                     viewModel.requestedSubViewName.value = "RecentlyAdded"
+                                     onNavigateToLibrary()
+                                 }
+                             },
                             modifier = Modifier.weight(1f)
                         )
                     }

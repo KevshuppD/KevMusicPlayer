@@ -57,6 +57,7 @@ import androidx.media3.common.Player
 import coil.compose.SubcomposeAsyncImage
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
+import com.kevshupp.kevmusicplayer.playback.getPhysicalPath
 import com.kevshupp.kevmusicplayer.R
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
@@ -98,40 +99,15 @@ fun SongListView(
     onSelectionChanged: ((Set<AudioFile>) -> Unit)? = null,
     onPlayDirectly: ((AudioFile) -> Unit)? = null,
     listState: LazyListState = rememberLazyListState(),
-    showTrackNumbers: Boolean = false
+    showTrackNumbers: Boolean = false,
+    headerContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     
 
     
-    // Fast scroll logic: Numbers -> #, A-Z -> letter, Everything else -> ?
-    val alphabet = remember(songs) { 
-        songs.map { 
-            val firstChar = it.title.firstOrNull()?.uppercaseChar() ?: '#'
-            when {
-                firstChar.isDigit() -> '#'
-                firstChar in 'A'..'Z' -> firstChar
-                else -> '?' // All special chars or non-standard letters go to ?
-            }
-        }
-        .distinct()
-        .sortedWith { a, b ->
-            when {
-                a == b -> 0
-                a == '#' -> -1
-                b == '#' -> 1
-                a == '?' -> 1
-                b == '?' -> -1
-                else -> a.compareTo(b)
-            }
-        }
-        .takeIf { it.size > 5 }
-    }
-    
-    var showAlphabetPopup by remember { mutableStateOf(false) }
-    var currentLetter by remember { mutableStateOf(' ') }
-    var dragY by remember { mutableStateOf(0f) }
+
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)) {
         val totalHeight = constraints.maxHeight.toFloat()
@@ -148,6 +124,9 @@ fun SongListView(
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            if (headerContent != null) {
+                headerContent()
+            }
             itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
                 val isSelected = selectedSongs.contains(song)
                 
@@ -413,168 +392,12 @@ fun SongListView(
             }
         }
     }
-        // Fast Scroll Alphabet Overlay Scrollbar
-        if (alphabet != null) {
-            val density = LocalDensity.current
-            val scrollPercent = remember {
-                derivedStateOf {
-                    val layoutInfo = listState.layoutInfo
-                    val totalItems = layoutInfo.totalItemsCount
-                    if (totalItems == 0) return@derivedStateOf 0f
-                    val visibleItems = layoutInfo.visibleItemsInfo
-                    if (visibleItems.isEmpty()) return@derivedStateOf 0f
-                    val firstVisible = visibleItems.first()
-                    val lastVisible = visibleItems.last()
-                    val firstIndex = firstVisible.index
-                    val lastIndex = lastVisible.index
-                    val visibleCount = lastIndex - firstIndex + 1
-                    if (visibleCount >= totalItems) return@derivedStateOf 0f
-                    val averageItemSize = visibleItems.map { it.size }.average()
-                    val currentScrollOffset = (firstIndex * averageItemSize) + listState.firstVisibleItemScrollOffset
-                    val totalScrollLength = (totalItems * averageItemSize) - layoutInfo.viewportSize.height
-                    if (totalScrollLength <= 0) 0f else (currentScrollOffset / totalScrollLength).coerceIn(0.0, 1.0).toFloat()
-                }
-            }
-
-            BoxWithConstraints(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight()
-                    .width(22.dp)
-                    .padding(vertical = 16.dp)
-                    .pointerInput(alphabet) {
-                        detectVerticalDragGestures(
-                            onDragStart = { offset ->
-                                dragY = offset.y
-                                showAlphabetPopup = true
-                                val containerHeight = size.height.toFloat()
-                                val percent = (offset.y / containerHeight).coerceIn(0f, 1f)
-                                val index = (percent * alphabet.size).toInt().coerceIn(0, alphabet.lastIndex)
-                                currentLetter = alphabet[index]
-                                val targetIndex = songs.indexOfFirst {
-                                    val firstChar = it.title.firstOrNull()?.uppercaseChar() ?: '#'
-                                    val mappedChar = when {
-                                        firstChar.isDigit() -> '#'
-                                        firstChar in 'A'..'Z' -> firstChar
-                                        else -> '?'
-                                    }
-                                    mappedChar == currentLetter
-                                }
-                                if (targetIndex != -1) {
-                                    coroutineScope.launch {
-                                        listState.scrollToItem(targetIndex)
-                                    }
-                                }
-                            },
-                            onDragEnd = {
-                                showAlphabetPopup = false
-                            },
-                            onDragCancel = {
-                                showAlphabetPopup = false
-                            },
-                            onVerticalDrag = { change, dragAmount ->
-                                val containerHeight = size.height.toFloat()
-                                dragY = (dragY + dragAmount).coerceIn(0f, containerHeight)
-                                val percent = (dragY / containerHeight).coerceIn(0f, 1f)
-                                val index = (percent * alphabet.size).toInt().coerceIn(0, alphabet.lastIndex)
-                                currentLetter = alphabet[index]
-                                val targetIndex = songs.indexOfFirst {
-                                    val firstChar = it.title.firstOrNull()?.uppercaseChar() ?: '#'
-                                    val mappedChar = when {
-                                        firstChar.isDigit() -> '#'
-                                        firstChar in 'A'..'Z' -> firstChar
-                                        else -> '?'
-                                    }
-                                    mappedChar == currentLetter
-                                }
-                                if (targetIndex != -1) {
-                                    coroutineScope.launch {
-                                        listState.scrollToItem(targetIndex)
-                                    }
-                                }
-                            }
-                        )
-                    }
-            ) {
-                val containerHeightPx = with(density) { maxHeight.toPx() }
-                val thumbHeight = 40.dp
-                val thumbHeightPx = with(density) { thumbHeight.toPx() }
-                val maxOffsetPx = containerHeightPx - thumbHeightPx
-                val thumbOffsetDp = with(density) { (maxOffsetPx * scrollPercent.value).toDp() }
-
-                // Scrollbar Track (Barra vertical siempre presente)
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(2.dp)
-                        .background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(1.dp))
-                        .align(Alignment.CenterEnd)
-                )
-
-                // Scrollbar Thumb (Trozo pintado siempre presente)
-                Box(
-                    modifier = Modifier
-                        .height(thumbHeight)
-                        .width(4.dp)
-                        .offset(y = thumbOffsetDp)
-                        .background(
-                            color = if (showAlphabetPopup) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(2.dp)
-                        )
-                        .align(Alignment.TopEnd)
-                )
-
-                // Alphabet List (visible only when dragging, or we can make it show/fade with alphabetAlpha)
-                val alphabetAlpha by animateFloatAsState(targetValue = if (showAlphabetPopup) 1f else 0f, label = "alphabet_alpha")
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer { alpha = alphabetAlpha }
-                        .padding(end = 6.dp),
-                    verticalArrangement = Arrangement.SpaceEvenly,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    alphabet.forEach { letter ->
-                        Text(
-                            text = letter.toString(),
-                            color = if (currentLetter == letter && showAlphabetPopup) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
-                            fontWeight = if (currentLetter == letter && showAlphabetPopup) FontWeight.Black else FontWeight.Bold,
-                            fontSize = if (currentLetter == letter && showAlphabetPopup) 11.sp else 9.sp
-                        )
-                    }
-                }
-            }
-
-            // Big Center Popup
-            if (showAlphabetPopup) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(end = 60.dp)
-                ) {
-                    Surface(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .align(Alignment.TopEnd)
-                            .offset(y = with(density) { 
-                                (dragY - 36.dp.toPx()).toDp().coerceIn(0.dp, constraintsMaxHeight - 72.dp)
-                            }),
-                        shape = RoundedCornerShape(topStart = 36.dp, bottomStart = 36.dp, topEnd = 36.dp, bottomEnd = 4.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        shadowElevation = 16.dp
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = currentLetter.toString(),
-                                style = MaterialTheme.typography.displaySmall,
-                                fontWeight = FontWeight.Black,
-                                color = Color.Black
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        val songTitles = remember(songs) { songs.map { it.title } }
+        FastScrollSidebar(
+            items = songTitles,
+            listState = listState,
+            modifier = Modifier.align(Alignment.CenterEnd)
+        )
     }
 }
 
@@ -717,55 +540,66 @@ fun AlbumGridView(
 @Composable
 fun ArtistListView(
     artists: Map<String, List<AudioFile>>,
-    onArtistClick: (String) -> Unit
+    onArtistClick: (String) -> Unit,
+    listState: LazyListState = rememberLazyListState()
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(artists.keys.toList(), key = { it }) { artistName ->
-            val artistSongs = artists[artistName] ?: emptyList()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { onArtistClick(artistName) }
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Circle Profile style for Artists
-                ArtistImage(
-                    artist = artistName,
+    val artistNames = remember(artists) { artists.keys.toList() }
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 28.dp, top = 8.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(artistNames, key = { it }) { artistName ->
+                val artistSongs = artists[artistName] ?: emptyList()
+                Row(
                     modifier = Modifier
-                        .size(52.dp)
-                        .clip(CircleShape)
-                )
-
-                Spacer(modifier = Modifier.width(16.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = artistName,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = MaterialTheme.colorScheme.onBackground
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable { onArtistClick(artistName) }
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Circle Profile style for Artists
+                    ArtistImage(
+                        artist = artistName,
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
                     )
-                    Text(
-                        text = "${artistSongs.size} Songs",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = artistName,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text(
+                            text = "${artistSongs.size} Songs",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+                        )
+                    }
+
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f)
                     )
                 }
-
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f)
-                )
             }
         }
+
+        FastScrollSidebar(
+            items = artistNames,
+            listState = listState,
+            modifier = Modifier.align(Alignment.CenterEnd)
+        )
     }
 }
 
@@ -1143,53 +977,126 @@ private fun decodeSampledBitmap(bytes: ByteArray, reqWidth: Int, reqHeight: Int)
     }
 }
 
+private fun decodeSampledBitmapFromFile(path: String, reqWidth: Int, reqHeight: Int): android.graphics.Bitmap? {
+    val options = android.graphics.BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    android.graphics.BitmapFactory.decodeFile(path, options)
+    options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+    options.inJustDecodeBounds = false
+    return try {
+        android.graphics.BitmapFactory.decodeFile(path, options)
+    } catch (e: OutOfMemoryError) {
+        System.gc()
+        try {
+            options.inSampleSize *= 2
+            android.graphics.BitmapFactory.decodeFile(path, options)
+        } catch (t: Throwable) {
+            null
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+
 fun preloadAlbumArt(context: android.content.Context, uriString: String) {
     if (albumArtCache.get(uriString) != null) return
     val retriever = android.media.MediaMetadataRetriever()
     var pfd: android.os.ParcelFileDescriptor? = null
+    var loaded = false
+    val res = try {
+        context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
+    } catch (ex: Exception) {
+        500
+    }
+    
+    // 1. Try reading directly from absolute physical path
     try {
-        pfd = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
-        if (pfd != null) {
-            retriever.setDataSource(pfd.fileDescriptor)
-            val picture = retriever.embeddedPicture
-            if (picture != null) {
-                val res = try {
-                    context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
-                } catch (ex: Exception) {
-                    500
-                }
-                val decoded = decodeSampledBitmap(picture, res, res)
-                if (decoded != null) {
-                    albumArtCache.put(uriString, decoded)
+        val songId = uriString.substringAfterLast("/").toLongOrNull()
+        val physicalPath = if (songId != null) getPhysicalPath(context, songId, uriString) else null
+        if (!physicalPath.isNullOrBlank()) {
+            val file = java.io.File(physicalPath)
+            if (file.exists() && file.isFile) {
+                retriever.setDataSource(physicalPath)
+                val picture = retriever.embeddedPicture
+                if (picture != null) {
+                    val decoded = decodeSampledBitmap(picture, res, res)
+                    if (decoded != null) {
+                        albumArtCache.put(uriString, decoded)
+                        loaded = true
+                    }
                 }
             }
         }
     } catch (e: Exception) {
+        android.util.Log.w("preloadAlbumArt", "Failed direct physical path extraction: $uriString", e)
+    }
+    
+    // 2. Fallback to ParcelFileDescriptor method
+    if (!loaded) {
         try {
-            retriever.setDataSource(context, Uri.parse(uriString))
-            val picture = retriever.embeddedPicture
-            if (picture != null) {
-                val res = try {
-                    context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
-                } catch (ex: Exception) {
-                    500
-                }
-                val decoded = decodeSampledBitmap(picture, res, res)
-                if (decoded != null) {
-                    albumArtCache.put(uriString, decoded)
+            pfd = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
+            if (pfd != null) {
+                retriever.setDataSource(pfd.fileDescriptor)
+                val picture = retriever.embeddedPicture
+                if (picture != null) {
+                    val decoded = decodeSampledBitmap(picture, res, res)
+                    if (decoded != null) {
+                        albumArtCache.put(uriString, decoded)
+                        loaded = true
+                    }
                 }
             }
-        } catch (ex: Exception) {
-            // Ignore
+        } catch (e: Exception) {
+            // 3. Fallback to Uri method
+            try {
+                retriever.setDataSource(context, Uri.parse(uriString))
+                val picture = retriever.embeddedPicture
+                if (picture != null) {
+                    val decoded = decodeSampledBitmap(picture, res, res)
+                    if (decoded != null) {
+                        albumArtCache.put(uriString, decoded)
+                        loaded = true
+                    }
+                }
+            } catch (ex: Exception) {
+                // Ignore
+            }
+        } finally {
+            try {
+                pfd?.close()
+            } catch (e: Exception) {}
         }
-    } finally {
-        try {
-            pfd?.close()
-        } catch (e: Exception) {}
-        try {
-            retriever.release()
-        } catch (e: Exception) {}
     }
+
+    // 4. Fallback to folder cover file (cover.jpg, folder.jpg, etc.) in parent directory
+    if (!loaded) {
+        try {
+            val songId = uriString.substringAfterLast("/").toLongOrNull()
+            val physicalPath = if (songId != null) getPhysicalPath(context, songId, uriString) else null
+            if (!physicalPath.isNullOrBlank()) {
+                val audioFile = java.io.File(physicalPath)
+                val parentDir = audioFile.parentFile
+                if (parentDir != null && parentDir.exists() && parentDir.isDirectory) {
+                    val coverNames = listOf("cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg")
+                    val foundCover = coverNames.map { java.io.File(parentDir, it) }.firstOrNull { it.exists() && it.isFile && it.length() > 0 }
+                    if (foundCover != null) {
+                        val decoded = decodeSampledBitmapFromFile(foundCover.absolutePath, res, res)
+                        if (decoded != null) {
+                            albumArtCache.put(uriString, decoded)
+                            loaded = true
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("preloadAlbumArt", "Failed folder cover extraction: $uriString", e)
+        }
+    }
+    
+    try {
+        retriever.release()
+    } catch (e: Exception) {}
 }
 
 @Composable
@@ -1204,51 +1111,106 @@ fun rememberAlbumArt(uriString: String?): android.graphics.Bitmap? {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val retriever = android.media.MediaMetadataRetriever()
                 var pfd: android.os.ParcelFileDescriptor? = null
+                var loaded = false
+                
+                // Get resolution once
+                val res = try {
+                    context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
+                } catch (ex: Exception) {
+                    500
+                }
+
+                // 1. Try reading directly from absolute physical path to bypass any ContentResolver/MediaStore cache delay!
                 try {
-                    pfd = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
-                    if (pfd != null) {
-                        retriever.setDataSource(pfd.fileDescriptor)
-                        val picture = retriever.embeddedPicture
-                        if (picture != null) {
-                            val res = try {
-                                context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
-                            } catch (ex: Exception) {
-                                500
-                            }
-                            val decoded = decodeSampledBitmap(picture, res, res)
-                            if (decoded != null) {
-                                albumArtCache.put(uriString, decoded)
-                                bitmap = decoded
+                    val songId = uriString.substringAfterLast("/").toLongOrNull()
+                    val physicalPath = if (songId != null) getPhysicalPath(context, songId, uriString) else null
+                    if (!physicalPath.isNullOrBlank()) {
+                        val file = java.io.File(physicalPath)
+                        if (file.exists() && file.isFile) {
+                            retriever.setDataSource(physicalPath)
+                            val picture = retriever.embeddedPicture
+                            if (picture != null) {
+                                val decoded = decodeSampledBitmap(picture, res, res)
+                                if (decoded != null) {
+                                    albumArtCache.put(uriString, decoded)
+                                    bitmap = decoded
+                                    loaded = true
+                                }
                             }
                         }
                     }
                 } catch (e: Exception) {
+                    android.util.Log.w("rememberAlbumArt", "Failed direct physical path extraction: $uriString", e)
+                }
+
+                // 2. Fallback to ParcelFileDescriptor method
+                if (!loaded) {
                     try {
-                        retriever.setDataSource(context, Uri.parse(uriString))
-                        val picture = retriever.embeddedPicture
-                        if (picture != null) {
-                            val res = try {
-                                context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
-                            } catch (ex: Exception) {
-                                500
-                            }
-                            val decoded = decodeSampledBitmap(picture, res, res)
-                            if (decoded != null) {
-                                albumArtCache.put(uriString, decoded)
-                                bitmap = decoded
+                        pfd = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
+                        if (pfd != null) {
+                            retriever.setDataSource(pfd.fileDescriptor)
+                            val picture = retriever.embeddedPicture
+                            if (picture != null) {
+                                val decoded = decodeSampledBitmap(picture, res, res)
+                                if (decoded != null) {
+                                    albumArtCache.put(uriString, decoded)
+                                    bitmap = decoded
+                                    loaded = true
+                                }
                             }
                         }
-                    } catch (ex: Exception) {
-                        // Ignore
+                    } catch (e: Exception) {
+                        // 3. Last resort fallback to Uri method
+                        try {
+                            retriever.setDataSource(context, Uri.parse(uriString))
+                            val picture = retriever.embeddedPicture
+                            if (picture != null) {
+                                val decoded = decodeSampledBitmap(picture, res, res)
+                                if (decoded != null) {
+                                    albumArtCache.put(uriString, decoded)
+                                    bitmap = decoded
+                                    loaded = true
+                                }
+                            }
+                        } catch (ex: Exception) {
+                            // Ignore
+                        }
+                    } finally {
+                        try {
+                            pfd?.close()
+                        } catch (e: Exception) {}
                     }
-                } finally {
-                    try {
-                        pfd?.close()
-                    } catch (e: Exception) {}
-                    try {
-                        retriever.release()
-                    } catch (e: Exception) {}
                 }
+
+                // 4. Fallback to folder cover file (cover.jpg, folder.jpg, etc.) in parent directory
+                if (!loaded) {
+                    try {
+                        val songId = uriString.substringAfterLast("/").toLongOrNull()
+                        val physicalPath = if (songId != null) getPhysicalPath(context, songId, uriString) else null
+                        if (!physicalPath.isNullOrBlank()) {
+                            val audioFile = java.io.File(physicalPath)
+                            val parentDir = audioFile.parentFile
+                            if (parentDir != null && parentDir.exists() && parentDir.isDirectory) {
+                                val coverNames = listOf("cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg")
+                                val foundCover = coverNames.map { java.io.File(parentDir, it) }.firstOrNull { it.exists() && it.isFile && it.length() > 0 }
+                                if (foundCover != null) {
+                                    val decoded = decodeSampledBitmapFromFile(foundCover.absolutePath, res, res)
+                                    if (decoded != null) {
+                                        albumArtCache.put(uriString, decoded)
+                                        bitmap = decoded
+                                        loaded = true
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("rememberAlbumArt", "Failed folder cover extraction: $uriString", e)
+                    }
+                }
+                
+                try {
+                    retriever.release()
+                } catch (e: Exception) {}
             }
         }
     }
@@ -2091,6 +2053,203 @@ private fun ArtistPlaceholderIcon(artist: String, modifier: Modifier) {
             tint = Color.White,
             modifier = Modifier.fillMaxSize(0.5f)
         )
+    }
+}
+
+@Composable
+fun FastScrollSidebar(
+    items: List<String>,
+    listState: LazyListState,
+    modifier: Modifier = Modifier
+) {
+    if (items.size < 5) return
+
+    val coroutineScope = rememberCoroutineScope()
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val density = LocalDensity.current
+
+    val alphabet = remember(items) {
+        items.map { text ->
+            val firstChar = text.trimStart().firstOrNull()?.uppercaseChar() ?: '#'
+            when {
+                firstChar.isDigit() -> '#'
+                firstChar in 'A'..'Z' -> firstChar
+                else -> '?'
+            }
+        }
+        .distinct()
+        .sortedWith { a, b ->
+            when {
+                a == b -> 0
+                a == '#' -> -1
+                b == '#' -> 1
+                a == '?' -> 1
+                b == '?' -> -1
+                else -> a.compareTo(b)
+            }
+        }
+    }
+
+    if (alphabet.isEmpty()) return
+
+    var isDragging by remember { mutableStateOf(false) }
+    var currentLetter by remember { mutableStateOf(alphabet.first()) }
+    var dragY by remember { mutableStateOf(0f) }
+
+    val scrollPercent = remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            if (totalItems == 0) return@derivedStateOf 0f
+            val visibleItems = layoutInfo.visibleItemsInfo
+            if (visibleItems.isEmpty()) return@derivedStateOf 0f
+            val firstIndex = visibleItems.first().index
+            val lastIndex = visibleItems.last().index
+            val visibleCount = lastIndex - firstIndex + 1
+            if (visibleCount >= totalItems) return@derivedStateOf 0f
+            val averageItemSize = visibleItems.map { it.size }.average()
+            val currentScrollOffset = (firstIndex * averageItemSize) + listState.firstVisibleItemScrollOffset
+            val totalScrollLength = (totalItems * averageItemSize) - layoutInfo.viewportSize.height
+            if (totalScrollLength <= 0) 0f else (currentScrollOffset / totalScrollLength).coerceIn(0.0, 1.0).toFloat()
+        }
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(28.dp)
+            .padding(vertical = 16.dp)
+            .pointerInput(alphabet, items) {
+                detectVerticalDragGestures(
+                    onDragStart = { offset ->
+                        dragY = offset.y
+                        isDragging = true
+                        val containerHeight = size.height.toFloat()
+                        val percent = (offset.y / containerHeight).coerceIn(0f, 1f)
+                        val index = (percent * alphabet.size).toInt().coerceIn(0, alphabet.lastIndex)
+                        val newLetter = alphabet[index]
+                        if (newLetter != currentLetter) {
+                            currentLetter = newLetter
+                            try { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) } catch (e: Exception) {}
+                        }
+                        val targetIndex = items.indexOfFirst {
+                            val firstChar = it.trimStart().firstOrNull()?.uppercaseChar() ?: '#'
+                            val mappedChar = when {
+                                firstChar.isDigit() -> '#'
+                                firstChar in 'A'..'Z' -> firstChar
+                                else -> '?'
+                            }
+                            mappedChar == currentLetter
+                        }
+                        if (targetIndex != -1) {
+                            coroutineScope.launch { listState.scrollToItem(targetIndex) }
+                        }
+                    },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false },
+                    onVerticalDrag = { _, dragAmount ->
+                        val containerHeight = size.height.toFloat()
+                        dragY = (dragY + dragAmount).coerceIn(0f, containerHeight)
+                        val percent = (dragY / containerHeight).coerceIn(0f, 1f)
+                        val index = (percent * alphabet.size).toInt().coerceIn(0, alphabet.lastIndex)
+                        val newLetter = alphabet[index]
+                        if (newLetter != currentLetter) {
+                            currentLetter = newLetter
+                            try { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) } catch (e: Exception) {}
+                        }
+                        val targetIndex = items.indexOfFirst {
+                            val firstChar = it.trimStart().firstOrNull()?.uppercaseChar() ?: '#'
+                            val mappedChar = when {
+                                firstChar.isDigit() -> '#'
+                                firstChar in 'A'..'Z' -> firstChar
+                                else -> '?'
+                            }
+                            mappedChar == currentLetter
+                        }
+                        if (targetIndex != -1) {
+                            coroutineScope.launch { listState.scrollToItem(targetIndex) }
+                        }
+                    }
+                )
+            }
+    ) {
+        val containerHeightPx = with(density) { maxHeight.toPx() }
+        val thumbHeight = 32.dp
+        val thumbHeightPx = with(density) { thumbHeight.toPx() }
+        val maxOffsetPx = (containerHeightPx - thumbHeightPx).coerceAtLeast(0f)
+        val thumbOffsetDp = with(density) { (maxOffsetPx * scrollPercent.value).toDp() }
+
+        // Track Line
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(2.dp)
+                .background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(1.dp))
+                .align(Alignment.CenterEnd)
+        )
+
+        // Thumb Pill
+        Box(
+            modifier = Modifier
+                .height(thumbHeight)
+                .width(5.dp)
+                .offset(y = thumbOffsetDp)
+                .background(
+                    color = if (isDragging) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(2.5.dp)
+                )
+                .align(Alignment.TopEnd)
+        )
+
+        // Alphabet Rail
+        val alphabetAlpha by animateFloatAsState(targetValue = if (isDragging) 1f else 0.45f, label = "alphabet_alpha")
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = alphabetAlpha }
+                .padding(end = 6.dp),
+            verticalArrangement = Arrangement.SpaceEvenly,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            alphabet.forEach { letter ->
+                val isActive = currentLetter == letter && isDragging
+                Text(
+                    text = letter.toString(),
+                    color = if (isActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.65f),
+                    fontWeight = if (isActive) FontWeight.Black else FontWeight.Bold,
+                    fontSize = if (isActive) 11.sp else 8.5.sp
+                )
+            }
+        }
+
+        // Glowing Teardrop Fast Scroll Bubble
+        AnimatedVisibility(
+            visible = isDragging,
+            enter = fadeIn() + scaleIn(),
+            exit = fadeOut() + scaleOut(),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = (-46).dp, y = with(density) { (dragY - 32.dp.toPx()).toDp().coerceIn(0.dp, (maxHeight - 64.dp).coerceAtLeast(0.dp)) })
+        ) {
+            Surface(
+                shape = RoundedCornerShape(topStart = 32.dp, bottomStart = 32.dp, topEnd = 32.dp, bottomEnd = 6.dp),
+                color = MaterialTheme.colorScheme.primary,
+                shadowElevation = 16.dp,
+                modifier = Modifier.size(64.dp)
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = currentLetter.toString(),
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color.Black
+                    )
+                }
+            }
+        }
     }
 }
 
