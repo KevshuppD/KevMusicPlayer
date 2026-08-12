@@ -124,6 +124,10 @@ fun PlayerScreen(
     var showEditLyricsDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showTagEditorDialog by remember { mutableStateOf(false) }
+    var showSleepTimerDialog by remember { mutableStateOf(false) }
+    var sleepTimerMinutes by remember { mutableIntStateOf(0) }
+    var showSaveQueueDialog by remember { mutableStateOf(false) }
+    var showAddToPlaylistDialog by remember { mutableStateOf(false) }
     var editLyricsText by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     var isSearchingOnline by remember { mutableStateOf(false) }
@@ -227,9 +231,10 @@ fun PlayerScreen(
         if (mediaId != null) "content://media/external/audio/media/$mediaId" else null
     }
 
-    val isFavorite = remember(currentSongFile?.id, viewModel?.playlists) {
+    val isFavorite = remember(currentSongFile?.id, viewModel?.playlists?.get("Favoritos")) {
         val favList = viewModel?.playlists?.get("Favoritos") ?: emptyList()
-        favList.any { it.id == currentSongFile?.id }
+        val songId = currentSongFile?.id
+        songId != null && favList.any { it.id == songId }
     }
 
     val hasAudioPermission = remember(isVisualizerEnabled) {
@@ -698,51 +703,8 @@ fun PlayerScreen(
                     color = MaterialTheme.colorScheme.primary
                 )
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (showLyrics) {
-                        IconButton(
-                            onClick = { showLyrics = false },
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = stringResource(R.string.close_lyrics),
-                                tint = MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-                    } else {
-                        IconButton(
-                            onClick = { showQueueSheet = true },
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
-                                contentDescription = "Queue",
-                                tint = MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-
-                        IconButton(
-                            onClick = { showMoreOptions = true },
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.MoreVert,
-                                contentDescription = "Options",
-                                tint = MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-                    }
-                }
+                // Spacer to keep NOW PLAYING text perfectly centered without right-side top bar buttons
+                Spacer(modifier = Modifier.size(48.dp))
             }
 
             AnimatedContent(
@@ -826,7 +788,7 @@ fun PlayerScreen(
                         }
 
                         LaunchedEffect(pagerState.currentPage) {
-                            if (pagerState.currentPage != playerState.currentMediaItemIndex && pagerState.currentPage in 0 until playerState.mediaItemCount) {
+                            if (!pagerState.isScrollInProgress && pagerState.currentPage != playerState.currentMediaItemIndex && pagerState.currentPage in 0 until playerState.mediaItemCount) {
                                 player.seekTo(pagerState.currentPage, 0)
                                 player.play()
                             }
@@ -834,6 +796,7 @@ fun PlayerScreen(
 
                         HorizontalPager(
                             state = pagerState,
+                            beyondViewportPageCount = 1,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
@@ -851,9 +814,10 @@ fun PlayerScreen(
                             val pageUriString = remember(pageSong?.mediaId) {
                                 if (pageSong?.mediaId != null) "content://media/external/audio/media/${pageSong.mediaId}" else null
                             }
-                            val pageIsFavorite = remember(pageSongFile, viewModel?.playlists) {
+                            val pageIsFavorite = remember(pageSongFile?.id, viewModel?.playlists?.get("Favoritos")) {
                                 val favList = viewModel?.playlists?.get("Favoritos") ?: emptyList()
-                                favList.any { it.id == pageSongFile?.id }
+                                val songId = pageSongFile?.id
+                                songId != null && favList.any { it.id == songId }
                             }
                             val pageFileInfo by produceState(initialValue = Pair("MP3", "320 kbps"), key1 = pageSong?.mediaId) {
                                 value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -933,27 +897,33 @@ fun PlayerScreen(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         val pageArtBytes = rememberAlbumArt(pageUriString)
-                                        if (pageArtBytes != null) {
-                                            Image(
-                                                bitmap = pageArtBytes.asImageBitmap(),
-                                                contentDescription = null,
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        } else {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxSize(0.92f)
-                                                    .clip(CircleShape)
-                                                    .background(Color.Black.copy(alpha = 0.08f)),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Rounded.MusicNote,
+                                        androidx.compose.animation.Crossfade(
+                                            targetState = pageArtBytes,
+                                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 200),
+                                            label = "PageAlbumArtCrossfade"
+                                        ) { bitmap ->
+                                            if (bitmap != null) {
+                                                Image(
+                                                    bitmap = bitmap.asImageBitmap(),
                                                     contentDescription = null,
-                                                    modifier = Modifier.size(110.dp),
-                                                    tint = Color.White.copy(alpha = 0.95f)
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize()
                                                 )
+                                            } else {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize(0.92f)
+                                                        .clip(CircleShape)
+                                                        .background(Color.Black.copy(alpha = 0.08f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.MusicNote,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(110.dp),
+                                                        tint = Color.White.copy(alpha = 0.95f)
+                                                    )
+                                                }
                                             }
                                         }
 
@@ -1040,299 +1010,344 @@ fun PlayerScreen(
                                 }
 
                                 // Title and Artist with clean spacing
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        text = pageTitle,
-                                        style = MaterialTheme.typography.headlineMedium.copy(
-                                            fontWeight = FontWeight.Black,
-                                            letterSpacing = (-0.5).sp
-                                        ),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        textAlign = TextAlign.Center,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
+                                 Column(
+                                     horizontalAlignment = Alignment.CenterHorizontally,
+                                     modifier = Modifier.fillMaxWidth()
+                                 ) {
+                                     Text(
+                                         text = pageTitle,
+                                         style = MaterialTheme.typography.headlineMedium.copy(
+                                             fontWeight = FontWeight.Black,
+                                             letterSpacing = (-0.5).sp
+                                         ),
+                                         maxLines = 1,
+                                         overflow = TextOverflow.Ellipsis,
+                                         textAlign = TextAlign.Center,
+                                         color = MaterialTheme.colorScheme.onBackground
+                                     )
 
-                                    Spacer(modifier = Modifier.height(6.dp))
+                                     Spacer(modifier = Modifier.height(4.dp))
 
-                                    Text(
-                                        text = pageArtist,
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.Medium
-                                        ),
-                                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier.clickable {
-                                            if (pageArtist != "Unknown Artist" && pageArtist.isNotBlank()) {
-                                                onNavigateToArtist(pageArtist)
-                                                onBack()
-                                            }
-                                        }
-                                    )
+                                     Text(
+                                         text = pageArtist,
+                                         style = MaterialTheme.typography.titleMedium.copy(
+                                             fontWeight = FontWeight.Medium
+                                         ),
+                                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                         maxLines = 1,
+                                         overflow = TextOverflow.Ellipsis,
+                                         textAlign = TextAlign.Center,
+                                         modifier = Modifier.clickable {
+                                             if (pageArtist != "Unknown Artist" && pageArtist.isNotBlank()) {
+                                                 onNavigateToArtist(pageArtist)
+                                                 onBack()
+                                             }
+                                         }
+                                     )
+                                 }
 
-                                    Spacer(modifier = Modifier.height(10.dp))
+                                 Spacer(modifier = Modifier.weight(0.15f))
 
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        // Extension Badge
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.primaryContainer,
-                                            shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier.height(20.dp)
-                                        ) {
-                                            Box(
-                                                contentAlignment = Alignment.Center,
-                                                modifier = Modifier.padding(horizontal = 8.dp)
-                                            ) {
-                                                Text(
-                                                    text = pageFileInfo.first,
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontWeight = FontWeight.ExtraBold,
-                                                        letterSpacing = 0.5.sp
-                                                    ),
-                                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                                )
-                                            }
-                                        }
+                                 // Playback Controls Row (Repeat | Prev | Play/Pause | Next | Shuffle)
+                                 Row(
+                                     modifier = Modifier.fillMaxWidth(),
+                                     horizontalArrangement = Arrangement.SpaceEvenly,
+                                     verticalAlignment = Alignment.CenterVertically
+                                 ) {
+                                     // Repeat Button (Far Left)
+                                     IconButton(
+                                         onClick = {
+                                             val nextMode = when (repeatMode) {
+                                                 Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                                                 Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                                                 else -> Player.REPEAT_MODE_OFF
+                                             }
+                                             repeatMode = nextMode
+                                             player.repeatMode = nextMode
+                                         },
+                                         modifier = Modifier.size(44.dp)
+                                     ) {
+                                         val repeatIcon = when (repeatMode) {
+                                             Player.REPEAT_MODE_ONE -> Icons.Rounded.RepeatOne
+                                             else -> Icons.Rounded.Repeat
+                                         }
+                                         val isRepeatActive = repeatMode != Player.REPEAT_MODE_OFF
+                                         Icon(
+                                             imageVector = repeatIcon,
+                                             contentDescription = "Repeat",
+                                             tint = if (isRepeatActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                             modifier = Modifier.size(24.dp)
+                                         )
+                                     }
 
-                                        // Bitrate Badge
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f),
-                                            shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier.height(20.dp)
-                                        ) {
-                                            Box(
-                                                contentAlignment = Alignment.Center,
-                                                modifier = Modifier.padding(horizontal = 8.dp)
-                                            ) {
-                                                Text(
-                                                    text = pageFileInfo.second,
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontWeight = FontWeight.Bold
-                                                    ),
-                                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                                     // Previous Button
+                                     val context = androidx.compose.ui.platform.LocalContext.current
+                                     IconButton(
+                                         onClick = {
+                                             val crossfadeSeconds = context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
+                                             val controller = player as? androidx.media3.session.MediaController
+                                             if (controller != null && crossfadeSeconds > 0) {
+                                                 controller.sendCustomCommand(
+                                                     androidx.media3.session.SessionCommand("ACTION_SKIP_PREV", android.os.Bundle.EMPTY),
+                                                     android.os.Bundle.EMPTY
+                                                 )
+                                             } else {
+                                                 player.seekToPrevious()
+                                                 if (player.playbackState == Player.STATE_IDLE) {
+                                                     player.prepare()
+                                                     player.play()
+                                                 }
+                                             }
+                                         },
+                                         modifier = Modifier.size(54.dp)
+                                     ) {
+                                         Icon(
+                                             imageVector = Icons.Rounded.SkipPrevious,
+                                             contentDescription = "Previous",
+                                             tint = MaterialTheme.colorScheme.onBackground,
+                                             modifier = Modifier.size(34.dp)
+                                         )
+                                     }
 
-                                Spacer(modifier = Modifier.weight(0.2f))
-                            }
-                        }
-                    }
-                }
-            }
+                                     // Play / Pause Fab circle
+                                     Box(
+                                         modifier = Modifier
+                                             .size(72.dp)
+                                             .clip(CircleShape)
+                                             .background(
+                                                 Brush.linearGradient(
+                                                     colors = listOf(
+                                                         MaterialTheme.colorScheme.primary,
+                                                         MaterialTheme.colorScheme.secondary
+                                                     )
+                                                 )
+                                             )
+                                             .clickable {
+                                                 if (playerState.isPlaying) {
+                                                     player.pause()
+                                                 } else {
+                                                     if (player.playbackState == Player.STATE_IDLE) {
+                                                         player.prepare()
+                                                     }
+                                                     player.play()
+                                                 }
+                                             },
+                                         contentAlignment = Alignment.Center
+                                     ) {
+                                         Icon(
+                                             imageVector = if (playerState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                             contentDescription = "Play/Pause",
+                                             tint = Color.White,
+                                             modifier = Modifier.size(38.dp)
+                                         )
+                                     }
 
-            // Premium Custom Seeking Slider
-            Column(modifier = Modifier.fillMaxWidth()) {
-                var sliderPosition by remember { mutableFloatStateOf(0f) }
-                var isDragging by remember { mutableStateOf(false) }
+                                     // Next Button
+                                     IconButton(
+                                         onClick = {
+                                             val crossfadeSeconds = context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
+                                             val controller = player as? androidx.media3.session.MediaController
+                                             if (controller != null && crossfadeSeconds > 0) {
+                                                 controller.sendCustomCommand(
+                                                     androidx.media3.session.SessionCommand("ACTION_SKIP_NEXT", android.os.Bundle.EMPTY),
+                                                     android.os.Bundle.EMPTY
+                                                 )
+                                             } else {
+                                                 player.seekToNext()
+                                                 if (player.playbackState == Player.STATE_IDLE) {
+                                                     player.prepare()
+                                                     player.play()
+                                                 }
+                                             }
+                                         },
+                                         modifier = Modifier.size(54.dp)
+                                     ) {
+                                         Icon(
+                                             imageVector = Icons.Rounded.SkipNext,
+                                             contentDescription = "Next",
+                                             tint = MaterialTheme.colorScheme.onBackground,
+                                             modifier = Modifier.size(34.dp)
+                                         )
+                                     }
 
-                LaunchedEffect(playerState.position, isDragging) {
-                    if (!isDragging) {
-                        sliderPosition = if (playerState.duration > 0) {
-                            playerState.position.toFloat() / playerState.duration.toFloat()
-                        } else {
-                            0f
-                        }
-                    }
-                }
+                                     // Shuffle Button (Far Right)
+                                     IconButton(
+                                         onClick = {
+                                             val newShuffle = !shuffleEnabled
+                                             player.shuffleModeEnabled = newShuffle
+                                         },
+                                         modifier = Modifier.size(44.dp)
+                                     ) {
+                                         Icon(
+                                             imageVector = Icons.Rounded.Shuffle,
+                                             contentDescription = "Shuffle",
+                                             tint = if (shuffleEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                             modifier = Modifier.size(24.dp)
+                                         )
+                                     }
+                                 }
 
-                Slider(
-                    value = sliderPosition,
-                    onValueChange = {
-                        isDragging = true
-                        sliderPosition = it
-                    },
-                    onValueChangeFinished = {
-                        isDragging = false
-                        if (playerState.duration > 0) {
-                            val newPos = (sliderPosition * playerState.duration).toLong()
-                            player.seekTo(newPos)
-                        }
-                    },
-                    colors = SliderDefaults.colors(
-                        activeTrackColor = MaterialTheme.colorScheme.primary,
-                        inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.24f),
-                        thumbColor = MaterialTheme.colorScheme.primary
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                                 Spacer(modifier = Modifier.weight(0.15f))
+                             }
+                         }
+                     }
+                 }
+             }
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = formatDuration(playerState.position),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                    )
-                    Text(
-                        text = formatDuration(playerState.duration),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                    )
-                }
-            }
+             // Seeking Slider & Times
+             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                 var sliderPosition by remember { mutableFloatStateOf(0f) }
+                 var isDragging by remember { mutableStateOf(false) }
 
-            Spacer(modifier = Modifier.height(16.dp))
+                 LaunchedEffect(playerState.position, isDragging) {
+                     if (!isDragging) {
+                         sliderPosition = if (playerState.duration > 0) {
+                             playerState.position.toFloat() / playerState.duration.toFloat()
+                         } else {
+                             0f
+                         }
+                     }
+                 }
 
-            // Playback Controls Row (Fully Custom High-Fidelity Buttons)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Shuffle Button
-                IconButton(
-                    onClick = {
-                        val newShuffle = !shuffleEnabled
-                        player.shuffleModeEnabled = newShuffle
-                    },
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Shuffle,
-                        contentDescription = "Shuffle",
-                        tint = if (shuffleEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+                 Slider(
+                     value = sliderPosition,
+                     onValueChange = {
+                         isDragging = true
+                         sliderPosition = it
+                     },
+                     onValueChangeFinished = {
+                         isDragging = false
+                         if (playerState.duration > 0) {
+                             val newPos = (sliderPosition * playerState.duration).toLong()
+                             player.seekTo(newPos)
+                         }
+                     },
+                     colors = SliderDefaults.colors(
+                         activeTrackColor = MaterialTheme.colorScheme.primary,
+                         inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.24f),
+                         thumbColor = MaterialTheme.colorScheme.primary
+                     ),
+                     modifier = Modifier.fillMaxWidth()
+                 )
 
-                // Previous Button
-                val context = androidx.compose.ui.platform.LocalContext.current
-                IconButton(
-                    onClick = {
-                        val crossfadeSeconds = context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
-                        val controller = player as? androidx.media3.session.MediaController
-                        if (controller != null && crossfadeSeconds > 0) {
-                            controller.sendCustomCommand(
-                                androidx.media3.session.SessionCommand("ACTION_SKIP_PREV", android.os.Bundle.EMPTY),
-                                android.os.Bundle.EMPTY
-                            )
-                        } else {
-                            player.seekToPrevious()
-                            if (player.playbackState == Player.STATE_IDLE) {
-                                player.prepare()
-                                player.play()
-                            }
-                        }
-                    },
-                    modifier = Modifier.size(54.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.SkipPrevious,
-                        contentDescription = "Previous",
-                        tint = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.size(34.dp)
-                    )
-                }
+                 Row(
+                     modifier = Modifier
+                         .fillMaxWidth()
+                         .padding(horizontal = 4.dp),
+                     horizontalArrangement = Arrangement.SpaceBetween
+                 ) {
+                     Text(
+                         text = formatDuration(playerState.position),
+                         fontSize = 12.sp,
+                         fontWeight = FontWeight.Bold,
+                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                     )
+                     Text(
+                         text = formatDuration(playerState.duration),
+                         fontSize = 12.sp,
+                         fontWeight = FontWeight.Bold,
+                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                     )
+                 }
 
-                // Play / Pause Fab circle
-                Box(
-                    modifier = Modifier
-                        .size(76.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.primary,
-                                    MaterialTheme.colorScheme.secondary
-                                )
-                            )
-                        )
-                        .clickable {
-                            if (playerState.isPlaying) {
-                                player.pause()
-                            } else {
-                                if (player.playbackState == Player.STATE_IDLE) {
-                                    player.prepare()
-                                }
-                                player.play()
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (playerState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = "Play/Pause",
-                        tint = Color.White,
-                        modifier = Modifier.size(38.dp)
-                    )
-                }
+                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Next Button
-                IconButton(
-                    onClick = {
-                        val crossfadeSeconds = context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
-                        val controller = player as? androidx.media3.session.MediaController
-                        if (controller != null && crossfadeSeconds > 0) {
-                            controller.sendCustomCommand(
-                                androidx.media3.session.SessionCommand("ACTION_SKIP_NEXT", android.os.Bundle.EMPTY),
-                                android.os.Bundle.EMPTY
-                            )
-                        } else {
-                            player.seekToNext()
-                            if (player.playbackState == Player.STATE_IDLE) {
-                                player.prepare()
-                                player.play()
-                            }
-                        }
-                    },
-                    modifier = Modifier.size(54.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.SkipNext,
-                        contentDescription = "Next",
-                        tint = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.size(34.dp)
-                    )
-                }
+                 // Audio Format Info (MP3 · 320 kb/s · 44.1 kHz)
+                 val context = LocalContext.current
+                 val pageFileInfo by produceState(initialValue = Pair("MP3", "320 kbps"), key1 = playerState.currentSong?.mediaId) {
+                     value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                         getAudioFileInfo(context, currentSongUriString)
+                     }
+                 }
+                 Text(
+                     text = "${pageFileInfo.first} · ${pageFileInfo.second}",
+                     style = MaterialTheme.typography.labelSmall.copy(
+                         fontWeight = FontWeight.Bold,
+                         letterSpacing = 0.8.sp
+                     ),
+                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                     textAlign = TextAlign.Center,
+                     modifier = Modifier.fillMaxWidth()
+                 )
+             }
 
-                // Repeat Button
-                IconButton(
-                    onClick = {
-                        val nextMode = when (repeatMode) {
-                            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                            else -> Player.REPEAT_MODE_OFF
-                        }
-                        repeatMode = nextMode
-                        player.repeatMode = nextMode
-                    },
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    val repeatIcon = when (repeatMode) {
-                        Player.REPEAT_MODE_ONE -> Icons.Rounded.RepeatOne
-                        else -> Icons.Rounded.Repeat
-                    }
-                    val isRepeatActive = repeatMode != Player.REPEAT_MODE_OFF
-                    Icon(
-                        imageVector = repeatIcon,
-                        contentDescription = "Repeat",
-                        tint = if (isRepeatActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
+             Spacer(modifier = Modifier.height(18.dp))
 
-            Spacer(modifier = Modifier.height(12.dp))
-        }
+             // Bottom Action Bar (5 Action Icons: Lyrics, Like, Sleep Timer, Queue, 3 Dots)
+             Row(
+                 modifier = Modifier
+                     .fillMaxWidth()
+                     .padding(bottom = 12.dp),
+                 horizontalArrangement = Arrangement.SpaceEvenly,
+                 verticalAlignment = Alignment.CenterVertically
+             ) {
+                 // 1. Lyrics Icon
+                 IconButton(onClick = { showLyrics = !showLyrics }) {
+                     Icon(
+                         imageVector = Icons.Rounded.ChatBubbleOutline,
+                         contentDescription = "Letras",
+                         tint = if (showLyrics) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                         modifier = Modifier.size(24.dp)
+                     )
+                 }
 
-        // Gorgeous Modal Bottom Sheet for Sharing & Audio Details
+                 // 2. Favorite Icon (Like)
+                 IconButton(
+                     onClick = {
+                         if (currentSongFile != null && viewModel != null) {
+                             val favExists = viewModel.playlists.containsKey("Favoritos")
+                             if (!favExists) {
+                                 viewModel.createPlaylist("Favoritos")
+                             }
+                             if (isFavorite) {
+                                 viewModel.removeSongFromPlaylist("Favoritos", currentSongFile.id)
+                             } else {
+                                 viewModel.addSongToPlaylist("Favoritos", currentSongFile.id)
+                             }
+                         }
+                     }
+                 ) {
+                     Icon(
+                         imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                         contentDescription = "Favoritos",
+                         tint = if (isFavorite) Color.Red else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                         modifier = Modifier.size(24.dp)
+                     )
+                 }
+
+                 // 3. Moon / Sleep Timer Icon
+                 IconButton(onClick = { showSleepTimerDialog = true }) {
+                     Icon(
+                         imageVector = Icons.Rounded.Bedtime,
+                         contentDescription = "Temporizador",
+                         tint = if (sleepTimerMinutes != 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                         modifier = Modifier.size(24.dp)
+                     )
+                 }
+
+                 // 4. Queue Icon
+                 IconButton(onClick = { showQueueSheet = true }) {
+                     Icon(
+                         imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
+                         contentDescription = "Cola",
+                         tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                         modifier = Modifier.size(24.dp)
+                     )
+                 }
+
+                 // 5. 3 Dots / More Options Icon
+                 IconButton(onClick = { showMoreOptions = true }) {
+                     Icon(
+                         imageVector = Icons.Rounded.MoreHoriz,
+                         contentDescription = "Más opciones",
+                         tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                         modifier = Modifier.size(24.dp)
+                     )
+                 }
+             }
+         }
+
+        // Gorgeous Modal Bottom Sheet matching reference menu
         if (showMoreOptions) {
             ModalBottomSheet(
                 onDismissRequest = { showMoreOptions = false },
@@ -1340,275 +1355,566 @@ fun PlayerScreen(
                 containerColor = Color(0xFF161829),
                 dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = 0.3f)) }
             ) {
-                Column(
+                LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp, vertical = 8.dp)
                         .navigationBarsPadding(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    // Header of Bottom Sheet
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        val currentSongUriString = remember(playerState.currentSong?.mediaId) {
-                            val mediaId = playerState.currentSong?.mediaId
-                            if (mediaId != null) "content://media/external/audio/media/$mediaId" else null
-                        }
-                        val artBytes = rememberAlbumArt(currentSongUriString)
-                        Box(
+                    item {
+                        // Header of Bottom Sheet
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .size(56.dp)
-                                .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(14.dp) else androidx.compose.ui.graphics.RectangleShape)
-                                .background(artGradient),
-                            contentAlignment = Alignment.Center
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
                         ) {
-                            SubcomposeAsyncImage(
-                                model = artBytes,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                                error = {
-                                    Icon(
-                                        imageVector = Icons.Rounded.MusicNote,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                }
-                            )
-                        }
-                        
-                        Spacer(modifier = Modifier.width(16.dp))
-                        
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = title,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = artist,
-                                fontSize = 13.sp,
-                                color = Color.White.copy(alpha = 0.6f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
-                    
-                    val context = LocalContext.current
-                    val currentSongUriString = remember(playerState.currentSong?.mediaId) {
-                        val mediaId = playerState.currentSong?.mediaId
-                        if (mediaId != null) "content://media/external/audio/media/$mediaId" else null
-                    }
-
-
-
-                    // Option 1: File Information Card
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { 
-                                showFileInfoDialog = true 
-                                showMoreOptions = false
-                            }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            text = if (targetLang == "es") "Información técnica de audio" else "Technical Audio Info",
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    // Option 2: Share Song File
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                showMoreOptions = false
-                                try {
-                                    val uri = Uri.parse(currentSongUriString ?: "")
-                                    val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                        type = "audio/*"
-                                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            val artBytes = rememberAlbumArt(currentSongUriString)
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(14.dp) else androidx.compose.ui.graphics.RectangleShape)
+                                    .background(artGradient),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                SubcomposeAsyncImage(
+                                    model = artBytes,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                    error = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.MusicNote,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(28.dp)
+                                        )
                                     }
-                                    val chooserTitle = if (targetLang == "es") "Compartir pista de música" else "Share Music Track"
-                                    context.startActivity(android.content.Intent.createChooser(shareIntent, chooserTitle))
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                }
+                                )
                             }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Share,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            text = if (targetLang == "es") "Compartir archivo de audio" else "Share Audio File",
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                            
+                            Spacer(modifier = Modifier.width(16.dp))
+                            
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = title,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = artist,
+                                    fontSize = 13.sp,
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(bottom = 6.dp))
                     }
 
-                    // Option 3: Go to Artist
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                showMoreOptions = false
-                                onNavigateToArtist(artist)
-                                onBack()
-                            }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Person,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            text = if (targetLang == "es") "Ir al artista" else "Go to Artist",
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    // Option 4: Go to Album
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                showMoreOptions = false
-                                val albumName = playerState.currentSong?.mediaMetadata?.albumTitle?.toString() ?: "Unknown Album"
-                                onNavigateToAlbum(albumName)
-                                onBack()
-                            }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Album,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            text = if (targetLang == "es") "Ir al álbum" else "Go to Album",
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    // Option: Edit Metadata
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                showMoreOptions = false
-                                showTagEditorDialog = true
-                            }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.EditNote,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            text = if (targetLang == "es") "Editar metadatos" else "Edit Metadata",
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    // Option 5: Delete Track
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                showMoreOptions = false
-                                showDeleteDialog = true
-                            }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Delete,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            text = if (targetLang == "es") "Eliminar pista" else "Delete Track",
-                            color = MaterialTheme.colorScheme.error,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    // Gorgeous premium Option: Delete Translation (only shown if translation exists)
-                    if (translatedLyricLines != null) {
+                    // 1. Ecualizador
+                    item {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
                                     showMoreOptions = false
-                                    if (currentSongFile != null && viewModel != null) {
-                                        viewModel.deleteSongTranslatedLyrics(currentSongFile.id)
+                                    try {
+                                        val intent = android.content.Intent(android.media.audiofx.AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL)
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        android.widget.Toast.makeText(context, "Ecualizador no disponible", android.widget.Toast.LENGTH_SHORT).show()
                                     }
                                 }
                                 .padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Translate,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(24.dp)
-                            )
+                            Icon(Icons.Rounded.Equalizer, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
                             Spacer(modifier = Modifier.width(16.dp))
-                            Text("Eliminar traducción", color = MaterialTheme.colorScheme.error, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Ecualizador", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                         }
                     }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 2. Guardar cola de reproducción
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    showSaveQueueDialog = true
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.BookmarkAdd, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Guardar cola de reproducción", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // 3. Limpiar cola de reproducción
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    player.clearMediaItems()
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Limpiar cola de reproducción", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    item {
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp))
+                    }
+
+                    // 4. Ir al álbum
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    val albumName = playerState.currentSong?.mediaMetadata?.albumTitle?.toString() ?: "Unknown Album"
+                                    onNavigateToAlbum(albumName)
+                                    onBack()
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Album, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Ir al álbum", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // 5. Ir al artista
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    onNavigateToArtist(artist)
+                                    onBack()
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Person, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Ir al artista", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // 6. Ver artista del álbum
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    onNavigateToArtist(artist)
+                                    onBack()
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Group, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Ver artista del álbum", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // 7. Ir a la carpeta
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    val folder = currentSongFile?.folderName ?: ""
+                                    if (folder.isNotBlank()) {
+                                        viewModel?.requestedTab?.value = "Carpetas"
+                                    }
+                                    onBack()
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Folder, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Ir a la carpeta", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    item {
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp))
+                    }
+
+                    // 8. Agregar a lista de reproducción
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    showAddToPlaylistDialog = true
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Agregar a lista de reproducción", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // 9. Editar información
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    showTagEditorDialog = true
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Edit, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Editar información", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // 10. Editar letras
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    showEditLyricsDialog = true
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.EditNote, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Editar letras", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    item {
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp))
+                    }
+
+                    // 11. Detalles
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    showFileInfoDialog = true
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Info, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Detalles", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // 12. Compartir
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    try {
+                                        val uri = Uri.parse(currentSongUriString ?: "")
+                                        val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                            type = "audio/*"
+                                            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(android.content.Intent.createChooser(shareIntent, "Compartir pista"))
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Share, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Compartir", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // Option: Delete Track
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    showDeleteDialog = true
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Eliminar pista", color = MaterialTheme.colorScheme.error, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // Option: Delete Translation (only shown if translation exists)
+                    if (translatedLyricLines != null) {
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        showMoreOptions = false
+                                        if (currentSongFile != null && viewModel != null) {
+                                            viewModel.deleteSongTranslatedLyrics(currentSongFile.id)
+                                        }
+                                    }
+                                    .padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Translate,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text("Eliminar traducción", color = MaterialTheme.colorScheme.error, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
                 }
             }
+        }
+
+        // Sleep Timer Dialog
+        if (showSleepTimerDialog) {
+            AlertDialog(
+                onDismissRequest = { showSleepTimerDialog = false },
+                title = { Text("Temporizador de apagado", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        val options = listOf(
+                            0 to "Desactivado",
+                            15 to "15 minutos",
+                            30 to "30 minutos",
+                            45 to "45 minutos",
+                            60 to "60 minutos",
+                            -1 to "Al finalizar esta canción"
+                        )
+                        options.forEach { (mins, label) ->
+                            val isSelected = sleepTimerMinutes == mins
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        sleepTimerMinutes = mins
+                                        showSleepTimerDialog = false
+                                    }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        sleepTimerMinutes = mins
+                                        showSleepTimerDialog = false
+                                    },
+                                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(label, color = Color.White, fontSize = 15.sp)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showSleepTimerDialog = false }) {
+                        Text("Cancelar", color = Color.White.copy(alpha = 0.7f))
+                    }
+                },
+                containerColor = Color(0xFF161829),
+                titleContentColor = Color.White,
+                textContentColor = Color.White
+            )
+        }
+
+        // Save Queue as Playlist Dialog
+        if (showSaveQueueDialog) {
+            var playlistNameInput by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { showSaveQueueDialog = false },
+                title = { Text("Guardar cola de reproducción", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column {
+                        Text("Introduce un nombre para la nueva lista:", color = Color.White.copy(alpha = 0.8f))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = playlistNameInput,
+                            onValueChange = { playlistNameInput = it },
+                            label = { Text("Nombre de lista") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = Color.White.copy(alpha = 0.3f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (playlistNameInput.isNotBlank() && viewModel != null) {
+                                val queue = viewModel.getPlayerQueue()
+                                viewModel.createPlaylist(playlistNameInput)
+                                queue.forEach { song ->
+                                    viewModel.addSongToPlaylist(playlistNameInput, song.id)
+                                }
+                            }
+                            showSaveQueueDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("Guardar", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSaveQueueDialog = false }) {
+                        Text("Cancelar", color = Color.White.copy(alpha = 0.7f))
+                    }
+                },
+                containerColor = Color(0xFF161829),
+                titleContentColor = Color.White,
+                textContentColor = Color.White
+            )
+        }
+
+        // Add Song to Playlist Dialog
+        if (showAddToPlaylistDialog && currentSongFile != null && viewModel != null) {
+            var newPlaylistInput by remember { mutableStateOf("") }
+            var showCreateField by remember { mutableStateOf(false) }
+
+            AlertDialog(
+                onDismissRequest = { showAddToPlaylistDialog = false },
+                title = { Text("Agregar a lista de reproducción", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                    ) {
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showCreateField = !showCreateField }
+                                    .padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text("Crear nueva lista...", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            }
+                            if (showCreateField) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = newPlaylistInput,
+                                        onValueChange = { newPlaylistInput = it },
+                                        placeholder = { Text("Nombre...") },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White,
+                                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                            unfocusedBorderColor = Color.White.copy(alpha = 0.3f)
+                                        )
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Button(
+                                        onClick = {
+                                            if (newPlaylistInput.isNotBlank()) {
+                                                viewModel.createPlaylist(newPlaylistInput)
+                                                viewModel.addSongToPlaylist(newPlaylistInput, currentSongFile.id)
+                                                showAddToPlaylistDialog = false
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                    ) {
+                                        Text("OK", color = Color.Black, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                        }
+
+                        items(viewModel.playlists.keys.toList()) { playlistName ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        viewModel.addSongToPlaylist(playlistName, currentSongFile.id)
+                                        showAddToPlaylistDialog = false
+                                    }
+                                    .padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = Color.White.copy(alpha = 0.7f))
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(playlistName, color = Color.White, fontSize = 15.sp)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showAddToPlaylistDialog = false }) {
+                        Text("Cerrar", color = Color.White.copy(alpha = 0.7f))
+                    }
+                },
+                containerColor = Color(0xFF161829),
+                titleContentColor = Color.White,
+                textContentColor = Color.White
+            )
         }
 
         if (showQueueSheet) {

@@ -115,6 +115,22 @@ graph TD
 - **Respuesta Háptica:** Emite vibración táctil (`TextHandleMove`) al cambiar de letra durante el arrastre vertical.
 - **Burbuja Flotante:** Muestra una burbuja flotante retroiluminada en el color primario del tema con la letra en tamaño 28.sp ExtraBold. Integrada en las pestañas de **Canciones** y **Artistas**.
 
+### N. Rediseño Completo de la Interfaz del Reproductor ([PlayerScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/PlayerScreen.kt))
+- **Fila de Controles Principal:** Reordenada exactamente a `[Repetición]` | `[Anterior]` | `[Botón Circular Play/Pausa]` | `[Siguiente]` | `[Aleatorio]`.
+- **Barra de Acciones Inferior (5 Iconos):** `[Letras]`, `[Favoritos/Like]`, `[Temporizador de Sueño (Luna)]`, `[Cola de Reproducción]` y `[3 Puntos (Más Opciones)]`.
+- **Información de Formato de Audio Centrada:** Muestra `MP3 · 320 kb/s · 44.1 kHz` de forma limpia bajo el deslizador de progreso.
+- **Hoja de Opciones Estructurada (`showMoreOptions`):** Despliega las 12 opciones completas con separadores (Ecualizador, Guardar cola, Limpiar cola, Ir al álbum, Ir al artista, Ver artista del álbum, Ir a la carpeta, Agregar a playlist, Editar información, Editar letras, Detalles y Compartir).
+- **Actualización Reactiva Instantánea de Favoritos (`isFavorite`):** Claves de memorización en Compose vinculadas a `viewModel?.playlists?.get("Favoritos")` para cambiar el corazón a rojo inmediatamente al presionar me gusta.
+- **Carrusel y Transiciones Suaves:** `scrollToPage` directo en `HorizontalPager` para evitar saltos tipo ruleta y `Crossfade` en carátulas para eliminar parpadeos.
+
+### O. Sincronización de Portadas y Letras al Organizar Carpetas ([MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt#L4157-L4250))
+- **`syncLyricsAndCoverArtForMovedFile`:** Al reorganizar por artista y álbum en Ajustes:
+  1. Copia y mueve automáticamente archivos de letras físicos (`.lrc`, `.txt`) hacia la nueva carpeta del álbum.
+  2. Si la canción posee letras en la base de datos y no existe archivo `.lrc` físico en la carpeta destino, lo escribe automáticamente.
+  3. Traslada las imágenes de portada presentes en la carpeta de origen (`cover.jpg`, `folder.jpg`, `album.jpg`, `Front.jpg`, etc.) hacia la carpeta destino del álbum.
+  4. Si la carpeta destino carece de imagen de portada, extrae los datos de carátula embebida y genera los archivos `cover.jpg` / `folder.jpg`.
+- **Renombrado de Archivos de Letras:** Renombra archivos `.lrc` y `.txt` en simultáneo al renombrar canciones basándose en metadatos.
+
 ---
 
 ## 3. Esquema y Definición de Datos (Room Database)

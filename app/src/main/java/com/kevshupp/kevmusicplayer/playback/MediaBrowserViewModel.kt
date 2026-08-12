@@ -329,9 +329,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         reason: Int
                     ) {
                         savePlaybackState()
+                        preloadUpcomingArtwork()
                     }
                     override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
                         savePlaybackState()
+                        preloadUpcomingArtwork()
                     }
                 })
 
@@ -517,19 +519,26 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         if (totalItems <= 1) return
         val currentIndex = b.currentMediaItemIndex
 
-        val urisToPreload = mutableListOf<String>()
+        val urisToPreload = mutableSetOf<String>()
         for (i in 1..preloadCount) {
-            val targetIndex = (currentIndex + i) % totalItems
-            if (targetIndex == currentIndex) break
-            if (targetIndex in 0 until totalItems) {
-                try {
-                    val mediaItem = b.getMediaItemAt(targetIndex)
-                    val uriString = mediaItem.requestMetadata.mediaUri?.toString()
-                    if (uriString != null) {
-                        urisToPreload.add(uriString)
+            val nextIndex = (currentIndex + i) % totalItems
+            val prevIndex = (currentIndex - i + totalItems) % totalItems
+
+            for (targetIndex in listOf(nextIndex, prevIndex)) {
+                if (targetIndex in 0 until totalItems) {
+                    try {
+                        val mediaItem = b.getMediaItemAt(targetIndex)
+                        val mediaId = mediaItem.mediaId
+                        if (mediaId.isNotBlank()) {
+                            urisToPreload.add("content://media/external/audio/media/$mediaId")
+                        }
+                        val reqUri = mediaItem.requestMetadata.mediaUri?.toString()
+                        if (reqUri != null) {
+                            urisToPreload.add(reqUri)
+                        }
+                    } catch (e: Exception) {
+                        // Ignore
                     }
-                } catch (e: Exception) {
-                    // Ignore
                 }
             }
         }
@@ -863,6 +872,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         b.setMediaItems(mediaItems, index, 0L)
         b.prepare()
         b.play()
+        preloadUpcomingArtwork()
     }
 
     fun updateSongLyrics(id: Long, newLyrics: String?) {
@@ -1899,6 +1909,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                 }
 
                                 if (moveCompleted) {
+                                    syncLyricsAndCoverArtForMovedFile(context, oldFile, newFile, targetAlbumDir, song)
                                     android.media.MediaScannerConnection.scanFile(
                                         context,
                                         arrayOf(oldFile.absolutePath, newFile.absolutePath),
@@ -1909,6 +1920,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                     errorCount++
                                 }
                             } else {
+                                syncLyricsAndCoverArtForMovedFile(context, oldFile, newFile, targetAlbumDir, song)
                                 successCount++
                             }
                         } else {
@@ -3140,6 +3152,21 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                     }
 
                                     if (renameCompleted) {
+                                        val oldBaseName = oldFile.nameWithoutExtension
+                                        val newBaseName = newFile.nameWithoutExtension
+                                        listOf("lrc", "txt").forEach { ext ->
+                                            val oldLrc = File(oldFile.parentFile, "$oldBaseName.$ext")
+                                            if (oldLrc.exists() && oldLrc.isFile) {
+                                                val newLrc = File(oldFile.parentFile, "$newBaseName.$ext")
+                                                try {
+                                                    oldLrc.renameTo(newLrc)
+                                                    android.media.MediaScannerConnection.scanFile(context, arrayOf(newLrc.absolutePath), null, null)
+                                                } catch (e: Exception) {
+                                                    e.printStackTrace()
+                                                }
+                                            }
+                                        }
+
                                         // Trigger system media scanner for both old and new paths
                                         android.media.MediaScannerConnection.scanFile(
                                             context,
@@ -4139,6 +4166,101 @@ class AndroidArtwork : org.jaudiotagger.tag.images.Artwork {
         height = p0.height
         width = p0.width
         pictureType = p0.pictureType
+    }
+}
+
+fun syncLyricsAndCoverArtForMovedFile(
+    context: Context,
+    oldFile: File,
+    newFile: File,
+    targetAlbumDir: File,
+    song: AudioFile
+) {
+    try {
+        val oldBaseName = oldFile.nameWithoutExtension
+        val newBaseName = newFile.nameWithoutExtension
+
+        // 1. Move or copy sidecar lyrics files (.lrc and .txt)
+        val lrcExtensions = listOf("lrc", "txt")
+        lrcExtensions.forEach { ext ->
+            val oldLrcFile = File(oldFile.parentFile, "$oldBaseName.$ext")
+            if (oldLrcFile.exists() && oldLrcFile.isFile) {
+                val newLrcFile = File(targetAlbumDir, "$newBaseName.$ext")
+                try {
+                    if (oldLrcFile.absolutePath != newLrcFile.absolutePath) {
+                        oldLrcFile.copyTo(newLrcFile, overwrite = true)
+                        oldLrcFile.delete()
+                    }
+                    android.media.MediaScannerConnection.scanFile(context, arrayOf(newLrcFile.absolutePath), null, null)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+
+        // 2. Export database lyrics to .lrc sidecar file if no .lrc exists
+        val songLyrics = song.lyrics
+        if (!songLyrics.isNullOrBlank()) {
+            val newLrcFile = File(targetAlbumDir, "$newBaseName.lrc")
+            if (!newLrcFile.exists()) {
+                try {
+                    newLrcFile.writeText(songLyrics)
+                    android.media.MediaScannerConnection.scanFile(context, arrayOf(newLrcFile.absolutePath), null, null)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+
+        // 3. Move/copy image files from old parent folder to targetAlbumDir
+        val oldParentDir = oldFile.parentFile
+        if (oldParentDir != null && oldParentDir.exists() && oldParentDir.isDirectory && oldParentDir.absolutePath != targetAlbumDir.absolutePath) {
+            val imageExtensions = listOf("jpg", "jpeg", "png", "webp")
+            val imageFiles = oldParentDir.listFiles { file ->
+                file.isFile && imageExtensions.contains(file.extension.lowercase())
+            }
+            imageFiles?.forEach { imgFile ->
+                try {
+                    val targetImgFile = File(targetAlbumDir, imgFile.name)
+                    if (!targetImgFile.exists()) {
+                        imgFile.copyTo(targetImgFile, overwrite = true)
+                        android.media.MediaScannerConnection.scanFile(context, arrayOf(targetImgFile.absolutePath), null, null)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+
+        // 4. If targetAlbumDir has no album cover file, extract artwork and save cover.jpg / folder.jpg
+        val hasCoverImage = targetAlbumDir.listFiles()?.any { file ->
+            file.isFile && listOf("cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "cover.png", "folder.png").contains(file.name.lowercase())
+        } == true
+
+        if (!hasCoverImage) {
+            try {
+                val retriever = android.media.MediaMetadataRetriever()
+                retriever.setDataSource(context, Uri.parse(song.uriString))
+                val artBytes = retriever.embeddedPicture
+                retriever.release()
+
+                if (artBytes != null && artBytes.isNotEmpty()) {
+                    saveFolderCoverArt(context, newFile.absolutePath, artBytes)
+                } else {
+                    val audioFile = org.jaudiotagger.audio.AudioFileIO.read(newFile)
+                    val tag = audioFile.tag
+                    val artwork = tag?.firstArtwork
+                    val bytes = artwork?.binaryData
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        saveFolderCoverArt(context, newFile.absolutePath, bytes)
+                    }
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
     }
 }
 
