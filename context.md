@@ -285,7 +285,7 @@ adb_smart_connect() {
 ```
 
 ### Script Automatizado de Despliegue (`conectar_adb.sh`)
-Ubicación: [conectar_adb.sh](file:///home/kevin/Escritorio/conectar_adb.sh)
+Ubicación: [conectar_adb.sh](file:///home/kevin/Escritorio/sh/conectar_adb.sh)
 - Escanea ADB USB y Wi-Fi (mDNS).
 - Exporta JDK 21 (`/home/kevin/.gradle/jdks/`) y Android SDK (`/home/kevin/android-sdk`).
 - Permite seleccionar dispositivos de destino e instalar la variante Debug o Release con `./gradlew installDebug` / `installRelease`.
