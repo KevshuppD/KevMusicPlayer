@@ -20,6 +20,9 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import com.kevshupp.kevmusicplayer.data.LyricsRepository
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
@@ -817,6 +820,69 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 )
             } finally {
                 isScanning.value = false
+            }
+        }
+    }
+
+    fun forceDeepStorageScan(context: android.content.Context, onComplete: (Int) -> Unit) {
+        if (isScanning.value) return
+        isScanning.value = true
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val prefs = context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+                val selectedFolder = prefs.getString("music_folder_path", null)
+                val rootDir = if (!selectedFolder.isNullOrBlank() && File(selectedFolder).exists()) {
+                    File(selectedFolder)
+                } else {
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+                }
+
+                val audioExtensions = setOf("mp3", "flac", "m4a", "wav", "ogg", "aac", "opus", "wma", "m4b")
+                val foundAudioPaths = mutableListOf<String>()
+
+                if (rootDir.exists() && rootDir.isDirectory) {
+                    rootDir.walkTopDown()
+                        .maxDepth(15)
+                        .forEach { file ->
+                            try {
+                                if (file.isFile && audioExtensions.contains(file.extension.lowercase())) {
+                                    foundAudioPaths.add(file.absolutePath)
+                                }
+                            } catch (e: Exception) {}
+                        }
+                }
+
+                android.util.Log.d("DeepScan", "Found ${foundAudioPaths.size} physical audio files on disk in ${rootDir.absolutePath}")
+
+                if (foundAudioPaths.isNotEmpty()) {
+                    val batchSize = 50
+                    foundAudioPaths.chunked(batchSize).forEach { chunk ->
+                        android.media.MediaScannerConnection.scanFile(
+                            context,
+                            chunk.toTypedArray(),
+                            null,
+                            null
+                        )
+                    }
+                }
+
+                kotlinx.coroutines.delay(1500L)
+
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    isScanning.value = false
+                }
+
+                scanFiles(isManual = true)
+
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    onComplete(foundAudioPaths.size)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("DeepScan", "Error during forceDeepStorageScan", e)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    isScanning.value = false
+                    onComplete(0)
+                }
             }
         }
     }
@@ -1969,6 +2035,244 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun deleteAllFolderCoverImages(
+        context: Context,
+        onProgress: (current: Int, total: Int) -> Unit,
+        onComplete: (deletedCount: Int) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val deletedCount = java.util.concurrent.atomic.AtomicInteger(0)
+            try {
+                val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+                val musicFolderPath = settingsPrefs.getString("music_folder_path", null)
+                val baseMusicDir = if (!musicFolderPath.isNullOrBlank()) {
+                    val f = File(musicFolderPath)
+                    if (f.exists() && f.isDirectory) f else null
+                } else {
+                    val defaultMusic = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+                    if (defaultMusic.exists() && defaultMusic.isDirectory) defaultMusic else null
+                }
+
+                // Gather all directories from local audio files and base music directory
+                val directories = mutableSetOf<File>()
+                localAudioFiles.forEach { song ->
+                    val path = getPhysicalPath(context, song.id, song.uriString)
+                    if (!path.isNullOrBlank()) {
+                        File(path).parentFile?.let { directories.add(it) }
+                    }
+                }
+                if (baseMusicDir != null && baseMusicDir.exists() && baseMusicDir.isDirectory) {
+                    baseMusicDir.walkTopDown().forEach { file ->
+                        if (file.isDirectory) directories.add(file)
+                    }
+                }
+
+                val dirList = directories.toList()
+                val total = dirList.size
+                val processedCount = java.util.concurrent.atomic.AtomicInteger(0)
+                val coverNames = setOf(
+                    "cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "front.png", "cover.png", "folder.png", "album.png",
+                    "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg", "Cover.png", "Folder.png", "Album.png"
+                )
+
+                dirList.chunked(25).forEach { chunk ->
+                    coroutineScope {
+                        chunk.map { dir ->
+                            async(Dispatchers.IO) {
+                                try {
+                                    if (dir.exists() && dir.isDirectory) {
+                                        val files = dir.listFiles()
+                                        files?.forEach { file ->
+                                            if (file.isFile && coverNames.contains(file.name)) {
+                                                if (file.delete()) {
+                                                    deletedCount.incrementAndGet()
+                                                }
+                                            }
+                                        }
+                                        try {
+                                            val selection = "${android.provider.MediaStore.Images.Media.DATA} LIKE ?"
+                                            val selectionArgs = arrayOf("${dir.absolutePath}/%")
+                                            context.contentResolver.delete(
+                                                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                                selection,
+                                                selectionArgs
+                                            )
+                                        } catch (e: Exception) {}
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                } finally {
+                                    val cur = processedCount.incrementAndGet()
+                                    withContext(Dispatchers.Main) {
+                                        onProgress(cur, total)
+                                    }
+                                }
+                            }
+                        }.awaitAll()
+                    }
+                }
+
+                // Evict in-memory bitmap cache and trigger UI refresh
+                com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.evictAll()
+                withContext(Dispatchers.Main) {
+                    com.kevshupp.kevmusicplayer.ui.screens.albumArtVersion++
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            withContext(Dispatchers.Main) {
+                onComplete(deletedCount.get())
+            }
+        }
+    }
+
+    fun deleteAllNoMediaFiles(
+        context: Context,
+        onProgress: (current: Int, total: Int) -> Unit,
+        onComplete: (deletedCount: Int) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val deletedCount = java.util.concurrent.atomic.AtomicInteger(0)
+            try {
+                val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+                val musicFolderPath = settingsPrefs.getString("music_folder_path", null)
+                val baseMusicDir = if (!musicFolderPath.isNullOrBlank()) {
+                    val f = File(musicFolderPath)
+                    if (f.exists() && f.isDirectory) f else null
+                } else {
+                    val defaultMusic = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+                    if (defaultMusic.exists() && defaultMusic.isDirectory) defaultMusic else null
+                }
+
+                val directories = mutableSetOf<File>()
+                localAudioFiles.forEach { song ->
+                    val path = getPhysicalPath(context, song.id, song.uriString)
+                    if (!path.isNullOrBlank()) {
+                        File(path).parentFile?.let { directories.add(it) }
+                    }
+                }
+                if (baseMusicDir != null && baseMusicDir.exists() && baseMusicDir.isDirectory) {
+                    baseMusicDir.walkTopDown().forEach { file ->
+                        if (file.isDirectory) directories.add(file)
+                    }
+                }
+
+                val dirList = directories.toList()
+                val total = dirList.size
+                val processedCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+                dirList.chunked(25).forEach { chunk ->
+                    coroutineScope {
+                        chunk.map { dir ->
+                            async(Dispatchers.IO) {
+                                try {
+                                    if (dir.exists() && dir.isDirectory) {
+                                        val files = dir.listFiles()
+                                        files?.forEach { file ->
+                                            if (file.isFile && file.name.equals(".nomedia", ignoreCase = true)) {
+                                                if (file.delete()) {
+                                                    deletedCount.incrementAndGet()
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                } finally {
+                                    val cur = processedCount.incrementAndGet()
+                                    withContext(Dispatchers.Main) {
+                                        onProgress(cur, total)
+                                    }
+                                }
+                            }
+                        }.awaitAll()
+                    }
+                }
+
+                scanFiles(isManual = true)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            withContext(Dispatchers.Main) {
+                onComplete(deletedCount.get())
+            }
+        }
+    }
+
+    fun deleteAllLyricsFiles(
+        context: Context,
+        onProgress: (current: Int, total: Int) -> Unit,
+        onComplete: (deletedCount: Int) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val deletedCount = java.util.concurrent.atomic.AtomicInteger(0)
+            try {
+                val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+                val musicFolderPath = settingsPrefs.getString("music_folder_path", null)
+                val baseMusicDir = if (!musicFolderPath.isNullOrBlank()) {
+                    val f = File(musicFolderPath)
+                    if (f.exists() && f.isDirectory) f else null
+                } else {
+                    val defaultMusic = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+                    if (defaultMusic.exists() && defaultMusic.isDirectory) defaultMusic else null
+                }
+
+                val directories = mutableSetOf<File>()
+                localAudioFiles.forEach { song ->
+                    val path = getPhysicalPath(context, song.id, song.uriString)
+                    if (!path.isNullOrBlank()) {
+                        File(path).parentFile?.let { directories.add(it) }
+                    }
+                }
+                if (baseMusicDir != null && baseMusicDir.exists() && baseMusicDir.isDirectory) {
+                    baseMusicDir.walkTopDown().forEach { file ->
+                        if (file.isDirectory) directories.add(file)
+                    }
+                }
+
+                val dirList = directories.toList()
+                val total = dirList.size
+                val processedCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+                dirList.chunked(25).forEach { chunk ->
+                    coroutineScope {
+                        chunk.map { dir ->
+                            async(Dispatchers.IO) {
+                                try {
+                                    if (dir.exists() && dir.isDirectory) {
+                                        val files = dir.listFiles()
+                                        files?.forEach { file ->
+                                            if (file.isFile && (file.extension.equals("lrc", ignoreCase = true) || (file.extension.equals("txt", ignoreCase = true) && !file.name.equals("README.txt", ignoreCase = true)))) {
+                                                if (file.delete()) {
+                                                    deletedCount.incrementAndGet()
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                } finally {
+                                    val cur = processedCount.incrementAndGet()
+                                    withContext(Dispatchers.Main) {
+                                        onProgress(cur, total)
+                                    }
+                                }
+                            }
+                        }.awaitAll()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            withContext(Dispatchers.Main) {
+                onComplete(deletedCount.get())
+            }
+        }
+    }
+
     fun updateAlbumMetadata(
         context: Context,
         oldAlbumName: String,
@@ -2569,14 +2873,13 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     t.printStackTrace()
                 }
 
-                // 0. Try writing tags using native C++ TagLib engine
                 val songEntity = audioDao.getAudioFileById(songId)
-                val pathForTagLib = getPhysicalPath(context, songId, songEntity?.uriString)
-                if (!pathForTagLib.isNullOrBlank()) {
-                    writeMetadataWithTagLib(context, pathForTagLib, title, artist, album, genre, coverBytes)
-                }
-                
                 var songUriString: String? = null
+                
+                val pathForMp3Agic = getPhysicalPath(context, songId, songEntity?.uriString)
+                if (!pathForMp3Agic.isNullOrBlank() && pathForMp3Agic.endsWith(".mp3", ignoreCase = true)) {
+                    writeMp3TagsWithMp3Agic(pathForMp3Agic, title, artist, album, genre, coverBytes)
+                }
                 
                 val writeSuccess = writeMetadataWithTempFile(context, songId, songEntity?.uriString) { audioFile ->
                     val tag = audioFile.getTagOrCreateAndSetDefault()
@@ -2646,10 +2949,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 // 2. Update metadata in Room Database
                 val allEntities = audioDao.getAllAudioFiles()
                 val targetEntity = allEntities.find { it.id == songId }
-                val physicalPath = getPhysicalPath(context, songId, targetEntity?.uriString)
-                if (coverBytes != null && !physicalPath.isNullOrBlank()) {
-                    saveFolderCoverArt(context, physicalPath, coverBytes)
-                    invalidateMediaStoreAlbumArt(context, songId, targetEntity?.uriString)
+                val songObj = localAudioFiles.find { it.id == songId }
+                val songUri = targetEntity?.uriString ?: songObj?.uriString
+                val folderPath = songObj?.folderPath ?: targetEntity?.folderPath
+                val physicalPath = getPhysicalPath(context, songId, songUri) ?: folderPath ?: songUri?.let {
+                    if (it.startsWith("file://")) Uri.parse(it).path else null
+                }
+                
+                if (!physicalPath.isNullOrBlank()) {
+                    invalidateMediaStoreAlbumArt(context, songId, songUri)
                 }
                 val newModTime = if (physicalPath != null) File(physicalPath).lastModified() else 0L
                 if (targetEntity != null) {
@@ -2774,9 +3082,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 var successCount = 0
                 var failCount = 0
                 for (song in songsInAlbum) {
-                    val pathForTagLib = getPhysicalPath(context, song.id, song.uriString)
-                    if (!pathForTagLib.isNullOrBlank()) {
-                        writeMetadataWithTagLib(context, pathForTagLib, coverBytes = coverBytes)
+                    val pathForMp3Agic = getPhysicalPath(context, song.id, song.uriString)
+                    if (!pathForMp3Agic.isNullOrBlank() && pathForMp3Agic.endsWith(".mp3", ignoreCase = true)) {
+                        writeMp3TagsWithMp3Agic(pathForMp3Agic, coverBytes = coverBytes)
                     }
 
                     val success = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
@@ -2829,11 +3137,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 if (songsInAlbum.isNotEmpty()) {
-                    val firstSong = songsInAlbum.first()
-                    val path = getPhysicalPath(context, firstSong.id, firstSong.uriString)
-                    if (!path.isNullOrBlank()) {
-                        saveFolderCoverArt(context, path, coverBytes)
-                        invalidateMediaStoreAlbumArt(context, firstSong.id, firstSong.uriString)
+                    songsInAlbum.forEach { song ->
+                        val songUri = song.uriString
+                        invalidateMediaStoreAlbumArt(context, song.id, songUri)
                     }
                 }
 
@@ -2908,9 +3214,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 var successCount = 0
                 var failCount = 0
                 for (song in songsInAlbum) {
-                    val pathForTagLib = getPhysicalPath(context, song.id, song.uriString)
-                    if (!pathForTagLib.isNullOrBlank()) {
-                        writeMetadataWithTagLib(context, pathForTagLib, album = newAlbumName, artist = if (newArtist.isNotBlank()) newArtist else null, coverBytes = coverBytes)
+                    val pathForMp3Agic = getPhysicalPath(context, song.id, song.uriString)
+                    if (!pathForMp3Agic.isNullOrBlank() && pathForMp3Agic.endsWith(".mp3", ignoreCase = true)) {
+                        writeMp3TagsWithMp3Agic(pathForMp3Agic, album = newAlbumName, artist = if (newArtist.isNotBlank()) newArtist else null, coverBytes = coverBytes)
                     }
 
                     val success = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
@@ -2980,11 +3286,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 if (coverBytes != null && songsInAlbum.isNotEmpty()) {
-                    val firstSong = songsInAlbum.first()
-                    val path = getPhysicalPath(context, firstSong.id, firstSong.uriString)
-                    if (!path.isNullOrBlank()) {
-                        saveFolderCoverArt(context, path, coverBytes)
-                        invalidateMediaStoreAlbumArt(context, firstSong.id, firstSong.uriString)
+                    songsInAlbum.forEach { song ->
+                        val songUri = song.uriString
+                        val folderPath = song.folderPath
+                        val path = getPhysicalPath(context, song.id, songUri) ?: folderPath ?: songUri.let {
+                            if (it.startsWith("file://")) Uri.parse(it).path else null
+                        }
+                        if (!path.isNullOrBlank()) {
+                            saveFolderCoverArt(context, path, coverBytes)
+                            invalidateMediaStoreAlbumArt(context, song.id, songUri)
+                        }
                     }
                 }
 
@@ -3627,6 +3938,18 @@ data class DuplicateGroup(
 )
 
 fun getPhysicalPath(context: android.content.Context, songId: Long, uriString: String? = null): String? {
+    if (!uriString.isNullOrBlank()) {
+        try {
+            val parsedUri = Uri.parse(uriString)
+            if (parsedUri.scheme == "file") {
+                val path = parsedUri.path
+                if (!path.isNullOrBlank() && java.io.File(path).exists()) {
+                    return path
+                }
+            }
+        } catch (e: Exception) {}
+    }
+
     val uri = if (!uriString.isNullOrBlank()) {
         Uri.parse(uriString)
     } else {
@@ -3895,78 +4218,103 @@ class SafeMp4FileReader : org.jaudiotagger.audio.mp4.Mp4FileReader() {
 }
 
 fun writeMetadataWithTagLib(context: android.content.Context, physicalPath: String, title: String? = null, artist: String? = null, album: String? = null, genre: String? = null, coverBytes: ByteArray? = null): Boolean {
-    return try {
-        val file = java.io.File(physicalPath)
-        if (!file.exists() || !file.canWrite()) return false
-
-        val pfd = android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_WRITE) ?: return false
-        val dupPfd = pfd.dup()
-        val fd = dupPfd.detachFd()
-        try {
-            if (fd > 0) {
-                val existingMetadata = try { com.kyant.taglib.TagLib.getMetadata(fd, false) } catch (e: Exception) { null }
-                val map = existingMetadata?.propertyMap ?: java.util.HashMap()
-
-                if (!title.isNullOrBlank()) map["TITLE"] = arrayOf(title)
-                if (!artist.isNullOrBlank()) map["ARTIST"] = arrayOf(artist)
-                if (!album.isNullOrBlank()) map["ALBUM"] = arrayOf(album)
-                if (!genre.isNullOrBlank()) map["GENRE"] = arrayOf(genre)
-
-                try {
-                    com.kyant.taglib.TagLib.savePropertyMap(fd, map)
-                } catch (e: Throwable) {
-                    android.util.Log.w("TagLibWrite", "Failed savePropertyMap for $physicalPath", e)
-                }
-
-                if (coverBytes != null && coverBytes.isNotEmpty()) {
-                    val mimeType = getMimeTypeFromBytes(coverBytes)
-                    val picture = com.kyant.taglib.Picture(coverBytes, "Front Cover", "FrontCover", mimeType)
-                    try {
-                        com.kyant.taglib.TagLib.savePictures(fd, arrayOf(picture))
-                        android.util.Log.d("TagLibWrite", "Successfully saved picture with TagLib for $physicalPath")
-                    } catch (e: Throwable) {
-                        android.util.Log.w("TagLibWrite", "Failed savePictures for $physicalPath", e)
-                    }
-                }
-            }
-        } finally {
-            try { pfd.close() } catch (e: Exception) {}
-        }
-        true
-    } catch (e: Throwable) {
-        android.util.Log.w("TagLibWrite", "Error in writeMetadataWithTagLib for $physicalPath", e)
-        false
-    }
+    // Native TagLib JNI file descriptor operations trigger Android 10+ fdsan SIGABRT crashes on detached FDs.
+    // Metadata and cover art writing is safely handled by Java jaudiotagger (writeMetadataWithTempFile).
+    return false
 }
 
-fun saveFolderCoverArt(context: android.content.Context, physicalPath: String, coverBytes: ByteArray) {
+fun saveFolderCoverArt(context: android.content.Context, physicalPathOrFolder: String, coverBytes: ByteArray) {
     try {
-        val audioFile = java.io.File(physicalPath)
-        val parentDir = audioFile.parentFile
-        if (parentDir != null && parentDir.exists() && parentDir.isDirectory) {
-            val coverNames = listOf("cover.jpg", "folder.jpg", "album.jpg", "Front.jpg")
-            val pathsToScan = mutableListOf<String>()
-            coverNames.forEach { name ->
-                try {
-                    val coverFile = java.io.File(parentDir, name)
-                    coverFile.outputStream().use { out ->
-                        out.write(coverBytes)
-                    }
-                    pathsToScan.add(coverFile.absolutePath)
-                } catch (e: Exception) {
-                    android.util.Log.w("FolderCover", "Failed writing $name in ${parentDir.absolutePath}", e)
-                }
-            }
-            if (pathsToScan.isNotEmpty()) {
-                android.media.MediaScannerConnection.scanFile(
-                    context,
-                    pathsToScan.toTypedArray(),
-                    arrayOf("image/jpeg")
-                ) { _, _ -> }
+        android.util.Log.d("FolderCover", "saveFolderCoverArt called for path: $physicalPathOrFolder with ${coverBytes.size} bytes")
+        
+        var realPath: String? = physicalPathOrFolder
+        if (physicalPathOrFolder.startsWith("content://") || physicalPathOrFolder.startsWith("file://")) {
+            realPath = getPhysicalPath(context, 0L, physicalPathOrFolder)
+            if (realPath.isNullOrBlank() && physicalPathOrFolder.startsWith("file://")) {
+                realPath = try { android.net.Uri.parse(physicalPathOrFolder).path } catch (e: Exception) { null }
             }
         }
+        
+        if (realPath.isNullOrBlank()) {
+            android.util.Log.w("FolderCover", "Could not resolve real file system path for: $physicalPathOrFolder")
+            return
+        }
+
+        val target = java.io.File(realPath)
+        val parentDir = if (target.isDirectory) target else target.parentFile
+        if (parentDir != null && (parentDir.exists() || parentDir.mkdirs())) {
+            // Write ONLY 1 canonical cover image file: cover.jpg
+            val coverFile = java.io.File(parentDir, "cover.jpg")
+            var written = false
+            try {
+                coverFile.outputStream().use { out ->
+                    out.write(coverBytes)
+                }
+                written = true
+                android.util.Log.d("FolderCover", "Successfully wrote cover.jpg in ${coverFile.absolutePath}")
+            } catch (e: Exception) {
+                android.util.Log.w("FolderCover", "Direct outputStream failed writing cover.jpg in ${parentDir.absolutePath}, attempting MediaStore fallback", e)
+            }
+
+            if (!written) {
+                try {
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "cover.jpg")
+                        put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                            val relativePath = parentDir.absolutePath.substringAfter("/storage/emulated/0/")
+                            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, relativePath)
+                            put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                        } else {
+                            put(android.provider.MediaStore.Images.Media.DATA, coverFile.absolutePath)
+                        }
+                    }
+                    val imageUri = context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    if (imageUri != null) {
+                        context.contentResolver.openOutputStream(imageUri)?.use { out ->
+                            out.write(coverBytes)
+                        }
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                            values.clear()
+                            values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                            context.contentResolver.update(imageUri, values, null, null)
+                        }
+                        written = true
+                        android.util.Log.d("FolderCover", "Successfully inserted cover.jpg via MediaStore for ${parentDir.absolutePath}")
+                    }
+                } catch (ex: Exception) {
+                    android.util.Log.e("FolderCover", "MediaStore fallback also failed for ${parentDir.absolutePath}", ex)
+                }
+            }
+
+            if (written && coverFile.exists()) {
+                try {
+                    android.media.MediaScannerConnection.scanFile(
+                        context,
+                        arrayOf(coverFile.absolutePath),
+                        arrayOf("image/jpeg")
+                    ) { path, uri ->
+                        android.util.Log.d("FolderCover", "MediaScanner scanned cover.jpg at $path -> $uri")
+                    }
+                } catch (e: Exception) {}
+            }
+
+            // Delete old/redundant duplicate files if they exist (folder.jpg, album.jpg, front.jpg)
+            listOf("folder.jpg", "album.jpg", "front.jpg", "folder.png", "album.png", "front.png", "cover.png").forEach { name ->
+                try {
+                    val redundantFile = java.io.File(parentDir, name)
+                    if (redundantFile.exists() && !redundantFile.name.equals(coverFile.name, ignoreCase = true)) {
+                        redundantFile.delete()
+                    }
+                } catch (e: Exception) {
+                    // ignore
+                }
+            }
+        } else {
+            android.util.Log.w("FolderCover", "parentDir is null or cannot be created for path: $realPath")
+        }
     } catch (e: Exception) {
-        android.util.Log.w("FolderCover", "Error in saveFolderCoverArt for $physicalPath", e)
+        android.util.Log.w("FolderCover", "Error in saveFolderCoverArt for $physicalPathOrFolder", e)
     }
 }
 
@@ -4006,6 +4354,62 @@ fun invalidateMediaStoreAlbumArt(context: android.content.Context, songId: Long,
         }
     } catch (e: Exception) {
         android.util.Log.w("MediaStoreArt", "Error invalidating MediaStore album art", e)
+    }
+}
+
+fun writeMp3TagsWithMp3Agic(
+    filePath: String,
+    title: String? = null,
+    artist: String? = null,
+    album: String? = null,
+    genre: String? = null,
+    coverBytes: ByteArray? = null
+): Boolean {
+    return try {
+        val mp3file = com.mpatric.mp3agic.Mp3File(filePath)
+        val id3v2Tag = if (mp3file.hasId3v2Tag()) {
+            mp3file.id3v2Tag
+        } else {
+            val newTag = com.mpatric.mp3agic.ID3v23Tag()
+            mp3file.id3v2Tag = newTag
+            newTag
+        }
+
+        if (!title.isNullOrBlank()) id3v2Tag.title = title
+        if (!artist.isNullOrBlank()) id3v2Tag.artist = artist
+        if (!album.isNullOrBlank()) id3v2Tag.album = album
+        if (!genre.isNullOrBlank()) {
+            try {
+                id3v2Tag.genreDescription = genre
+            } catch (e: Exception) {}
+        }
+
+        if (coverBytes != null && coverBytes.isNotEmpty()) {
+            val mimeType = getMimeTypeFromBytes(coverBytes)
+            id3v2Tag.setAlbumImage(coverBytes, mimeType)
+            android.util.Log.d("Mp3Agic", "Set album image on ID3v2 tag (${coverBytes.size} bytes, $mimeType) for $filePath")
+        }
+
+        val tempSavePath = "$filePath.tmp_save"
+        mp3file.save(tempSavePath)
+
+        val origFile = java.io.File(filePath)
+        val tmpFile = java.io.File(tempSavePath)
+
+        if (tmpFile.exists() && tmpFile.length() > 0) {
+            val renamed = tmpFile.renameTo(origFile)
+            if (!renamed) {
+                origFile.delete()
+                tmpFile.renameTo(origFile)
+            }
+            android.util.Log.d("Mp3Agic", "Successfully saved updated MP3 file at $filePath")
+            true
+        } else {
+            false
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("Mp3Agic", "Failed to write MP3 tags with mp3agic for $filePath", e)
+        false
     }
 }
 
@@ -4224,39 +4628,10 @@ fun syncLyricsAndCoverArtForMovedFile(
                     val targetImgFile = File(targetAlbumDir, imgFile.name)
                     if (!targetImgFile.exists()) {
                         imgFile.copyTo(targetImgFile, overwrite = true)
-                        android.media.MediaScannerConnection.scanFile(context, arrayOf(targetImgFile.absolutePath), null, null)
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
-            }
-        }
-
-        // 4. If targetAlbumDir has no album cover file, extract artwork and save cover.jpg / folder.jpg
-        val hasCoverImage = targetAlbumDir.listFiles()?.any { file ->
-            file.isFile && listOf("cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "cover.png", "folder.png").contains(file.name.lowercase())
-        } == true
-
-        if (!hasCoverImage) {
-            try {
-                val retriever = android.media.MediaMetadataRetriever()
-                retriever.setDataSource(context, Uri.parse(song.uriString))
-                val artBytes = retriever.embeddedPicture
-                retriever.release()
-
-                if (artBytes != null && artBytes.isNotEmpty()) {
-                    saveFolderCoverArt(context, newFile.absolutePath, artBytes)
-                } else {
-                    val audioFile = org.jaudiotagger.audio.AudioFileIO.read(newFile)
-                    val tag = audioFile.tag
-                    val artwork = tag?.firstArtwork
-                    val bytes = artwork?.binaryData
-                    if (bytes != null && bytes.isNotEmpty()) {
-                        saveFolderCoverArt(context, newFile.absolutePath, bytes)
-                    }
-                }
-            } catch (e: Exception) {
-                // ignore
             }
         }
     } catch (e: Exception) {

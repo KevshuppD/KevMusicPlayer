@@ -67,9 +67,11 @@ graph TD
 - **Transición Fluida de Letras:** Cambio entre carátula y letras en el reproductor mediante `AnimatedContent` (`fadeIn`/`fadeOut`, `scaleIn`/`scaleOut`).
 
 ### E. Editor de Metadatos Híbrido: Motor Nativo C++ TagLib + jaudiotagger + Folder Cover ([MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt))
-- **Motor Nativo C++ TagLib (`writeMetadataWithTagLib`):** Integra `io.github.kyant0:taglib:1.0.6` (`libtaglib.so`). Duplica y desvincula el descriptor de archivo con `dupPfd.detachFd()` para ceder la propiedad a TagLib C++ sin activar la herramienta de seguridad `fdsan` (*File Descriptor Sanitizer*) de Android 10+, previniendo cierres inesperados.
-- **Motor Java jaudiotagger:** Complementa la escritura en "modo Android" (`TagOptionSingleton.getInstance().setAndroid(true)`), decodificando bitmaps mediante `createJaudiotaggerArtwork` (`setImageFromData()`).
-- **Persistencia en Carpeta (`saveFolderCoverArt`):** Al guardar o actualizar la portada de una canción o álbum, genera automáticamente los archivos de imagen física **`cover.jpg`** y **`folder.jpg`** en la carpeta donde reside el archivo.
+- **Motor Nativo C++ TagLib (`writeMetadataWithTagLib`):** Integra `io.github.kyant0:taglib:1.0.6` (`libtaglib.so`). Actualiza las propiedades de texto (`TITLE`, `ARTIST`, `ALBUM`, `GENRE`). Se desacopló la escritura JNI de imágenes en TagLib para evitar cierres Native SIGSEGV, dejando la escritura de portadas embebidas exclusivamente al motor Java `jaudiotagger`.
+- **Motor Java Especializado mp3agic (`writeMp3TagsWithMp3Agic`):** Integra `com.mpatric:mp3agic:0.9.1`. Diseñado específicamente para archivos `.mp3`, graba y reemplaza directamente las etiquetas `ID3v1` e `ID3v2` (`ID3v2.3`/`ID3v2.4`) junto con las portadas embebidas `APIC` sin dependencias de `java.awt.*`, garantizando una incrustación 100% confiable y rápida en Android.
+- **Motor Java jaudiotagger:** Complementa la escritura de formatos adicionales (`.flac`, `.m4a`, `.ogg`, `.wav`) incrustando bitmaps de manera segura mediante `createJaudiotaggerArtwork`.
+- **Incrustado de Portadas Embebidas (Tag ID3v2 APIC / FLAC Picture):** Al guardar o actualizar la portada de una canción o álbum, KevMusicPlayer graba la imagen directamente dentro del archivo de audio MP3/FLAC (`createJaudiotaggerArtwork`). No se crean archivos de imagen físicos en la carpeta de música, manteniendo la galería de fotos de Android 100% limpia sin requerir `.nomedia`.
+- **Herramientas de Limpieza y Escaneo Profundo (`forceDeepStorageScan`, `deleteAllFolderCoverImages`, `deleteAllNoMediaFiles`, `deleteAllLyricsFiles`):** Accesibles desde Ajustes > Biblioteca. La función `forceDeepStorageScan` recorre físicamente el almacenamiento en busca de archivos `.mp3`, `.flac`, `.m4a`, etc., e invoca `MediaScannerConnection.scanFile` por lotes para recuperar canciones de carpetas donde se borró un `.nomedia`. Las herramientas de limpieza procesan carpetas concurrentemente en hilos paralelos para eliminar portadas físicas, archivos `.nomedia` y letras.
 - **Carga de Portadas con Fallback en Cascada (`rememberAlbumArt` / `preloadAlbumArt`):**
   1. *Paso 1:* Etiqueta embebida en la ruta física del archivo.
   2. *Paso 2:* Descriptor de archivo `ParcelFileDescriptor`.
@@ -127,8 +129,7 @@ graph TD
 - **`syncLyricsAndCoverArtForMovedFile`:** Al reorganizar por artista y álbum en Ajustes:
   1. Copia y mueve automáticamente archivos de letras físicos (`.lrc`, `.txt`) hacia la nueva carpeta del álbum.
   2. Si la canción posee letras en la base de datos y no existe archivo `.lrc` físico en la carpeta destino, lo escribe automáticamente.
-  3. Traslada las imágenes de portada presentes en la carpeta de origen (`cover.jpg`, `folder.jpg`, `album.jpg`, `Front.jpg`, etc.) hacia la carpeta destino del álbum.
-  4. Si la carpeta destino carece de imagen de portada, extrae los datos de carátula embebida y genera los archivos `cover.jpg` / `folder.jpg`.
+  3. Traslada los archivos de portada de origen si ya existían previamente. Las imágenes de portada embebidas en las etiquetas de los archivos de audio se mantienen estrictamente dentro del archivo y **NUNCA se extraen a disco automáticamente**.
 - **Renombrado de Archivos de Letras:** Renombra archivos `.lrc` y `.txt` en simultáneo al renombrar canciones basándose en metadatos.
 
 ---

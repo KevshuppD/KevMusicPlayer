@@ -339,6 +339,25 @@ fun TagEditorDialog(
     var coverResults by remember { mutableStateOf<List<com.kevshupp.kevmusicplayer.data.ITunesCoverSearchResult>>(emptyList()) }
     var coverSearchStatus by remember { mutableStateOf("") }
 
+    val coverPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                try {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes != null) {
+                        selectedCoverBytes = bytes
+                        selectedCoverUrl = null
+                        coverSearchStatus = getLocalized("Portada local seleccionada", "Local cover selected")
+                    }
+                } catch (e: Exception) {
+                    coverSearchStatus = getLocalized("Error al cargar la imagen local", "Error loading local image")
+                }
+            }
+        }
+    }
+
     AlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
         title = {
@@ -434,7 +453,25 @@ fun TagEditorDialog(
                                 Icon(Icons.Rounded.ImageSearch, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = if (showCoverSearchSection) getLocalized("Ocultar Buscador", "Hide Search") else getLocalized("Buscar Portada", "Search Cover"),
+                                    text = if (showCoverSearchSection) getLocalized("Ocultar Buscador", "Hide Search") else getLocalized("Buscar en Internet", "Search Online"),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Button(
+                                onClick = { coverPickerLauncher.launch("image/*") },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = getLocalized("Elegir de Galería", "Select from Gallery"),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )

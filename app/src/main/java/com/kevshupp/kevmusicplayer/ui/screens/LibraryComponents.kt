@@ -922,20 +922,20 @@ data class PlayerStateInfo(
 )
 
 // ---------------- ALBUM ART CACHE & ASYNC LOADER ----------------
-val albumArtCache = LruCache<String, android.graphics.Bitmap>(
-    try {
-        val app = com.kevshupp.kevmusicplayer.KevMusicPlayerApplication.instance
-        val prefs = app.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
-        prefs.getInt("cover_cache_capacity", 150)
-    } catch (e: Exception) {
-        150
+private val defaultCacheBudgetKb = ((Runtime.getRuntime().maxMemory() / 1024) / 8).toInt().coerceIn(16 * 1024, 48 * 1024)
+
+val albumArtCache = object : LruCache<String, android.graphics.Bitmap>(defaultCacheBudgetKb) {
+    override fun sizeOf(key: String, bitmap: android.graphics.Bitmap): Int {
+        return bitmap.byteCount / 1024
     }
-)
+}
+
 var albumArtVersion by androidx.compose.runtime.mutableStateOf(0)
 
-fun updateAlbumArtCacheSize(maxSize: Int) {
+fun updateAlbumArtCacheSize(maxSizeItems: Int) {
     try {
-        albumArtCache.resize(maxSize)
+        val estimatedSizeKb = (maxSizeItems * 300).coerceIn(16 * 1024, 64 * 1024)
+        albumArtCache.resize(estimatedSizeKb)
     } catch (e: Exception) {
         e.printStackTrace()
     }
@@ -1013,7 +1013,7 @@ fun preloadAlbumArt(context: android.content.Context, uriString: String) {
     // 1. Try reading directly from absolute physical path
     try {
         val songId = uriString.substringAfterLast("/").toLongOrNull()
-        val physicalPath = if (songId != null) getPhysicalPath(context, songId, uriString) else null
+        val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
         if (!physicalPath.isNullOrBlank()) {
             val file = java.io.File(physicalPath)
             if (file.exists() && file.isFile) {
@@ -1073,7 +1073,7 @@ fun preloadAlbumArt(context: android.content.Context, uriString: String) {
     if (!loaded) {
         try {
             val songId = uriString.substringAfterLast("/").toLongOrNull()
-            val physicalPath = if (songId != null) getPhysicalPath(context, songId, uriString) else null
+            val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
             if (!physicalPath.isNullOrBlank()) {
                 val audioFile = java.io.File(physicalPath)
                 val parentDir = audioFile.parentFile
@@ -1123,7 +1123,7 @@ fun rememberAlbumArt(uriString: String?): android.graphics.Bitmap? {
                 // 1. Try reading directly from absolute physical path to bypass any ContentResolver/MediaStore cache delay!
                 try {
                     val songId = uriString.substringAfterLast("/").toLongOrNull()
-                    val physicalPath = if (songId != null) getPhysicalPath(context, songId, uriString) else null
+                    val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
                     if (!physicalPath.isNullOrBlank()) {
                         val file = java.io.File(physicalPath)
                         if (file.exists() && file.isFile) {
@@ -1186,7 +1186,7 @@ fun rememberAlbumArt(uriString: String?): android.graphics.Bitmap? {
                 if (!loaded) {
                     try {
                         val songId = uriString.substringAfterLast("/").toLongOrNull()
-                        val physicalPath = if (songId != null) getPhysicalPath(context, songId, uriString) else null
+                        val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
                         if (!physicalPath.isNullOrBlank()) {
                             val audioFile = java.io.File(physicalPath)
                             val parentDir = audioFile.parentFile

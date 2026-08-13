@@ -2144,6 +2144,10 @@ fun LibrarySettingsSection(
     onCheckIntegrity: () -> Unit
 ) {
     var activeOrganizerAction by remember { mutableStateOf("") }
+    var showDeleteCoversDialog by remember { mutableStateOf(false) }
+    var showDeleteNoMediaDialog by remember { mutableStateOf(false) }
+    var showDeleteLyricsDialog by remember { mutableStateOf(false) }
+    var isDeepScanning by remember { mutableStateOf(false) }
 
     val settingsPrefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
     var selectedMusicFolder by remember {
@@ -2310,6 +2314,73 @@ fun LibrarySettingsSection(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Button(
+                onClick = {
+                    scope.launch {
+                        isDeepScanning = true
+                        viewModel.forceDeepStorageScan(context) { count ->
+                            isDeepScanning = false
+                            android.widget.Toast.makeText(
+                                context,
+                                getLocalized(
+                                    "Escaneo profundo completado: se escanearon $count archivos de audio.",
+                                    "Deep scan completed: scanned $count audio files."
+                                ),
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                },
+                enabled = !isScanning && !isDeepScanning,
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                if (isDeepScanning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = getLocalized("Escaneando disco directamente...", "Scanning disk directly..."),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.FolderZip,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = getLocalized("Forzar Escaneo Profundo de Carpetas", "Force Deep Folder Scan"),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = getLocalized(
+                    "Escanea físicamente la carpeta seleccionada buscando archivos de audio (.mp3, .flac, etc.) para recuperar canciones de carpetas donde habías borrado un .nomedia.",
+                    "Physically scans the selected folder looking for audio files (.mp3, .flac, etc.) to recover songs from folders where .nomedia was deleted."
+                ),
+                fontSize = 11.sp,
+                color = settingsTextMutedColor()
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -2605,6 +2676,147 @@ fun LibrarySettingsSection(
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         color = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = {
+                    showDeleteCoversDialog = true
+                },
+                enabled = activeOrganizerAction == "" && !isScanning,
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    disabledContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                if (isRenaming && activeOrganizerAction == "delete_covers") {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "$renamingCurrent/$renamingTotal: $renamingCurrentName",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteSweep,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = getLocalized("Borrar Imágenes de Portadas", "Delete Folder Covers"),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = {
+                    showDeleteNoMediaDialog = true
+                },
+                enabled = activeOrganizerAction == "" && !isScanning,
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    disabledContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                if (isRenaming && activeOrganizerAction == "delete_nomedia") {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "$renamingCurrent/$renamingTotal: $renamingCurrentName",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteSweep,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = getLocalized("Borrar Archivos .nomedia", "Delete .nomedia Files"),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = {
+                    showDeleteLyricsDialog = true
+                },
+                enabled = activeOrganizerAction == "" && !isScanning,
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    disabledContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                if (isRenaming && activeOrganizerAction == "delete_lyrics") {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "$renamingCurrent/$renamingTotal: $renamingCurrentName",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteSweep,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = getLocalized("Borrar Archivos de Letras", "Delete Lyrics Files"),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer
                     )
                 }
             }
@@ -3200,6 +3412,201 @@ fun LibrarySettingsSection(
                 }
             }
         }
+    }
+
+    if (showDeleteCoversDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteCoversDialog = false },
+            title = {
+                Text(
+                    text = getLocalized("¿Borrar imágenes de portadas?", "Delete cover images?"),
+                    color = settingsTextColor(),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = getLocalized(
+                        "Esta acción buscará y eliminará los archivos de imágenes de portada (cover.jpg, folder.jpg, etc.) de las carpetas de música para liberar espacio y limpiar la galería de fotos. Las portadas embebidas dentro de las canciones no se verán afectadas.",
+                        "This will search and delete cover image files (cover.jpg, folder.jpg, etc.) from your music folders to free space and clean your photo gallery. Embedded artwork inside song files will not be affected."
+                    ),
+                    color = settingsTextMutedColor()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteCoversDialog = false
+                        activeOrganizerAction = "delete_covers"
+                        setIsRenaming(true)
+                        viewModel.deleteAllFolderCoverImages(
+                            context = context,
+                            onProgress = { current, total ->
+                                setRenamingCurrent(current)
+                                setRenamingTotal(total)
+                                setRenamingCurrentName(getLocalized("Eliminando...", "Deleting..."))
+                            },
+                            onComplete = { deletedCount ->
+                                setIsRenaming(false)
+                                activeOrganizerAction = ""
+                                android.widget.Toast.makeText(
+                                    context,
+                                    getLocalized(
+                                        "Se eliminaron $deletedCount imágenes de portadas.",
+                                        "Deleted $deletedCount cover images."
+                                    ),
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        )
+                    }
+                ) {
+                    Text(
+                        text = getLocalized("Borrar", "Delete"),
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteCoversDialog = false }) {
+                    Text(
+                        text = getLocalized("Cancelar", "Cancel"),
+                        color = settingsTextMutedColor()
+                    )
+                }
+            }
+        )
+    }
+
+    if (showDeleteNoMediaDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteNoMediaDialog = false },
+            title = {
+                Text(
+                    text = getLocalized("¿Borrar archivos .nomedia?", "Delete .nomedia files?"),
+                    color = settingsTextColor(),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = getLocalized(
+                        "Esta acción buscará y eliminará en paralelo los archivos .nomedia de tus carpetas de música para volver a hacer visibles tus canciones en el sistema.",
+                        "This will search and delete .nomedia files in parallel from your music folders to make your songs visible to the system."
+                    ),
+                    color = settingsTextMutedColor()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteNoMediaDialog = false
+                        activeOrganizerAction = "delete_nomedia"
+                        setIsRenaming(true)
+                        viewModel.deleteAllNoMediaFiles(
+                            context = context,
+                            onProgress = { current, total ->
+                                setRenamingCurrent(current)
+                                setRenamingTotal(total)
+                                setRenamingCurrentName(getLocalized("Eliminando .nomedia...", "Deleting .nomedia..."))
+                            },
+                            onComplete = { deletedCount ->
+                                setIsRenaming(false)
+                                activeOrganizerAction = ""
+                                android.widget.Toast.makeText(
+                                    context,
+                                    getLocalized(
+                                        "Se eliminaron $deletedCount archivos .nomedia.",
+                                        "Deleted $deletedCount .nomedia files."
+                                    ),
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        )
+                    }
+                ) {
+                    Text(
+                        text = getLocalized("Borrar", "Delete"),
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteNoMediaDialog = false }) {
+                    Text(
+                        text = getLocalized("Cancelar", "Cancel"),
+                        color = settingsTextMutedColor()
+                    )
+                }
+            }
+        )
+    }
+
+    if (showDeleteLyricsDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteLyricsDialog = false },
+            title = {
+                Text(
+                    text = getLocalized("¿Borrar archivos de letras?", "Delete lyrics files?"),
+                    color = settingsTextColor(),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = getLocalized(
+                        "Esta acción buscará y eliminará en paralelo los archivos físicos de letras (.lrc y .txt) de tus carpetas de música. Las letras almacenadas en la base de datos de la app continuarán intactas.",
+                        "This will search and delete physical lyrics files (.lrc and .txt) in parallel from your music folders. Lyrics saved inside the app database will remain intact."
+                    ),
+                    color = settingsTextMutedColor()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteLyricsDialog = false
+                        activeOrganizerAction = "delete_lyrics"
+                        setIsRenaming(true)
+                        viewModel.deleteAllLyricsFiles(
+                            context = context,
+                            onProgress = { current, total ->
+                                setRenamingCurrent(current)
+                                setRenamingTotal(total)
+                                setRenamingCurrentName(getLocalized("Eliminando letras...", "Deleting lyrics..."))
+                            },
+                            onComplete = { deletedCount ->
+                                setIsRenaming(false)
+                                activeOrganizerAction = ""
+                                android.widget.Toast.makeText(
+                                    context,
+                                    getLocalized(
+                                        "Se eliminaron $deletedCount archivos de letras.",
+                                        "Deleted $deletedCount lyrics files."
+                                    ),
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        )
+                    }
+                ) {
+                    Text(
+                        text = getLocalized("Borrar", "Delete"),
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteLyricsDialog = false }) {
+                    Text(
+                        text = getLocalized("Cancelar", "Cancel"),
+                        color = settingsTextMutedColor()
+                    )
+                }
+            }
+        )
     }
 
     if (showExportCustomDialog) {
