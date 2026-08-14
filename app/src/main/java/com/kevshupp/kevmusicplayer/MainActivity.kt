@@ -181,15 +181,17 @@ fun AppNavigation() {
     val listDetailStrategy = rememberListDetailSceneStrategy<NavKey>()
 
     val switchToTab: (Screen) -> Unit = { newScreen ->
-        val newList = backStack.toMutableList()
-        val homeOrLibIndex = newList.indexOfFirst { it is Screen.Home || it is Screen.Library }
-        if (homeOrLibIndex != -1) {
-            newList[homeOrLibIndex] = newScreen
-            backStack.clear()
-            backStack.addAll(newList as List<NavKey>)
-        } else {
-            backStack.clear()
-            backStack.add(newScreen)
+        if (backStack.lastOrNull() != newScreen) {
+            val homeOrLibIndex = backStack.indexOfFirst { it is Screen.Home || it is Screen.Library }
+            if (homeOrLibIndex != -1) {
+                (backStack as MutableList<NavKey>)[homeOrLibIndex] = newScreen as NavKey
+                while (backStack.size > homeOrLibIndex + 1) {
+                    backStack.removeAt(backStack.size - 1)
+                }
+            } else {
+                backStack.clear()
+                backStack.add(newScreen as NavKey)
+            }
         }
     }
 
@@ -236,16 +238,22 @@ fun AppNavigation() {
                 if (disableAnimations) {
                     EnterTransition.None togetherWith ExitTransition.None
                 } else {
-                    androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(300)) togetherWith 
-                            androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300))
+                    androidx.compose.animation.fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(200, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    ) togetherWith androidx.compose.animation.fadeOut(
+                        animationSpec = androidx.compose.animation.core.tween(200, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    )
                 }
             },
             popTransitionSpec = {
                 if (disableAnimations) {
                     EnterTransition.None togetherWith ExitTransition.None
                 } else {
-                    androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(300)) togetherWith 
-                            androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300))
+                    androidx.compose.animation.fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(200, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    ) togetherWith androidx.compose.animation.fadeOut(
+                        animationSpec = androidx.compose.animation.core.tween(200, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    )
                 }
             },
             onBack = { 

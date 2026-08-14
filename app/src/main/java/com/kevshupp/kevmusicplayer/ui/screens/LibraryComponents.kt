@@ -38,9 +38,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -332,28 +334,21 @@ fun SongListView(
                             contentAlignment = Alignment.Center
                         ) {
                             val artBytes = rememberAlbumArt(song.uriString)
-                            SubcomposeAsyncImage(
-                                model = artBytes,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                                loading = {
-                                    Icon(
-                                        imageVector = Icons.Rounded.MusicNote,
-                                        contentDescription = null,
-                                        tint = Color.White.copy(alpha = 0.8f),
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                },
-                                error = {
-                                    Icon(
-                                        imageVector = Icons.Rounded.MusicNote,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                            )
+                            if (artBytes != null) {
+                                androidx.compose.foundation.Image(
+                                    bitmap = artBytes.asImageBitmap(),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.MusicNote,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = 0.8f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
                     }
 
@@ -1001,16 +996,123 @@ private fun decodeSampledBitmapFromFile(path: String, reqWidth: Int, reqHeight: 
 
 fun preloadAlbumArt(context: android.content.Context, uriString: String) {
     if (albumArtCache.get(uriString) != null) return
-    val retriever = android.media.MediaMetadataRetriever()
-    var pfd: android.os.ParcelFileDescriptor? = null
-    var loaded = false
+    loadAlbumArtBitmap(context, uriString)
+}
+
+fun getDiskCacheFile(context: android.content.Context, uriString: String, res: Int): java.io.File {
+    val dir = java.io.File(context.cacheDir, "album_art_thumbnails")
+    if (!dir.exists()) {
+        dir.mkdirs()
+    }
+    val md5Key = try {
+        val bytes = java.security.MessageDigest.getInstance("MD5").digest("$uriString-$res".toByteArray())
+        bytes.joinToString("") { "%02x".format(it) }
+    } catch (e: Exception) {
+        uriString.hashCode().toString() + "_$res"
+    }
+    return java.io.File(dir, "$md5Key.webp")
+}
+
+private fun saveBitmapToDiskCache(context: android.content.Context, file: java.io.File, bitmap: android.graphics.Bitmap) {
+    val quality = try {
+        context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("disk_cache_quality", 85)
+    } catch (e: Exception) {
+        85
+    }
+    try {
+        java.io.FileOutputStream(file).use { out ->
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val format = if (quality >= 100) android.graphics.Bitmap.CompressFormat.WEBP_LOSSLESS else android.graphics.Bitmap.CompressFormat.WEBP_LOSSY
+                bitmap.compress(format, quality, out)
+            } else {
+                @Suppress("DEPRECATION")
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.WEBP, quality, out)
+            }
+        }
+    } catch (e: Exception) {
+        file.delete()
+    }
+}
+
+fun clearDiskAlbumArtCache(context: android.content.Context) {
+    try {
+        val dir = java.io.File(context.cacheDir, "album_art_thumbnails")
+        if (dir.exists() && dir.isDirectory) {
+            dir.listFiles()?.forEach { it.delete() }
+        }
+    } catch (e: Exception) {}
+}
+
+fun deleteDiskAlbumArtCacheForUri(context: android.content.Context, uriString: String) {
+    try {
+        val res = try {
+            context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
+        } catch (e: Exception) { 500 }
+        val diskFile = getDiskCacheFile(context, uriString, res)
+        if (diskFile.exists()) {
+            diskFile.delete()
+        }
+    } catch (e: Exception) {}
+}
+
+fun getDiskAlbumArtCacheSizeBytes(context: android.content.Context): Long {
+    return try {
+        val dir = java.io.File(context.cacheDir, "album_art_thumbnails")
+        if (dir.exists() && dir.isDirectory) {
+            dir.listFiles()?.sumOf { it.length() } ?: 0L
+        } else {
+            0L
+        }
+    } catch (e: Exception) {
+        0L
+    }
+}
+
+fun loadAlbumArtBitmapSync(context: android.content.Context, uriString: String): android.graphics.Bitmap? {
+    if (albumArtCache.get(uriString) != null) return albumArtCache.get(uriString)
     val res = try {
         context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
-    } catch (ex: Exception) {
-        500
+    } catch (e: Exception) { 500 }
+
+    val diskFile = getDiskCacheFile(context, uriString, res)
+    if (diskFile.exists() && diskFile.isFile) {
+        if (diskFile.length() == 0L) {
+            return null
+        }
+        val bmp = decodeSampledBitmapFromFile(diskFile.absolutePath, res, res)
+        if (bmp != null) {
+            albumArtCache.put(uriString, bmp)
+            return bmp
+        }
     }
-    
-    // 1. Try reading directly from absolute physical path
+    return null
+}
+
+fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): android.graphics.Bitmap? {
+    val cachedRam = albumArtCache.get(uriString)
+    if (cachedRam != null) return cachedRam
+
+    val res = try {
+        context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
+    } catch (e: Exception) { 500 }
+
+    val diskFile = getDiskCacheFile(context, uriString, res)
+    if (diskFile.exists() && diskFile.isFile) {
+        if (diskFile.length() == 0L) {
+            return null
+        }
+        val bmp = decodeSampledBitmapFromFile(diskFile.absolutePath, res, res)
+        if (bmp != null) {
+            albumArtCache.put(uriString, bmp)
+            return bmp
+        }
+    }
+
+    val retriever = android.media.MediaMetadataRetriever()
+    var pfd: android.os.ParcelFileDescriptor? = null
+    var decodedResult: android.graphics.Bitmap? = null
+
+    // 1. Try reading directly from physical path
     try {
         val songId = uriString.substringAfterLast("/").toLongOrNull()
         val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
@@ -1020,57 +1122,38 @@ fun preloadAlbumArt(context: android.content.Context, uriString: String) {
                 retriever.setDataSource(physicalPath)
                 val picture = retriever.embeddedPicture
                 if (picture != null) {
-                    val decoded = decodeSampledBitmap(picture, res, res)
-                    if (decoded != null) {
-                        albumArtCache.put(uriString, decoded)
-                        loaded = true
-                    }
+                    decodedResult = decodeSampledBitmap(picture, res, res)
                 }
             }
         }
-    } catch (e: Exception) {
-        android.util.Log.w("preloadAlbumArt", "Failed direct physical path extraction: $uriString", e)
-    }
-    
-    // 2. Fallback to ParcelFileDescriptor method
-    if (!loaded) {
+    } catch (e: Exception) {}
+
+    // 2. Fallback to ParcelFileDescriptor / Uri
+    if (decodedResult == null) {
         try {
             pfd = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
             if (pfd != null) {
                 retriever.setDataSource(pfd.fileDescriptor)
                 val picture = retriever.embeddedPicture
                 if (picture != null) {
-                    val decoded = decodeSampledBitmap(picture, res, res)
-                    if (decoded != null) {
-                        albumArtCache.put(uriString, decoded)
-                        loaded = true
-                    }
+                    decodedResult = decodeSampledBitmap(picture, res, res)
                 }
             }
         } catch (e: Exception) {
-            // 3. Fallback to Uri method
             try {
                 retriever.setDataSource(context, Uri.parse(uriString))
                 val picture = retriever.embeddedPicture
                 if (picture != null) {
-                    val decoded = decodeSampledBitmap(picture, res, res)
-                    if (decoded != null) {
-                        albumArtCache.put(uriString, decoded)
-                        loaded = true
-                    }
+                    decodedResult = decodeSampledBitmap(picture, res, res)
                 }
-            } catch (ex: Exception) {
-                // Ignore
-            }
+            } catch (ex: Exception) {}
         } finally {
-            try {
-                pfd?.close()
-            } catch (e: Exception) {}
+            try { pfd?.close() } catch (e: Exception) {}
         }
     }
 
-    // 4. Fallback to folder cover file (cover.jpg, folder.jpg, etc.) in parent directory
-    if (!loaded) {
+    // 3. Fallback to folder cover file
+    if (decodedResult == null) {
         try {
             val songId = uriString.substringAfterLast("/").toLongOrNull()
             val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
@@ -1081,22 +1164,23 @@ fun preloadAlbumArt(context: android.content.Context, uriString: String) {
                     val coverNames = listOf("cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg")
                     val foundCover = coverNames.map { java.io.File(parentDir, it) }.firstOrNull { it.exists() && it.isFile && it.length() > 0 }
                     if (foundCover != null) {
-                        val decoded = decodeSampledBitmapFromFile(foundCover.absolutePath, res, res)
-                        if (decoded != null) {
-                            albumArtCache.put(uriString, decoded)
-                            loaded = true
-                        }
+                        decodedResult = decodeSampledBitmapFromFile(foundCover.absolutePath, res, res)
                     }
                 }
             }
-        } catch (e: Exception) {
-            android.util.Log.w("preloadAlbumArt", "Failed folder cover extraction: $uriString", e)
-        }
+        } catch (e: Exception) {}
     }
-    
-    try {
-        retriever.release()
-    } catch (e: Exception) {}
+
+    try { retriever.release() } catch (e: Exception) {}
+
+    if (decodedResult != null) {
+        albumArtCache.put(uriString, decodedResult)
+        saveBitmapToDiskCache(context, diskFile, decodedResult)
+        return decodedResult
+    } else {
+        try { diskFile.createNewFile() } catch (e: Exception) {}
+        return null
+    }
 }
 
 @Composable
@@ -1104,113 +1188,19 @@ fun rememberAlbumArt(uriString: String?): android.graphics.Bitmap? {
     if (uriString == null) return null
     val context = LocalContext.current
     val version = albumArtVersion
-    var bitmap by remember(uriString, version) { mutableStateOf(albumArtCache.get(uriString)) }
+
+    val initialBitmap = remember(uriString, version) {
+        albumArtCache.get(uriString) ?: loadAlbumArtBitmapSync(context, uriString)
+    }
+    var bitmap by remember(uriString, version) { mutableStateOf(initialBitmap) }
 
     if (bitmap == null) {
         LaunchedEffect(uriString, version) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val retriever = android.media.MediaMetadataRetriever()
-                var pfd: android.os.ParcelFileDescriptor? = null
-                var loaded = false
-                
-                // Get resolution once
-                val res = try {
-                    context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
-                } catch (ex: Exception) {
-                    500
-                }
-
-                // 1. Try reading directly from absolute physical path to bypass any ContentResolver/MediaStore cache delay!
-                try {
-                    val songId = uriString.substringAfterLast("/").toLongOrNull()
-                    val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
-                    if (!physicalPath.isNullOrBlank()) {
-                        val file = java.io.File(physicalPath)
-                        if (file.exists() && file.isFile) {
-                            retriever.setDataSource(physicalPath)
-                            val picture = retriever.embeddedPicture
-                            if (picture != null) {
-                                val decoded = decodeSampledBitmap(picture, res, res)
-                                if (decoded != null) {
-                                    albumArtCache.put(uriString, decoded)
-                                    bitmap = decoded
-                                    loaded = true
-                                }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.w("rememberAlbumArt", "Failed direct physical path extraction: $uriString", e)
-                }
-
-                // 2. Fallback to ParcelFileDescriptor method
-                if (!loaded) {
-                    try {
-                        pfd = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
-                        if (pfd != null) {
-                            retriever.setDataSource(pfd.fileDescriptor)
-                            val picture = retriever.embeddedPicture
-                            if (picture != null) {
-                                val decoded = decodeSampledBitmap(picture, res, res)
-                                if (decoded != null) {
-                                    albumArtCache.put(uriString, decoded)
-                                    bitmap = decoded
-                                    loaded = true
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        // 3. Last resort fallback to Uri method
-                        try {
-                            retriever.setDataSource(context, Uri.parse(uriString))
-                            val picture = retriever.embeddedPicture
-                            if (picture != null) {
-                                val decoded = decodeSampledBitmap(picture, res, res)
-                                if (decoded != null) {
-                                    albumArtCache.put(uriString, decoded)
-                                    bitmap = decoded
-                                    loaded = true
-                                }
-                            }
-                        } catch (ex: Exception) {
-                            // Ignore
-                        }
-                    } finally {
-                        try {
-                            pfd?.close()
-                        } catch (e: Exception) {}
-                    }
-                }
-
-                // 4. Fallback to folder cover file (cover.jpg, folder.jpg, etc.) in parent directory
-                if (!loaded) {
-                    try {
-                        val songId = uriString.substringAfterLast("/").toLongOrNull()
-                        val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
-                        if (!physicalPath.isNullOrBlank()) {
-                            val audioFile = java.io.File(physicalPath)
-                            val parentDir = audioFile.parentFile
-                            if (parentDir != null && parentDir.exists() && parentDir.isDirectory) {
-                                val coverNames = listOf("cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg")
-                                val foundCover = coverNames.map { java.io.File(parentDir, it) }.firstOrNull { it.exists() && it.isFile && it.length() > 0 }
-                                if (foundCover != null) {
-                                    val decoded = decodeSampledBitmapFromFile(foundCover.absolutePath, res, res)
-                                    if (decoded != null) {
-                                        albumArtCache.put(uriString, decoded)
-                                        bitmap = decoded
-                                        loaded = true
-                                    }
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.w("rememberAlbumArt", "Failed folder cover extraction: $uriString", e)
-                    }
-                }
-                
-                try {
-                    retriever.release()
-                } catch (e: Exception) {}
+            val loadedBmp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                loadAlbumArtBitmap(context, uriString)
+            }
+            if (loadedBmp != null) {
+                bitmap = loadedBmp
             }
         }
     }
@@ -1255,37 +1245,45 @@ fun ConditionRow(
     showDelete: Boolean
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+        shape = RoundedCornerShape(14.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                "Regla:",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(4.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 // Field Selector
                 var fieldExpanded by remember { mutableStateOf(false) }
                 val fieldNames = mapOf(
-                    com.kevshupp.kevmusicplayer.playback.RuleField.GENRE to "Género",
-                    com.kevshupp.kevmusicplayer.playback.RuleField.ARTIST to "Artista",
-                    com.kevshupp.kevmusicplayer.playback.RuleField.ALBUM to "Álbum",
-                    com.kevshupp.kevmusicplayer.playback.RuleField.TITLE to "Título",
-                    com.kevshupp.kevmusicplayer.playback.RuleField.YEAR to "Año",
-                    com.kevshupp.kevmusicplayer.playback.RuleField.PLAY_COUNT to "Veces escuchada",
-                    com.kevshupp.kevmusicplayer.playback.RuleField.DURATION_SECONDS to "Duración (seg)",
-                    com.kevshupp.kevmusicplayer.playback.RuleField.LAST_PLAYED_DAYS to "Días última repro",
-                    com.kevshupp.kevmusicplayer.playback.RuleField.DATE_ADDED_DAYS to "Días agregada"
+                    com.kevshupp.kevmusicplayer.playback.RuleField.GENRE to "Género musical",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.ARTIST to "Artista / Cantante",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.ALBUM to "Nombre del Álbum",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.TITLE to "Título de la canción",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.YEAR to "Año de lanzamiento",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.PLAY_COUNT to "Nº reproducciones",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.DURATION_SECONDS to "Duración (segundos)",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.LAST_PLAYED_DAYS to "Días desde última repro",
+                    com.kevshupp.kevmusicplayer.playback.RuleField.DATE_ADDED_DAYS to "Días desde que la agregaste"
                 )
                 
-                Box(modifier = Modifier.weight(1f)) {
+                Box(modifier = Modifier.weight(1.3f)) {
                     OutlinedButton(
                         onClick = { fieldExpanded = true },
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Text(fieldNames[condition.field] ?: "", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+                        Text(fieldNames[condition.field] ?: "", fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
                     }
                     DropdownMenu(expanded = fieldExpanded, onDismissRequest = { fieldExpanded = false }) {
                         fieldNames.forEach { (field, name) ->
@@ -1303,18 +1301,18 @@ fun ConditionRow(
                     com.kevshupp.kevmusicplayer.playback.RuleOperator.CONTAINS to "contiene",
                     com.kevshupp.kevmusicplayer.playback.RuleOperator.EQUALS to "es igual a",
                     com.kevshupp.kevmusicplayer.playback.RuleOperator.STARTS_WITH to "empieza con",
-                    com.kevshupp.kevmusicplayer.playback.RuleOperator.ENDS_WITH to "termina con",
-                    com.kevshupp.kevmusicplayer.playback.RuleOperator.GREATER_THAN to ">",
-                    com.kevshupp.kevmusicplayer.playback.RuleOperator.LESS_THAN to "<"
+                    com.kevshupp.kevmusicplayer.playback.RuleOperator.ENDS_WITH to "termina en",
+                    com.kevshupp.kevmusicplayer.playback.RuleOperator.GREATER_THAN to "es mayor a",
+                    com.kevshupp.kevmusicplayer.playback.RuleOperator.LESS_THAN to "es menor a"
                 )
 
-                Box(modifier = Modifier.weight(1f)) {
+                Box(modifier = Modifier.weight(1.1f)) {
                     OutlinedButton(
                         onClick = { operatorExpanded = true },
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Text(operatorNames[condition.operator] ?: "", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+                        Text(operatorNames[condition.operator] ?: "", fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
                     }
                     DropdownMenu(expanded = operatorExpanded, onDismissRequest = { operatorExpanded = false }) {
                         operatorNames.forEach { (operator, name) ->
@@ -1327,28 +1325,27 @@ fun ConditionRow(
                 }
 
                 if (showDelete) {
-                    IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Rounded.Delete, contentDescription = "Eliminar", tint = MaterialTheme.colorScheme.error)
+                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Rounded.Delete, contentDescription = "Eliminar", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             OutlinedTextField(
                 value = condition.value,
                 onValueChange = { condition.value = it },
-                placeholder = { Text("Valor", fontSize = 13.sp) },
+                placeholder = { Text("Escribe el texto o número...", fontSize = 11.sp) },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = MaterialTheme.colorScheme.onSurface,
                     unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
                     cursorColor = MaterialTheme.colorScheme.primary
                 ),
-                textStyle = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.fillMaxWidth().height(48.dp)
+                modifier = Modifier.fillMaxWidth()
             )
         }
     }
@@ -1369,6 +1366,8 @@ fun PlaylistGridView(
     var isSmartDialog by remember { mutableStateOf(false) }
     var selectedRule by remember { mutableStateOf(com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule.MOST_PLAYED) }
     var limitInput by remember { mutableStateOf("50") }
+    val selectedSongIds = remember { mutableStateListOf<Long>() }
+    var songSearchQuery by remember { mutableStateOf("") }
 
     var isAdvancedRules by remember { mutableStateOf(false) }
     val conditions = remember { mutableStateListOf<UiCondition>(UiCondition()) }
@@ -1433,6 +1432,130 @@ fun PlaylistGridView(
                         modifier = Modifier.fillMaxWidth()
                     )
 
+                    if (!isSmartDialog) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text("Sugerencias rápidas:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf("🚗 En el Auto", "💪 Gimnasio", "🎉 Fiesta", "🎧 Chill", "✈️ Viaje", "❤️ Favoritas", "⚡ Noche").forEach { preset ->
+                                Surface(
+                                    onClick = { newPlaylistName = preset },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                                ) {
+                                    Text(
+                                        preset, 
+                                        fontSize = 11.sp, 
+                                        fontWeight = FontWeight.Bold, 
+                                        color = MaterialTheme.colorScheme.primary, 
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Interactive Song Selector
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                "Agregar canciones iniciales:",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (selectedSongIds.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Text(
+                                    "${selectedSongIds.size} seleccionadas",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (selectedSongIds.isNotEmpty()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        OutlinedTextField(
+                            value = songSearchQuery,
+                            onValueChange = { songSearchQuery = it },
+                            placeholder = { Text("Buscar canción o artista...", fontSize = 12.sp) },
+                            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            trailingIcon = {
+                                if (songSearchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { songSearchQuery = "" }) {
+                                        Icon(Icons.Rounded.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        val availableSongs = viewModel?.localAudioFiles ?: emptyList()
+                        val filteredSongs = remember(availableSongs, songSearchQuery) {
+                            if (songSearchQuery.isBlank()) availableSongs.take(30)
+                            else availableSongs.filter { it.title.contains(songSearchQuery, ignoreCase = true) || it.artist.contains(songSearchQuery, ignoreCase = true) }.take(50)
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 180.dp)
+                                .padding(top = 6.dp)
+                        ) {
+                            androidx.compose.foundation.lazy.LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                items(filteredSongs) { song ->
+                                    val isSelected = selectedSongIds.contains(song.id)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                if (isSelected) selectedSongIds.remove(song.id)
+                                                else selectedSongIds.add(song.id)
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Checkbox(
+                                            checked = isSelected,
+                                            onCheckedChange = {
+                                                if (it) selectedSongIds.add(song.id)
+                                                else selectedSongIds.remove(song.id)
+                                            },
+                                            modifier = Modifier.scale(0.85f)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(song.title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+                                            Text(song.artist, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if (isSmartDialog) {
                         Spacer(modifier = Modifier.height(16.dp))
                         
@@ -1490,25 +1613,43 @@ fun PlaylistGridView(
                                 }
                             }
                         } else {
-                            Text("Constructor de Reglas:", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("Constructor de Reglas Personalizadas:", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Establece las reglas para filtrar tus canciones.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                             
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("¿Cómo deben combinarse las reglas?", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                            Spacer(modifier = Modifier.height(4.dp))
+
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                             ) {
-                                Text("Combinar con:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f))
-                                FilterChip(
-                                    selected = topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND,
+                                Surface(
                                     onClick = { topLevelOperator = com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND },
-                                    label = { Text("Y (AND)", fontSize = 12.sp) }
-                                )
-                                FilterChip(
-                                    selected = topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR,
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                    border = BorderStroke(1.dp, if (topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND) Color.Transparent else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("Cumplir TODAS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
+                                        Text("Todas las reglas a la vez", fontSize = 9.sp, color = if (topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                    }
+                                }
+
+                                Surface(
                                     onClick = { topLevelOperator = com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR },
-                                    label = { Text("O (OR)", fontSize = 12.sp) }
-                                )
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                    border = BorderStroke(1.dp, if (topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR) Color.Transparent else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("Cumplir AL MENOS UNA", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
+                                        Text("Basta con que cumpla una", fontSize = 9.sp, color = if (topLevelOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                    }
+                                }
                             }
                             
                             conditions.forEachIndexed { index, cond ->
@@ -1523,9 +1664,9 @@ fun PlaylistGridView(
                                 onClick = { conditions.add(UiCondition()) },
                                 modifier = Modifier.align(Alignment.Start)
                             ) {
-                                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Rounded.AddCircleOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Añadir Condición", fontSize = 13.sp)
+                                Text("Agregar otra regla", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                             
                             Spacer(modifier = Modifier.height(8.dp))
@@ -1543,7 +1684,10 @@ fun PlaylistGridView(
                                         }
                                     }
                                 )
-                                Text("Grupo Anidado (Sub-reglas)", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                                Column {
+                                    Text("Filtro secundario opcional", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Text("Reglas adicionales combinadas", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                }
                             }
                             
                             if (hasNestedGroup) {
@@ -1553,21 +1697,21 @@ fun PlaylistGridView(
                                     modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp, bottom = 8.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(12.dp)) {
+                                        Text("Coincidencia para filtro secundario:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            modifier = Modifier.fillMaxWidth()
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                                         ) {
-                                            Text("Combinar sub-reglas con:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f))
                                             FilterChip(
                                                 selected = nestedOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND,
                                                 onClick = { nestedOperator = com.kevshupp.kevmusicplayer.playback.LogicalOperator.AND },
-                                                label = { Text("Y", fontSize = 11.sp) }
+                                                label = { Text("Cumplir Todas", fontSize = 11.sp) }
                                             )
                                             FilterChip(
                                                 selected = nestedOperator == com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR,
                                                 onClick = { nestedOperator = com.kevshupp.kevmusicplayer.playback.LogicalOperator.OR },
-                                                label = { Text("O", fontSize = 11.sp) }
+                                                label = { Text("Al menos una", fontSize = 11.sp) }
                                             )
                                         }
                                         
@@ -1583,9 +1727,9 @@ fun PlaylistGridView(
                                             onClick = { nestedConditions.add(UiCondition()) },
                                             modifier = Modifier.align(Alignment.Start)
                                         ) {
-                                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Icon(Icons.Rounded.AddCircleOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Añadir Sub-condición", fontSize = 12.sp)
+                                            Text("Agregar regla secundaria", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
@@ -1648,8 +1792,13 @@ fun PlaylistGridView(
                                 }
                             } else {
                                 onCreatePlaylist(newPlaylistName)
+                                selectedSongIds.forEach { songId ->
+                                    viewModel?.addSongToPlaylist(newPlaylistName, songId)
+                                }
                             }
                             newPlaylistName = ""
+                            selectedSongIds.clear()
+                            songSearchQuery = ""
                             limitInput = "50"
                             isAdvancedRules = false
                             conditions.clear()
@@ -1665,11 +1814,14 @@ fun PlaylistGridView(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateDialog = false }) {
+                TextButton(onClick = { 
+                    showCreateDialog = false
+                    selectedSongIds.clear()
+                    songSearchQuery = ""
+                }) {
                     Text("Cancelar", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 }
-            },
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            }
         )
     }
     LazyVerticalGrid(
@@ -2065,6 +2217,14 @@ fun FastScrollSidebar(
     if (items.size < 5) return
 
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val hapticEnabled = remember {
+        try {
+            context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getBoolean("haptic_feedback_enabled", true)
+        } catch (e: Exception) {
+            true
+        }
+    }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val density = LocalDensity.current
 
@@ -2130,7 +2290,9 @@ fun FastScrollSidebar(
                         val newLetter = alphabet[index]
                         if (newLetter != currentLetter) {
                             currentLetter = newLetter
-                            try { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) } catch (e: Exception) {}
+                            if (hapticEnabled) {
+                                try { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) } catch (e: Exception) {}
+                            }
                         }
                         val targetIndex = items.indexOfFirst {
                             val firstChar = it.trimStart().firstOrNull()?.uppercaseChar() ?: '#'
@@ -2155,7 +2317,9 @@ fun FastScrollSidebar(
                         val newLetter = alphabet[index]
                         if (newLetter != currentLetter) {
                             currentLetter = newLetter
-                            try { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) } catch (e: Exception) {}
+                            if (hapticEnabled) {
+                                try { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) } catch (e: Exception) {}
+                            }
                         }
                         val targetIndex = items.indexOfFirst {
                             val firstChar = it.trimStart().firstOrNull()?.uppercaseChar() ?: '#'

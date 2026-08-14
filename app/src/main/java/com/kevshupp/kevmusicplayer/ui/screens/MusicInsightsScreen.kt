@@ -49,6 +49,10 @@ fun MusicInsightsScreen(
 ) {
     if (!visible) return
 
+    androidx.activity.compose.BackHandler(enabled = visible) {
+        onDismiss()
+    }
+
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val graphicsLayer = rememberGraphicsLayer()

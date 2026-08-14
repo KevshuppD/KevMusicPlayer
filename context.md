@@ -33,15 +33,16 @@ graph TD
 ### A. Escaneo de Medios y Caché ([AudioScanner.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/AudioScanner.kt) & [AudioDao.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/AudioDao.kt))
 - **Escaneo Inteligente:** `AudioScanner` realiza consultas a `MediaStore.Audio.Media.EXTERNAL_CONTENT_URI`.
 - **Filtros de Duración:** Se omiten archivos menores de 5 segundos para evitar tonos de notificación o grabaciones de voz cortas.
-- **Optimización de Lectura:** Cruza los datos con la base de datos Room (`existingFiles`) para recuperar de forma instantánea el estado de `ReplayGain` y letras ya procesados.
+- **Optimización de Lectura y Preservación de Estadísticas:** Cruza los datos con la base de datos Room (`existingFiles`) para recuperar de forma instantánea el estado de `ReplayGain`, letras y estadísticas (`lastPlayed`, `playCount`), evitando la pérdida de reproducciones recientes durante escaneos en segundo plano.
 - **Sincronización Inteligente de Archivos:** Compara la marca de tiempo de modificación física (`dateModified`). Si el archivo en disco no ha cambiado, Room conserva los metadatos locales y letras editadas por el usuario. Si el archivo cambió o es nuevo, lee directamente sus etiquetas físicas utilizando `TagLib` C++ / `jaudiotagger` en hilos de fondo (`Dispatchers.IO`).
 - **Filtro de Carpeta de Música Activa:** Si el usuario selecciona un directorio específico (`music_folder_path`), el escaneo filtra dinámicamente y descarta cualquier archivo fuera de esa ruta antes de escribir en SQLite.
 - **Exclusión de Carpetas:** Permite a los usuarios seleccionar directorios específicos de su almacenamiento local para ignorarlos de la biblioteca musical.
-- **Sincronización en Inicio:** El método `scanFiles()` realiza un `join()` en la tarea de carga de base de datos inicial (`initialDbLoadJob`) para evitar condiciones de carrera (race conditions) en el inicio en frío.
+- **Sincronización en Inicio:** El método `scanFiles()` realiza un `join()` en la tarea de carga de base de datos inicial (`initialDbLoadJob`) para evitar condiciones de carrera (race conditions) y solo muta `localAudioFiles` si detecta diferencias reales (`localAudioFiles != updatedFilesList`), previniendo parpadeos de 0 cuadros al abrir la app.
 
 ### B. Servicio de Reproducción y Audio FX en Segundo Plano ([PlaybackService.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/PlaybackService.kt))
 - **Protección de Servicio en Segundo Plano (`onTaskRemoved`):** Si la música está activa o pausada con una cola cargada, al deslizar la aplicación desde la lista de aplicaciones recientes de Android, el servicio de primer plano (`MediaLibrarySession`) se mantiene activo en segundo plano vinculado a la notificación, previniendo la destrucción del proceso (al estilo de reproductores como Frolomuse).
 - **Estabilidad en Segundo Plano:** Mantiene un `WakeLock` parcial y `ExoPlayer.setWakeMode(C.WAKE_MODE_LOCAL)` durante la reproducción activa para evitar suspensiones del sistema. `onStartCommand()` retorna `START_STICKY`.
+- **Filtro de Transiciones en Inicio:** El oyente `onMediaItemTransition` ignora la razón `MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED` durante la restauración inicial del reproductor, previniendo la alteración indebida de `lastPlayed` en el inicio en frío.
 - **Control de Auriculares / Ruido:** `.setHandleAudioBecomingNoisy(true)` para pausar automáticamente al desconectar auriculares jack o Bluetooth.
 - **Ecualizador de Audio Físico:** Configura efectos de hardware nativos sobre el `audioSessionId` activo de ExoPlayer:
   - *Equalizer:* Ecualizador paramétrico de 5 bandas.
@@ -53,10 +54,10 @@ graph TD
 - **Modo Aleatorio Verdadero:** Sincroniza la interfaz con `player.shuffleModeEnabled = true` en ExoPlayer.
 - **Recuperación Automática de Errores en Cola:** `onPlayerError` muestra un emergente (Toast) e intenta saltar automáticamente a la siguiente pista de la cola.
 
-### C. Sistema de Playlists Inteligentes (Smart Playlists)
-- **Modelo de Reglas:** Nodos lógicos estructurados (`SmartRuleNode`) con grupos condicionales y operadores lógicos (`AND`, `OR`).
-- **Parámetros Soportados:** Filtros de título, artista, álbum, género, año, duración, contador de reproducciones, fecha de última reproducción y fecha de adición.
-- **Operadores de Comparación:** Equals, Contains, StartsWith, EndsWith, GreaterThan, LessThan.
+### C. Sistema de Creación de Playlists e Interfaz Intuitiva ([LibraryComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryComponents.kt))
+- **Chips de Sugerencia de Nombre:** Permite elegir nombres predeterminados de 1 toque (`🚗 En el Auto`, `💪 Gimnasio`, `🎉 Fiesta`, `🎧 Chill`, `✈️ Viaje`, `❤️ Favoritas`, `⚡ Noche`).
+- **Selector de Canciones Integrado:** Buscador en tiempo real y casillas de selección (`Checkbox`) dentro del diálogo de creación para asociar canciones iniciales en un solo paso.
+- **Constructor de Reglas Inteligentes Humano:** Reemplazo total de jerga de programación (`AND`, `OR`, `GroupNode`, `>`, `<`) por lenguaje cotidiano (*"Cumplir TODAS"*, *"Cumplir AL MENOS UNA"*, *"es mayor a"*, *"es menor a"*, *"Género musical"*, *"Artista / Cantante"*).
 
 ### D. Letras Sincronizadas y Búsqueda Online ([LyricsRepository.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/LyricsRepository.kt))
 - **User-Agent Personalizado y Anti-Bloqueo:** Configurado en OkHttpClient (`User-Agent: KevMusicPlayer/1.5.4 (https://github.com/kevshupp/kevmusicplayer)`) para evitar bloqueos HTTP 520 de Cloudflare/LRCLIB.
@@ -190,6 +191,17 @@ data class AudioFile(
    - Desactivado `lintVital` en `app/build.gradle.kts` (`checkReleaseBuilds = false`, `abortOnError = false`) y regla `-dontoptimize` en `app/proguard-rules.pro`, reduciendo los tiempos de `installRelease` y `assembleRelease` de 5-7 minutos a **8-15 segundos**.
 9. **Eliminación del Warning AWT en KSP CLI:**
    - `-Djava.awt.headless=true` configurado en `org.gradle.jvmargs` elimina por completo la traza de advertencia headless de AWT en builds desde terminal.
+10. **Perfiles de Rendimiento Predeterminados ([SettingsComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/SettingsComponents.kt)):**
+    - `⚡ Máximo Rendimiento`: Fuerza 120Hz, compresión WebP rápida 70%, buffer IPC 500 y deshabilita vibraciones hápticas para 0 lag.
+    - `⚖️ Equilibrado`: Tasa a 120Hz, compresión WebP estándar al 85% y vibraciones activas.
+    - `🔋 Ahorro de Batería`: Tasa fijada a 60Hz, minimiza lecturas I/O y deshabilita animaciones.
+    - `⚙️ Personalizado`: Permite ajustar manualmente cada parámetro de memoria, caché y gráficos.
+11. **Renderizado Nativo Directo de Portadas (Subcomposición 0 ms):**
+    - Se reemplazó `SubcomposeAsyncImage` por `Image(bitmap = artBytes.asImageBitmap())` en `SongItem` y `HomeSongCard` cuando el bitmap está cargado en memoria, eliminando las pasadas de medición secundarias de Compose y garantizando desplazamientos (scroll) suaves a 60/120 FPS.
+12. **Desactivación de Auto-Backup en Manifiesto:**
+    - Configurado `android:allowBackup="false"` en [AndroidManifest.xml](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/AndroidManifest.xml) para evitar que Google Cloud Backup o Android Backup restauren bases de datos o preferencias obsoletas automáticamente tras una reinstalación.
+13. **Limpieza Completa mediante ADB (`pm clear`):**
+    - Script [conectar_adb.sh](file:///home/kevin/Escritorio/sh/conectar_adb.sh) ejecuta `adb shell pm clear com.kevshupp.kevmusicplayer` en las opciones `[c]` (Reinstalación limpia) y `[l]` (Limpiar datos) para asegurar la destrucción total de bases de datos SQLite, cachés y preferencias locales.
 
 ---
 

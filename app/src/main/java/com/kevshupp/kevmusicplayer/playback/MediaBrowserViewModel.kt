@@ -218,40 +218,28 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             checkAutoBackup(application)
         }
 
-        // Instantly load the cached songs from SQLite database in chunks to ensure the screen is NEVER empty upon startup and we avoid RAM spike/freezes!
+        // Instantly load all cached songs from SQLite database to ensure the screen loads atomically without UI jumps or shifts!
         initialDbLoadJob = viewModelScope.launch {
             try {
-                // 1. Load the first chunk (500 files) for instant rendering
-                val firstChunk = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    audioDao.getAudioFilesPaged(500, 0)
+                val allFiles = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    audioDao.getAllAudioFiles()
                 }
-                if (firstChunk.isNotEmpty()) {
+                if (allFiles.isNotEmpty()) {
                     localAudioFiles.clear()
-                    localAudioFiles.addAll(firstChunk)
+                    localAudioFiles.addAll(allFiles)
                     loadPlaylists()
                     updateSmartPlaylists()
                 }
 
-                // 2. Load the remaining files in the background in larger pages
-                var offset = firstChunk.size
-                val pageSize = 2000
-                while (true) {
-                    val nextChunk = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        audioDao.getAudioFilesPaged(pageSize, offset)
+                // Pre-warm disk thumbnail cache in background for initial batch of songs
+                val appCtx = getApplication<android.app.Application>()
+                val itemsToPrewarm = localAudioFiles.take(150).map { it.uriString }
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    for (uriStr in itemsToPrewarm) {
+                        try {
+                            com.kevshupp.kevmusicplayer.ui.screens.preloadAlbumArt(appCtx, uriStr)
+                        } catch (e: Exception) {}
                     }
-                    if (nextChunk.isEmpty()) break
-                    
-                    localAudioFiles.addAll(nextChunk)
-                    offset += nextChunk.size
-                    
-                    // Yield or delay slightly to prevent UI thread starvation during rendering
-                    kotlinx.coroutines.yield()
-                }
-                
-                // Final reload of playlists / smart playlists to encompass all newly loaded items
-                if (offset > firstChunk.size) {
-                    loadPlaylists()
-                    updateSmartPlaylists()
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -316,7 +304,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         savePlaybackState()
                         fetchLyricsForCurrentSong()
                         preloadUpcomingArtwork()
-                        if (mediaItem != null) {
+                        if (mediaItem != null && reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
                             val id = mediaItem.mediaId.toLongOrNull()
                             if (id != null) {
                                 incrementSongPlayCount(id)
@@ -519,11 +507,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         if (preloadCount <= 0) return
 
         val totalItems = b.mediaItemCount
-        if (totalItems <= 1) return
+        if (totalItems <= 0) return
         val currentIndex = b.currentMediaItemIndex
 
         val urisToPreload = mutableSetOf<String>()
-        for (i in 1..preloadCount) {
+        for (i in 0..preloadCount) {
             val nextIndex = (currentIndex + i) % totalItems
             val prevIndex = (currentIndex - i + totalItems) % totalItems
 
@@ -534,10 +522,18 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         val mediaId = mediaItem.mediaId
                         if (mediaId.isNotBlank()) {
                             urisToPreload.add("content://media/external/audio/media/$mediaId")
+                            val audioFile = localAudioFiles.find { it.id.toString() == mediaId }
+                            if (audioFile != null && audioFile.uriString.isNotBlank()) {
+                                urisToPreload.add(audioFile.uriString)
+                            }
                         }
                         val reqUri = mediaItem.requestMetadata.mediaUri?.toString()
-                        if (reqUri != null) {
+                        if (!reqUri.isNullOrBlank()) {
                             urisToPreload.add(reqUri)
+                        }
+                        val localUri = mediaItem.localConfiguration?.uri?.toString()
+                        if (!localUri.isNullOrBlank()) {
+                            urisToPreload.add(localUri)
                         }
                     } catch (e: Exception) {
                         // Ignore
@@ -805,8 +801,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 if (updatedFilesList != null) {
-                    localAudioFiles.clear()
-                    localAudioFiles.addAll(updatedFilesList)
+                    if (localAudioFiles != updatedFilesList) {
+                        localAudioFiles.clear()
+                        localAudioFiles.addAll(updatedFilesList)
+                    }
                     loadPlaylists()
                     updateSmartPlaylists()
                 }
@@ -2112,8 +2110,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                 }
 
-                // Evict in-memory bitmap cache and trigger UI refresh
+                // Evict in-memory and disk bitmap cache and trigger UI refresh
                 com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.evictAll()
+                com.kevshupp.kevmusicplayer.ui.screens.clearDiskAlbumArtCache(getApplication())
                 withContext(Dispatchers.Main) {
                     com.kevshupp.kevmusicplayer.ui.screens.albumArtVersion++
                 }
@@ -2972,11 +2971,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     audioDao.insertAll(listOf(updatedEntity))
                 }
 
-                // 3. Clear/Update in-memory artwork cache
-                if (coverBytes != null && songUriString != null) {
-                    val bitmap = android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
-                    if (bitmap != null) {
-                        com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(songUriString, bitmap)
+                // 3. Clear/Update in-memory and disk artwork cache
+                if (songUriString != null) {
+                    com.kevshupp.kevmusicplayer.ui.screens.deleteDiskAlbumArtCacheForUri(getApplication(), songUriString)
+                    if (coverBytes != null) {
+                        val bitmap = android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
+                        if (bitmap != null) {
+                            com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(songUriString, bitmap)
+                        }
+                    } else {
+                        com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.remove(songUriString)
                     }
                 }
 
@@ -3115,7 +3119,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
                     if (success) {
                         successCount++
-                        // Update in-memory artwork cache
+                        // Update in-memory and disk artwork cache
+                        com.kevshupp.kevmusicplayer.ui.screens.deleteDiskAlbumArtCacheForUri(getApplication(), song.uriString)
                         val bitmap = android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
                         if (bitmap != null) {
                             com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, bitmap)

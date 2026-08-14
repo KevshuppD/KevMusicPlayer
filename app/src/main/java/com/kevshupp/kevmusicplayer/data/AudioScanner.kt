@@ -97,10 +97,13 @@ class AudioScanner(private val context: Context) {
                     val year = if (yearVal > 0) yearVal.toString() else ""
                     val trackVal = if (trackColumn != -1) cursor.getInt(trackColumn) else 0
 
-                    // Try to get ReplayGain metadata.
-                    // Check local DB cache first to avoid extremely slow synchronous physical disk read/write on every startup scan!
+                    // Check local DB cache to preserve user metadata and playback stats
                     val cachedFile = existingFiles[id]
                     val replayGain: Float? = cachedFile?.replayGain
+                    val playCount = cachedFile?.playCount ?: 0
+                    val lastPlayed = cachedFile?.lastPlayed ?: 0L
+                    val lyrics = cachedFile?.lyrics
+                    val translatedLyrics = cachedFile?.translatedLyrics
 
                     audioList.add(
                         AudioFile(
@@ -117,7 +120,11 @@ class AudioScanner(private val context: Context) {
                             replayGain = replayGain,
                             year = year,
                             dateModified = dateModifiedMs,
-                            track = trackVal
+                            track = trackVal,
+                            playCount = playCount,
+                            lastPlayed = lastPlayed,
+                            lyrics = lyrics,
+                            translatedLyrics = translatedLyrics
                         )
                     )
                 }
