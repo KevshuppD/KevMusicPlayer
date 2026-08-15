@@ -357,7 +357,26 @@ fun HomeScreen(
         visible = showInsights,
         onDismiss = { showInsights = false },
         audioFiles = audioFiles,
-        getLocalized = getLocalized
+        getLocalized = getLocalized,
+        onPlaySongs = { songs, startIndex ->
+            val first = songs.getOrNull(startIndex) ?: songs.firstOrNull()
+            if (first != null) {
+                onFileClick(first, songs)
+            }
+        },
+        onCreatePlaylist = { name, songs ->
+            if (viewModel != null) {
+                viewModel.createPlaylist(name)
+                songs.forEach { s ->
+                    viewModel.addSongToPlaylist(name, s.id)
+                }
+                android.widget.Toast.makeText(
+                    context,
+                    if (isEs) "Playlist '$name' creada" else "Playlist '$name' created",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
     )
 }
 

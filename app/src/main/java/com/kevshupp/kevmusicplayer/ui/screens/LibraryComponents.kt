@@ -2366,7 +2366,13 @@ fun FastScrollSidebar(
         )
 
         // Alphabet Rail
-        val alphabetAlpha by animateFloatAsState(targetValue = if (isDragging) 1f else 0.45f, label = "alphabet_alpha")
+        val disableAnimations = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
+        val alphabetAlpha = if (disableAnimations) {
+            if (isDragging) 1f else 0.45f
+        } else {
+            val animAlpha by animateFloatAsState(targetValue = if (isDragging) 1f else 0.45f, label = "alphabet_alpha")
+            animAlpha
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -2389,8 +2395,8 @@ fun FastScrollSidebar(
         // Glowing Teardrop Fast Scroll Bubble
         AnimatedVisibility(
             visible = isDragging,
-            enter = fadeIn() + scaleIn(),
-            exit = fadeOut() + scaleOut(),
+            enter = if (disableAnimations) EnterTransition.None else (fadeIn() + scaleIn()),
+            exit = if (disableAnimations) ExitTransition.None else (fadeOut() + scaleOut()),
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .offset(x = (-46).dp, y = with(density) { (dragY - 32.dp.toPx()).toDp().coerceIn(0.dp, (maxHeight - 64.dp).coerceAtLeast(0.dp)) })

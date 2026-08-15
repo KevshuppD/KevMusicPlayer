@@ -64,13 +64,13 @@ graph TD
 - **Limpieza de Términos de Búsqueda (`cleanSearchTerm`):** Elimina etiquetas de metadatos molestas como `(Official Video)`, `(Remastered ...)`, `ft. ...`, `feat. ...`, `[HQ]` antes de consultar la API.
 - **Estrategia Búsqueda Multi-Paso:** Intenta la API `/api/get` de LRCLIB primero, luego `/api/search` con término limpio, y finalmente `/api/search` con término original.
 - **Procesador LRC:** Convierte marcas `[mm:ss.xx]` a marcas de tiempo de milisegundos (`LyricLine`).
-- **Traducciones Locales y Auto-Traducción:** Permite almacenar y cargar traducciones en JSON.
-- **Transición Fluida de Letras:** Cambio entre carátula y letras en el reproductor mediante `AnimatedContent` (`fadeIn`/`fadeOut`, `scaleIn`/`scaleOut`).
+- **Traducciones Locales y Auto-Traducción Inteligente:** Procesamiento por lotes (`\n`) mediante Google Translate API con autodetección de idioma de origen (`sl=auto`), fallback a MyMemory, persistencia instantánea en Room DB y omisión de líneas idénticas redundantes.
+- **Persistencia de Pantalla de Letras y Gestos:** `showLyrics` recuerda si la vista de letras estaba abierta entre canciones, al bloquear la pantalla o al salir de la app (configurable con `remember_lyrics_open` en Ajustes). Soporta deslizamiento horizontal (swipe) en la pantalla de letras para avanzar o retroceder de canción sin salir de las letras.
 
 ### E. Editor de Metadatos Híbrido: Motor Nativo C++ TagLib + jaudiotagger + Folder Cover ([MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt))
 - **Motor Nativo C++ TagLib (`writeMetadataWithTagLib`):** Integra `io.github.kyant0:taglib:1.0.6` (`libtaglib.so`). Actualiza las propiedades de texto (`TITLE`, `ARTIST`, `ALBUM`, `GENRE`). Se desacopló la escritura JNI de imágenes en TagLib para evitar cierres Native SIGSEGV, dejando la escritura de portadas embebidas exclusivamente al motor Java `jaudiotagger`.
 - **Motor Java Especializado mp3agic (`writeMp3TagsWithMp3Agic`):** Integra `com.mpatric:mp3agic:0.9.1`. Diseñado específicamente para archivos `.mp3`, graba y reemplaza directamente las etiquetas `ID3v1` e `ID3v2` (`ID3v2.3`/`ID3v2.4`) junto con las portadas embebidas `APIC` sin dependencias de `java.awt.*`, garantizando una incrustación 100% confiable y rápida en Android.
-- **Motor Java jaudiotagger:** Complementa la escritura de formatos adicionales (`.flac`, `.m4a`, `.ogg`, `.wav`) incrustando bitmaps de manera segura mediante `createJaudiotaggerArtwork`.
+- **Motor Java jaudiotagger y Lector Seguro M4A (`SafeMp4FileReader` / `safeReadAudioFile`):** Complementa la escritura de formatos adicionales (`.flac`, `.m4a`, `.ogg`, `.wav`) incrustando bitmaps y letras de manera segura. `SafeMp4FileReader` previene excepciones de puntero nulo (`GenericAudioHeader` unboxing NPE) y átomos MP4/M4A dañados, asegurando que el guardado de letras y metadatos en pistas AAC/M4A nunca falle.
 - **Incrustado de Portadas Embebidas (Tag ID3v2 APIC / FLAC Picture):** Al guardar o actualizar la portada de una canción o álbum, KevMusicPlayer graba la imagen directamente dentro del archivo de audio MP3/FLAC (`createJaudiotaggerArtwork`). No se crean archivos de imagen físicos en la carpeta de música, manteniendo la galería de fotos de Android 100% limpia sin requerir `.nomedia`.
 - **Herramientas de Limpieza y Escaneo Profundo (`forceDeepStorageScan`, `deleteAllFolderCoverImages`, `deleteAllNoMediaFiles`, `deleteAllLyricsFiles`):** Accesibles desde Ajustes > Biblioteca. La función `forceDeepStorageScan` recorre físicamente el almacenamiento en busca de archivos `.mp3`, `.flac`, `.m4a`, etc., e invoca `MediaScannerConnection.scanFile` por lotes para recuperar canciones de carpetas donde se borró un `.nomedia`. Las herramientas de limpieza procesan carpetas concurrentemente en hilos paralelos para eliminar portadas físicas, archivos `.nomedia` y letras.
 - **Carga de Portadas con Fallback en Cascada (`rememberAlbumArt` / `preloadAlbumArt`):**
@@ -81,10 +81,14 @@ graph TD
 - **Invalidación de Caché MediaStore (`invalidateMediaStoreAlbumArt`):** Elimina el registro de miniatura obsoleto en la base de datos de Android (`content://media/external/audio/albumart/<album_id>`), forzando al sistema a regenerar la miniatura actualizada.
 - **Actualización en Caliente:** Llama a `browser.replaceMediaItem` e incrementa `albumArtVersion` para actualizar inmediatamente la UI y la notificación del sistema.
 
-### F. Respaldo y Restauración (Backup & Restore)
-- **Estructura JSON:** Exporta listas manuales e inteligentes, ecualización, preferencias y caché de letras, contadores de reproducción (`playCount`), `lastPlayed`, `replayGain` y cambios de metadatos.
-- **Mapeo Dinámico de Restauración:** Compara coincidencia de título, artista y duración para asociar el historial al nuevo ID de MediaStore al restaurar en otro dispositivo.
-- **Limpieza de Sesiones Zombie:** La función `importBackup` detiene `PlaybackService`, borra la caché obsoleta de `playback_prefs` y reconecta el cliente `MediaBrowser`.
+### F. Respaldo y Restauración Integral (Backup & Restore)
+- **Estructura JSON Unificada:** Exporta el 100% del ecosistema de la app:
+  1. *Base de Datos Room (`audio_files`):* Letras sincronizadas (`lyrics`), traducciones (`translatedLyrics`), estadísticas completas (`playCount`, `lastPlayed`, `dateAdded`), factor `replayGain` y etiquetas editadas por el usuario (`title`, `artist`, `album`, `genre`, `year`, `track`).
+  2. *Playlists y Reglas:* Listas manuales, playlists inteligentes con su árbol de condiciones JSON y carátulas personalizadas de listas (`playlist_cover_*`).
+  3. *Ecualización por Hardware:* Bandas de frecuencia, presets, Bass Boost y Virtualizer.
+  4. *Preferencias Globales y Rendimiento:* Tema visual, tasa de refresco, modo sin animaciones, perfiles de rendimiento (`performance_profile`, capacidad de caché RAM/disco, resolución de carátula), carpetas excluidas/fijadas, reconexión Bluetooth y opciones de reproducción.
+- **Mapeo Dinámico y Portabilidad Multi-Dispositivo:** Incluye la sección `songs_metadata` (`title`, `artist`, `album`, `duration`) para emparejar y transferir estadísticas, letras y listas a los nuevos IDs generados por `MediaStore` al restaurar en otro teléfono.
+- **Limpieza de Sesiones Zombie:** La función `importBackup` detiene `PlaybackService`, purga la memoria de `playback_prefs` para prevenir colas inválidas y refresca la UI de inmediato.
 
 ### G. Buscador y Eliminador de Música Duplicada
 - **Algoritmo Bifásico:**
@@ -97,7 +101,8 @@ graph TD
 - Registra eventos en `telemetry_errors.log` dentro de `filesDir`.
 - Incluye pantalla visualizadora de registros con opción de volcado al portapapeles.
 
-### I. CI/CD y Firma Compartida de Producción
+### I. CI/CD y Compilación Optimizada
+- **Optimizador Compose Compiler (`composeCompiler { includeSourceInformation = false }`):** Desactiva la inyección de metadatos pesados de inspección en el árbol de componentes, acelerando drásticamente el rendimiento de renderizado y FPS en compilaciones Debug.
 - **GitHub Actions Workflow (`.github/workflows/release.yml`):** Compila el APK firmado ante cualquier etiqueta `v*` o disparador manual `workflow_dispatch`. Incluye decodificación limpia de base64 (`tr -d '\r\n'`) y generación automática de almacén de claves firmado si las credenciales de entorno no están configuradas.
 - **Keystore Compartido (`app/shared.keystore`):** Firma unificada configurada en `build.gradle.kts` para que todas las compilaciones locales y de CI/CD compartan la misma firma criptográfica.
 
@@ -131,7 +136,13 @@ graph TD
   1. Copia y mueve automáticamente archivos de letras físicos (`.lrc`, `.txt`) hacia la nueva carpeta del álbum.
   2. Si la canción posee letras en la base de datos y no existe archivo `.lrc` físico en la carpeta destino, lo escribe automáticamente.
   3. Traslada los archivos de portada de origen si ya existían previamente. Las imágenes de portada embebidas en las etiquetas de los archivos de audio se mantienen estrictamente dentro del archivo y **NUNCA se extraen a disco automáticamente**.
-- **Renombrado de Archivos de Letras:** Renombra archivos `.lrc` y `.txt` en simultáneo al renombrar canciones basándose en metadatos.
+### P. KevWrapped & Resumen Musical Interactivo ([MusicInsightsScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/MusicInsightsScreen.kt))
+- **Filtros Temporales:** Selector interactivo de período (*Todo el tiempo*, *Este año*, *Este mes*, *Últimos 30 días*).
+- **Ranking Top 5:** Top Canciones (con badges de oro/plata/bronce), Top Artistas (con fotos circulares) y Top Álbumes (con portadas HD).
+- **Desglose de Géneros:** Gráfico de barras de progreso con gradientes y cálculo porcentual exacto.
+- **Distribución de Actividad:** Días de la semana más activos (gráfico de 7 barras verticales identificando el día pico) y distribución horaria (Madrugada, Mañana, Tarde, Noche).
+- **Acciones Rápidas con 1 Toque:** Botones *"Reproducir Top"* para iniciar la cola de las canciones del ranking y *"Crear Playlist"* para guardarlas automáticamente en una lista de reproducción.
+- **Generador de Póster "Wrapped Story":** Ventana modal que renderiza un póster visual en formato vertical 9:16 con la carátula del Top 1, estadísticas y logo de KevMusicPlayer, exportable y compartible como imagen PNG con 1 toque.
 
 ---
 

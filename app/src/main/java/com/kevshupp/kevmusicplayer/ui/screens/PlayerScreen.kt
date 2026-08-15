@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.*
 import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,6 +79,7 @@ fun PlayerScreen(
     onNavigateToAlbum: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val disableAnimations = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
     if (player == null) {
         Box(
             modifier = modifier
@@ -117,10 +119,63 @@ fun PlayerScreen(
         }
         return
     }
+    val context = LocalContext.current
+    val locale = context.resources.configuration.locales[0]
+    val settingsPrefs = remember(context) { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
+    val targetLang = remember(settingsPrefs, locale) {
+        val langPref = settingsPrefs.getString("language", locale.language) ?: locale.language
+        if (langPref.startsWith("es")) "es" else if (langPref.startsWith("en")) "en" else langPref
+    }
+    val rememberLyricsOpen = remember(settingsPrefs) { settingsPrefs.getBoolean("remember_lyrics_open", true) }
+
     var showMoreOptions by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
     var showFileInfoDialog by remember { mutableStateOf(false) }
-    var showLyrics by remember { mutableStateOf(false) }
+    var showLyrics by rememberSaveable {
+        mutableStateOf(if (rememberLyricsOpen) settingsPrefs.getBoolean("lyrics_view_active", false) else false)
+    }
+
+    val setLyricsVisible: (Boolean) -> Unit = { visible ->
+        showLyrics = visible
+        if (rememberLyricsOpen) {
+            settingsPrefs.edit().putBoolean("lyrics_view_active", visible).apply()
+        }
+    }
+
+    val onSkipNext = {
+        val crossfadeSeconds = settingsPrefs.getInt("crossfade_duration", 0)
+        val controller = player as? androidx.media3.session.MediaController
+        if (controller != null && crossfadeSeconds > 0) {
+            controller.sendCustomCommand(
+                androidx.media3.session.SessionCommand("ACTION_SKIP_NEXT", android.os.Bundle.EMPTY),
+                android.os.Bundle.EMPTY
+            )
+        } else {
+            player.seekToNext()
+            if (player.playbackState == Player.STATE_IDLE) {
+                player.prepare()
+                player.play()
+            }
+        }
+    }
+
+    val onSkipPrevious = {
+        val crossfadeSeconds = settingsPrefs.getInt("crossfade_duration", 0)
+        val controller = player as? androidx.media3.session.MediaController
+        if (controller != null && crossfadeSeconds > 0) {
+            controller.sendCustomCommand(
+                androidx.media3.session.SessionCommand("ACTION_SKIP_PREV", android.os.Bundle.EMPTY),
+                android.os.Bundle.EMPTY
+            )
+        } else {
+            player.seekToPrevious()
+            if (player.playbackState == Player.STATE_IDLE) {
+                player.prepare()
+                player.play()
+            }
+        }
+    }
+
     var showEditLyricsDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showTagEditorDialog by remember { mutableStateOf(false) }
@@ -140,7 +195,7 @@ fun PlayerScreen(
     var searchLyricsResults by remember { mutableStateOf<List<LrcLibSearchResult>>(emptyList()) }
 
     BackHandler(enabled = showLyrics) {
-        showLyrics = false
+        setLyricsVisible(false)
     }
 
     val currentSongFile = remember(playerState.currentSong?.mediaId) {
@@ -197,11 +252,6 @@ fun PlayerScreen(
         }
     }
     
-    val context = LocalContext.current
-    val locale = context.resources.configuration.locales[0]
-    val targetLang = locale.language // "es" or "en"
-
-    val settingsPrefs = remember(context) { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
     var isVisualizerEnabled by remember {
         mutableStateOf(settingsPrefs.getBoolean("show_visualizer", false))
     }
@@ -330,11 +380,11 @@ fun PlayerScreen(
     // Load album art bytes for Palette extraction
     val artBytes = rememberAlbumArt(currentSongUriString)
     val dominantColor = rememberDominantColor(artBytes)
-    val animatedColor by animateColorAsState(
+    val animatedColor = if (disableAnimations) dominantColor else animateColorAsState(
         targetValue = dominantColor,
         animationSpec = androidx.compose.animation.core.tween(durationMillis = 1000),
         label = "DominantColor"
-    )
+    ).value
 
     val glowEnabled = remember(settingsPrefs, playerState.currentSong?.mediaId) { settingsPrefs.getBoolean("ambient_glow_enabled", true) }
     val glowIntensity = remember(settingsPrefs, playerState.currentSong?.mediaId) { settingsPrefs.getString("ambient_glow_intensity", "normal") ?: "normal" }
@@ -369,16 +419,19 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(backgroundBrush)
     ) {
-        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-        val pulseScale by infiniteTransition.animateFloat(
-            initialValue = 0.85f,
-            targetValue = 1.15f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 4000, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "pulseScale"
-        )
+        val pulseScale = if (disableAnimations) 1f else {
+            val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+            val scale by infiniteTransition.animateFloat(
+                initialValue = 0.85f,
+                targetValue = 1.15f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 4000, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "pulseScale"
+            )
+            scale
+        }
 
         if (glowEnabled) {
             val pulseAlpha = if (glowIntensity == "strong") 0.85f else 0.45f
@@ -404,7 +457,7 @@ fun PlayerScreen(
             )
         }
 
-        val translateLyrics: suspend () -> Unit = {
+        suspend fun translateLyrics(isAuto: Boolean = false) {
             val getLocalized: (String, String) -> String = { es, en ->
                 if (targetLang == "es") es else en
             }
@@ -413,89 +466,105 @@ fun PlayerScreen(
                 val results = mutableMapOf<Long, String>()
                 try {
                     withContext(Dispatchers.IO) {
-                        val client = okhttp3.OkHttpClient()
+                        val client = okhttp3.OkHttpClient.Builder()
+                            .connectTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
+                            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                            .build()
                         val linesToTranslate = lyricLines.filter { it.text.isNotBlank() }
                         
-                        // Detect source language based on all non-blank lyric lines combined!
-                        val fullLyricsSample = linesToTranslate.joinToString("\n") { it.text }
-                        val detectedSource = detectLanguage(fullLyricsSample)
-                        val sourceLang = if (detectedSource == targetLang) {
-                            if (targetLang == "es") "en" else "es"
-                        } else {
-                            detectedSource
-                        }
-                        
-                        android.util.Log.d("KevTranslation", "Starting translation from $sourceLang to $targetLang. Sample: ${fullLyricsSample.take(50)}")
-                        
-                        // Chunking into batches of at most 450 characters or 10 lines to stay safe
+                        // Chunking into batches of at most 15 lines or 600 characters
                         val batches = mutableListOf<List<LyricLine>>()
                         var currentBatch = mutableListOf<LyricLine>()
                         var currentBatchLength = 0
                         
                         linesToTranslate.forEach { line ->
-                            if (currentBatchLength + line.text.length > 450 || currentBatch.size >= 10) {
+                            if (currentBatchLength + line.text.length > 600 || currentBatch.size >= 15) {
                                 batches.add(currentBatch)
                                 currentBatch = mutableListOf()
                                 currentBatchLength = 0
                             }
                             currentBatch.add(line)
-                            currentBatchLength += line.text.length + 3
+                            currentBatchLength += line.text.length + 1
                         }
                         if (currentBatch.isNotEmpty()) {
                             batches.add(currentBatch)
                         }
                         
-                        android.util.Log.d("KevTranslation", "Prepared ${batches.size} batches for translation.")
-                        
-                        // 1. Try Google Translate first! (Unlimited, completely free, robust)
+                        // 1. Try Google Translate API first with newline separation
                         var googleTranslateSuccess = false
                         try {
-                            android.util.Log.d("KevTranslation", "Attempting translation via Google Translate API...")
                             val resultsTemp = mutableMapOf<Long, String>()
                             
-                            for (batchIdx in batches.indices) {
-                                val batch = batches[batchIdx]
-                                val joinedText = batch.joinToString(" | ") { it.text }
+                            for (batch in batches) {
+                                val joinedText = batch.joinToString("\n") { it.text }
                                 val encodedText = java.net.URLEncoder.encode(joinedText, "UTF-8")
                                 val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetLang&dt=t&q=$encodedText"
-                                val request = okhttp3.Request.Builder().url(url).build()
+                                val request = okhttp3.Request.Builder()
+                                    .url(url)
+                                    .header("User-Agent", "Mozilla/5.0 (Android; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0")
+                                    .build()
                                 
+                                var batchTranslated = false
                                 client.newCall(request).execute().use { response ->
                                     if (response.isSuccessful) {
                                         val body = response.body?.string() ?: ""
                                         val jsonArray = org.json.JSONArray(body)
-                                        val segments = jsonArray.getJSONArray(0)
-                                        val sb = java.lang.StringBuilder()
-                                        for (i in 0 until segments.length()) {
-                                            val segment = segments.getJSONArray(i)
-                                            sb.append(segment.getString(0))
-                                        }
-                                        val translatedText = sb.toString()
-                                        val translatedLines = translatedText.split("|")
-                                        if (translatedLines.size == batch.size) {
-                                            batch.forEachIndexed { index, line ->
-                                                resultsTemp[line.timeMs] = translatedLines[index].trim()
+                                        val segments = jsonArray.optJSONArray(0)
+                                        if (segments != null) {
+                                            val sb = java.lang.StringBuilder()
+                                            for (i in 0 until segments.length()) {
+                                                val segment = segments.optJSONArray(i)
+                                                if (segment != null) {
+                                                    sb.append(segment.optString(0, ""))
+                                                }
                                             }
-                                        } else {
-                                            // Fallback: translate line-by-line via Google Translate
-                                            for (lineIdx in batch.indices) {
-                                                val line = batch[lineIdx]
-                                                val encLine = java.net.URLEncoder.encode(line.text, "UTF-8")
-                                                val lUrl = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetLang&dt=t&q=$encLine"
-                                                val lRequest = okhttp3.Request.Builder().url(lUrl).build()
-                                                client.newCall(lRequest).execute().use { lResp ->
-                                                    if (lResp.isSuccessful) {
-                                                        val lBody = lResp.body?.string() ?: ""
-                                                        val lArr = org.json.JSONArray(lBody)
-                                                        val lSegs = lArr.getJSONArray(0)
+                                            val translatedBlock = sb.toString()
+                                            val translatedLines = translatedBlock.split(Regex("\\r?\\n"))
+                                            if (translatedLines.size == batch.size) {
+                                                batch.forEachIndexed { index, line ->
+                                                    val t = translatedLines.getOrNull(index)?.trim()
+                                                    if (!t.isNullOrBlank()) {
+                                                        resultsTemp[line.timeMs] = t
+                                                    }
+                                                }
+                                                batchTranslated = true
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                if (!batchTranslated) {
+                                    // Fallback: translate line-by-line for this batch
+                                    for (line in batch) {
+                                        val encLine = java.net.URLEncoder.encode(line.text, "UTF-8")
+                                        val lUrl = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetLang&dt=t&q=$encLine"
+                                        val lRequest = okhttp3.Request.Builder()
+                                            .url(lUrl)
+                                            .header("User-Agent", "Mozilla/5.0 (Android; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0")
+                                            .build()
+                                        try {
+                                            client.newCall(lRequest).execute().use { lResp ->
+                                                if (lResp.isSuccessful) {
+                                                    val lBody = lResp.body?.string() ?: ""
+                                                    val lArr = org.json.JSONArray(lBody)
+                                                    val lSegs = lArr.optJSONArray(0)
+                                                    if (lSegs != null) {
                                                         val lSb = java.lang.StringBuilder()
                                                         for (j in 0 until lSegs.length()) {
-                                                            lSb.append(lSegs.getJSONArray(j).getString(0))
+                                                            val s = lSegs.optJSONArray(j)
+                                                            if (s != null) {
+                                                                lSb.append(s.optString(0, ""))
+                                                            }
                                                         }
-                                                        resultsTemp[line.timeMs] = lSb.toString().trim()
+                                                        val resText = lSb.toString().trim()
+                                                        if (resText.isNotBlank()) {
+                                                            resultsTemp[line.timeMs] = resText
+                                                        }
                                                     }
                                                 }
                                             }
+                                        } catch (ex: Exception) {
+                                            // Continue with other lines
                                         }
                                     }
                                 }
@@ -503,141 +572,111 @@ fun PlayerScreen(
                             
                             val nonBlankCount = linesToTranslate.size
                             val translatedCount = resultsTemp.keys.size
-                            android.util.Log.d("KevTranslation", "Google Translate fetched: $translatedCount/$nonBlankCount")
-                            if (translatedCount >= nonBlankCount * 0.8) {
+                            if (translatedCount >= nonBlankCount * 0.7) {
                                 results.putAll(resultsTemp)
                                 googleTranslateSuccess = true
-                                android.util.Log.d("KevTranslation", "Google Translate successful! Skipping MyMemory fallback.")
                             }
                         } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e
-                            android.util.Log.e("KevTranslation", "Google Translate failed/timed out: ${e.message}")
                             e.printStackTrace()
                             com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                                 "Translation_Google",
-                                "Google Translate failed/timed out",
+                                "Google Translate failed",
                                 e
                             )
                         }
                         
                         // 2. Fall back to MyMemory ONLY if Google Translate failed!
                         if (!googleTranslateSuccess) {
-                            android.util.Log.w("KevTranslation", "Google Translate failed. Falling back to MyMemory API...")
-                            var hitRateLimit = false
-                            
-                            for (batchIdx in batches.indices) {
-                                if (hitRateLimit) break
-                                
-                                val batch = batches[batchIdx]
-                                val joinedText = batch.joinToString(" | ") { it.text }
+                            for (batch in batches) {
+                                val joinedText = batch.joinToString("\n") { it.text }
                                 val encodedText = java.net.URLEncoder.encode(joinedText, "UTF-8")
-                                val url = "https://api.mymemory.translated.net/get?q=$encodedText&langpair=$sourceLang|$targetLang&de=kevshupp.musicplayer@gmail.com"
-                                val request = okhttp3.Request.Builder().url(url).build()
+                                val url = "https://api.mymemory.translated.net/get?q=$encodedText&langpair=autodetect|$targetLang&de=kevshupp.musicplayer@gmail.com"
+                                val request = okhttp3.Request.Builder()
+                                    .url(url)
+                                    .header("User-Agent", "KevMusicPlayer/1.5.4")
+                                    .build()
                                 
-                                android.util.Log.d("KevTranslation", "Requesting Batch $batchIdx from MyMemory: URL = $url")
                                 var success = false
                                 try {
                                     client.newCall(request).execute().use { response ->
-                                        if (response.code == 429) {
-                                            hitRateLimit = true
-                                        }
-                                        
                                         if (response.isSuccessful) {
                                             val body = response.body?.string() ?: ""
                                             val json = org.json.JSONObject(body)
                                             val status = json.optInt("responseStatus", 200)
                                             if (status == 200) {
                                                 val translatedText = json.getJSONObject("responseData").getString("translatedText")
-                                                val translatedLines = translatedText.split("|")
+                                                val translatedLines = translatedText.split(Regex("\\r?\\n"))
                                                 if (translatedLines.size == batch.size) {
                                                     batch.forEachIndexed { index, line ->
-                                                        results[line.timeMs] = translatedLines[index].trim()
+                                                        val t = translatedLines.getOrNull(index)?.trim()
+                                                        if (!t.isNullOrBlank()) {
+                                                            results[line.timeMs] = t
+                                                        }
                                                     }
                                                     success = true
                                                 }
-                                            } else if (status == 429) {
-                                                hitRateLimit = true
                                             }
                                         }
                                     }
                                 } catch (e: Exception) {
                                     if (e is kotlinx.coroutines.CancellationException) throw e
-                                    android.util.Log.e("KevTranslation", "MyMemory Batch $batchIdx failed: ${e.message}")
                                     com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                                         "Translation_MyMemory_Batch",
-                                        "MyMemory Batch $batchIdx failed",
+                                        "MyMemory Batch failed",
                                         e
                                     )
                                 }
                                 
-                                if (!success && !hitRateLimit) {
-                                    for (lineIdx in batch.indices) {
-                                        if (hitRateLimit) break
-                                        val line = batch[lineIdx]
+                                if (!success) {
+                                    for (line in batch) {
                                         val encodedLine = java.net.URLEncoder.encode(line.text, "UTF-8")
-                                        val fallbackUrl = "https://api.mymemory.translated.net/get?q=$encodedLine&langpair=$sourceLang|$targetLang&de=kevshupp.musicplayer@gmail.com"
+                                        val fallbackUrl = "https://api.mymemory.translated.net/get?q=$encodedLine&langpair=autodetect|$targetLang&de=kevshupp.musicplayer@gmail.com"
                                         val fallbackRequest = okhttp3.Request.Builder().url(fallbackUrl).build()
                                         try {
                                             client.newCall(fallbackRequest).execute().use { resp ->
-                                                if (resp.code == 429) {
-                                                    hitRateLimit = true
-                                                }
                                                 if (resp.isSuccessful) {
                                                     val b = resp.body?.string() ?: ""
                                                     val json = org.json.JSONObject(b)
                                                     val translated = json.getJSONObject("responseData").getString("translatedText")
-                                                    results[line.timeMs] = translated.trim()
+                                                    if (translated.isNotBlank()) {
+                                                        results[line.timeMs] = translated.trim()
+                                                    }
                                                 }
                                             }
                                         } catch (e: Exception) {
                                             if (e is kotlinx.coroutines.CancellationException) throw e
-                                            e.printStackTrace()
-                                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                                                "Translation_MyMemory_Fallback",
-                                                "MyMemory single line fallback failed for line indexing",
-                                                e
-                                            )
                                         }
                                     }
                                 }
                             }
-                            
-                            if (hitRateLimit) {
-                                throw Exception("rate_limit_429")
-                            }
                         }
                     }
-                    translatedLyricLines = results
-                    showTranslation = true
-                    android.util.Log.d("KevTranslation", "Translation completed successfully. Total translated lines stored: ${results.size}")
-                    // Persist to database cache!
-                    if (currentSongFile != null && viewModel != null && results.isNotEmpty()) {
-                        val serialized = LyricsRepository.serializeTranslations(results)
-                        viewModel.updateSongTranslatedLyrics(currentSongFile.id, serialized)
-                        android.util.Log.d("KevTranslation", "Translations cached to local DB for song ID: ${currentSongFile.id}")
+                    if (results.isNotEmpty()) {
+                        translatedLyricLines = results
+                        showTranslation = true
+                        // Persist to database cache
+                        if (currentSongFile != null && viewModel != null) {
+                            val serialized = LyricsRepository.serializeTranslations(results)
+                            viewModel.updateSongTranslatedLyrics(currentSongFile.id, serialized)
+                        }
                     }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
-                    android.util.Log.e("KevTranslation", "Outer try-catch failure: ${e.message}")
                     e.printStackTrace()
                     com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                         "Translation_Outer",
                         "Outer translation task failed",
                         e
                     )
-                    withContext(Dispatchers.Main) {
-                        val msg = if (e.message == "rate_limit_429") {
-                            getLocalized(
-                                "Límite de traducción excedido (429). Por favor, intenta de nuevo más tarde.",
-                                "Translation limit exceeded (429). Please try again later."
+                    if (!isAuto) {
+                        withContext(Dispatchers.Main) {
+                            val msg = getLocalized(
+                                "Error de red al traducir letras",
+                                "Network error while translating lyrics"
                             )
-                        } else {
-                            getLocalized(
-                                "Error de red: verifica tu conexión / Network error",
-                                "Network error: check your connection"
-                            )
+                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                         }
-                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
                     }
                 } finally {
                     isTranslating = false
@@ -651,14 +690,7 @@ fun PlayerScreen(
             val cachedTranslation = currentSongFile?.translatedLyrics
             val lyrics = currentSongFile?.lyrics
             if (autoTranslateEnabled && cachedTranslation.isNullOrBlank() && !lyrics.isNullOrBlank() && !isTranslating) {
-                val parsedLines = LyricsRepository.parseLrc(lyrics)
-                val sample = parsedLines.filter { it.text.isNotBlank() }.joinToString("\n") { it.text }
-                if (sample.isNotBlank()) {
-                    val detected = detectLanguage(sample)
-                    if (detected != targetLang) {
-                        translateLyrics()
-                    }
-                }
+                translateLyrics(true)
             }
         }
 
@@ -710,8 +742,12 @@ fun PlayerScreen(
             AnimatedContent(
                 targetState = showLyrics,
                 transitionSpec = {
-                    fadeIn(animationSpec = tween(400)) + scaleIn(initialScale = 0.95f, animationSpec = tween(400)) togetherWith
-                    fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 0.95f, animationSpec = tween(300))
+                    if (disableAnimations) {
+                        EnterTransition.None togetherWith ExitTransition.None
+                    } else {
+                        fadeIn(animationSpec = tween(400)) + scaleIn(initialScale = 0.95f, animationSpec = tween(400)) togetherWith
+                        fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 0.95f, animationSpec = tween(300))
+                    }
                 },
                 modifier = Modifier
                     .weight(1f)
@@ -768,6 +804,8 @@ fun PlayerScreen(
                                     viewModel?.updateSongLyrics(currentSongFile.id, "[[Instrumental]]")
                                 }
                             },
+                            onSwipeLeft = { onSkipNext() },
+                            onSwipeRight = { onSkipPrevious() },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -849,9 +887,6 @@ fun PlayerScreen(
                                                 }
                                                 heartPosition = offset
                                                 showHeartAnimation = true
-                                            },
-                                            onTap = {
-                                                showLyrics = !showLyrics
                                             }
                                         )
                                     }
@@ -861,7 +896,7 @@ fun PlayerScreen(
                                             onDragStart = { totalY = 0f },
                                             onDragEnd = {
                                                 if (totalY < -100f) {
-                                                    showLyrics = true
+                                                    setLyricsVisible(true)
                                                 } else if (totalY > 100f) {
                                                     onBack()
                                                 }
@@ -897,14 +932,10 @@ fun PlayerScreen(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         val pageArtBytes = rememberAlbumArt(pageUriString)
-                                        androidx.compose.animation.Crossfade(
-                                            targetState = pageArtBytes,
-                                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 200),
-                                            label = "PageAlbumArtCrossfade"
-                                        ) { bitmap ->
-                                            if (bitmap != null) {
+                                        if (disableAnimations) {
+                                            if (pageArtBytes != null) {
                                                 Image(
-                                                    bitmap = bitmap.asImageBitmap(),
+                                                    bitmap = pageArtBytes.asImageBitmap(),
                                                     contentDescription = null,
                                                     contentScale = ContentScale.Crop,
                                                     modifier = Modifier.fillMaxSize()
@@ -925,6 +956,36 @@ fun PlayerScreen(
                                                     )
                                                 }
                                             }
+                                        } else {
+                                            androidx.compose.animation.Crossfade(
+                                                targetState = pageArtBytes,
+                                                animationSpec = androidx.compose.animation.core.tween(durationMillis = 200),
+                                                label = "PageAlbumArtCrossfade"
+                                            ) { bitmap ->
+                                                if (bitmap != null) {
+                                                    Image(
+                                                        bitmap = bitmap.asImageBitmap(),
+                                                        contentDescription = null,
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize()
+                                                    )
+                                                } else {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxSize(0.92f)
+                                                            .clip(CircleShape)
+                                                            .background(Color.Black.copy(alpha = 0.08f)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.MusicNote,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(110.dp),
+                                                            tint = Color.White.copy(alpha = 0.95f)
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         if (showHeartAnimation && page == pagerState.currentPage) {
@@ -935,14 +996,19 @@ fun PlayerScreen(
                                                 }
                                             }
 
-                                            val scale by animateFloatAsState(
-                                                targetValue = if (showHeartAnimation) 1.5f else 0f,
-                                                animationSpec = androidx.compose.animation.core.spring(
-                                                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
-                                                    stiffness = androidx.compose.animation.core.Spring.StiffnessLow
-                                                ),
-                                                label = "heartScale"
-                                            )
+                                            val scale = if (disableAnimations) {
+                                                if (showHeartAnimation) 1.5f else 0f
+                                            } else {
+                                                val animScale by animateFloatAsState(
+                                                    targetValue = if (showHeartAnimation) 1.5f else 0f,
+                                                    animationSpec = androidx.compose.animation.core.spring(
+                                                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                                                        stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+                                                    ),
+                                                    label = "heartScale"
+                                                )
+                                                animScale
+                                            }
 
                                             val hPos = heartPosition ?: androidx.compose.ui.geometry.Offset.Zero
                                             Icon(
@@ -1081,24 +1147,8 @@ fun PlayerScreen(
                                      }
 
                                      // Previous Button
-                                     val context = androidx.compose.ui.platform.LocalContext.current
                                      IconButton(
-                                         onClick = {
-                                             val crossfadeSeconds = context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
-                                             val controller = player as? androidx.media3.session.MediaController
-                                             if (controller != null && crossfadeSeconds > 0) {
-                                                 controller.sendCustomCommand(
-                                                     androidx.media3.session.SessionCommand("ACTION_SKIP_PREV", android.os.Bundle.EMPTY),
-                                                     android.os.Bundle.EMPTY
-                                                 )
-                                             } else {
-                                                 player.seekToPrevious()
-                                                 if (player.playbackState == Player.STATE_IDLE) {
-                                                     player.prepare()
-                                                     player.play()
-                                                 }
-                                             }
-                                         },
+                                         onClick = { onSkipPrevious() },
                                          modifier = Modifier.size(54.dp)
                                      ) {
                                          Icon(
@@ -1144,22 +1194,7 @@ fun PlayerScreen(
 
                                      // Next Button
                                      IconButton(
-                                         onClick = {
-                                             val crossfadeSeconds = context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("crossfade_duration", 0)
-                                             val controller = player as? androidx.media3.session.MediaController
-                                             if (controller != null && crossfadeSeconds > 0) {
-                                                 controller.sendCustomCommand(
-                                                     androidx.media3.session.SessionCommand("ACTION_SKIP_NEXT", android.os.Bundle.EMPTY),
-                                                     android.os.Bundle.EMPTY
-                                                 )
-                                             } else {
-                                                 player.seekToNext()
-                                                 if (player.playbackState == Player.STATE_IDLE) {
-                                                     player.prepare()
-                                                     player.play()
-                                                 }
-                                             }
-                                         },
+                                         onClick = { onSkipNext() },
                                          modifier = Modifier.size(54.dp)
                                      ) {
                                          Icon(
@@ -1282,7 +1317,7 @@ fun PlayerScreen(
                  verticalAlignment = Alignment.CenterVertically
              ) {
                  // 1. Lyrics Icon
-                 IconButton(onClick = { showLyrics = !showLyrics }) {
+                 IconButton(onClick = { setLyricsVisible(!showLyrics) }) {
                      Icon(
                          imageVector = Icons.Rounded.ChatBubbleOutline,
                          contentDescription = "Letras",

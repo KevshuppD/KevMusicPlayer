@@ -1881,6 +1881,57 @@ fun SystemSettingsSection(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
 
+                // 2. Remember Lyrics Open State Toggle
+                var rememberLyricsOpen by remember { mutableStateOf(settingsPrefs.getBoolean("remember_lyrics_open", true)) }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.ChatBubbleOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(14.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Recordar Estado de Letras", "Remember Lyrics View State"),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Mantiene la pantalla de letras activa al cambiar de canción, bloquear o reabrir la app",
+                                "Keeps lyrics screen active when changing songs, locking screen or reopening the app"
+                            ),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+
+                    Switch(
+                        checked = rememberLyricsOpen,
+                        onCheckedChange = { checked ->
+                            rememberLyricsOpen = checked
+                            settingsPrefs.edit().putBoolean("remember_lyrics_open", checked).apply()
+                        }
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+
                 // 2. Telemetry Switch
                 var telemetryEnabled by remember { mutableStateOf(com.kevshupp.kevmusicplayer.data.TelemetryLogger.isEnabled(context)) }
                 var showTelemetryDialog by remember { mutableStateOf(false) }

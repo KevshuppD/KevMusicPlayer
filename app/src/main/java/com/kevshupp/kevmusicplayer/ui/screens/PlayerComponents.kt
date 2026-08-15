@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.sp
 import android.net.Uri
 import com.kevshupp.kevmusicplayer.R
 import com.kevshupp.kevmusicplayer.data.LyricLine
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 
 private val audioFileInfoCache = android.util.LruCache<String, Pair<String, String>>(150)
 
@@ -207,6 +209,8 @@ fun ScrollingLyricsView(
     isSearchingOnline: Boolean,
     isInstrumental: Boolean = false,
     onMarkInstrumentalClick: () -> Unit = {},
+    onSwipeLeft: () -> Unit = {},
+    onSwipeRight: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val listState = remember(songTitle + songArtist) { LazyListState() }
@@ -231,11 +235,29 @@ fun ScrollingLyricsView(
         }
     }
 
+    var totalDragX by remember { mutableFloatStateOf(0f) }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(32.dp))
-            .background(Color.Black.copy(alpha = 0.75f)),
+            .background(Color.Black.copy(alpha = 0.75f))
+            .pointerInput(songTitle + songArtist) {
+                detectHorizontalDragGestures(
+                    onDragStart = { totalDragX = 0f },
+                    onDragEnd = {
+                        if (totalDragX < -90f) {
+                            onSwipeLeft()
+                        } else if (totalDragX > 90f) {
+                            onSwipeRight()
+                        }
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDragX += dragAmount
+                    }
+                )
+            },
         contentAlignment = Alignment.Center
     ) {
         if (lyricLines.isEmpty()) {
@@ -364,7 +386,7 @@ fun ScrollingLyricsView(
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        if (translatedText != null) {
+                        if (translatedText != null && !translatedText.trim().equals(line.text.trim(), ignoreCase = true)) {
                             Text(
                                 text = translatedText,
                                 style = MaterialTheme.typography.bodyLarge,

@@ -443,15 +443,20 @@ fun LibraryScreen(
                     )
 
                     val showLocateButtonMain = activeTab == "Songs" && scrollTargetIndex != -1
+                    val disableAnims = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
                     AnimatedVisibility(
                         visible = showLocateButtonMain,
-                        enter = expandHorizontally() + fadeIn(),
-                        exit = shrinkHorizontally() + fadeOut()
+                        enter = if (disableAnims) EnterTransition.None else (expandHorizontally() + fadeIn()),
+                        exit = if (disableAnims) ExitTransition.None else (shrinkHorizontally() + fadeOut())
                     ) {
                         IconButton(
                             onClick = {
                                 coroutineScope.launch {
-                                    songsListState.animateScrollToItem(scrollTargetIndex)
+                                    if (disableAnims) {
+                                        songsListState.scrollToItem(scrollTargetIndex)
+                                    } else {
+                                        songsListState.animateScrollToItem(scrollTargetIndex)
+                                    }
                                 }
                             },
                             colors = IconButtonDefaults.iconButtonColors(
@@ -1216,10 +1221,15 @@ fun LibraryScreen(
                                                 .padding(horizontal = 16.dp, vertical = 4.dp),
                                             contentAlignment = Alignment.CenterEnd
                                         ) {
+                                            val disableAnims = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
                                             IconButton(
                                                 onClick = {
                                                     coroutineScope.launch {
-                                                        subViewSongsListState.animateScrollToItem(scrollTargetIndex)
+                                                        if (disableAnims) {
+                                                            subViewSongsListState.scrollToItem(scrollTargetIndex)
+                                                        } else {
+                                                            subViewSongsListState.animateScrollToItem(scrollTargetIndex)
+                                                        }
                                                     }
                                                 },
                                                 colors = IconButtonDefaults.iconButtonColors(
@@ -1852,7 +1862,26 @@ fun LibraryScreen(
         visible = showInsights,
         onDismiss = { showInsights = false },
         audioFiles = audioFiles,
-        getLocalized = getLocalized
+        getLocalized = getLocalized,
+        onPlaySongs = { songs, startIndex ->
+            val first = songs.getOrNull(startIndex) ?: songs.firstOrNull()
+            if (first != null) {
+                onFileClick(first, songs)
+            }
+        },
+        onCreatePlaylist = { name, songs ->
+            if (viewModel != null) {
+                viewModel.createPlaylist(name)
+                songs.forEach { s ->
+                    viewModel.addSongToPlaylist(name, s.id)
+                }
+                android.widget.Toast.makeText(
+                    context,
+                    getLocalized("Playlist '$name' creada", "Playlist '$name' created"),
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
     )
 
 }

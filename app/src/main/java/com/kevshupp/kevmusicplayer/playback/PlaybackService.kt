@@ -1117,18 +1117,7 @@ class PlaybackService : MediaLibraryService() {
                                 try {
                                     org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
                                 } catch (t: Throwable) {}
-                                val audioFile = if (file.extension.lowercase() in listOf("m4a", "mp4")) {
-                                    try {
-                                        val reader = SafeMp4FileReader()
-                                        val readAudio = reader.read(file)
-                                        readAudio.setExt(file.extension.lowercase())
-                                        readAudio
-                                    } catch (e: Exception) {
-                                        org.jaudiotagger.audio.AudioFileIO.read(file)
-                                    }
-                                } else {
-                                    org.jaudiotagger.audio.AudioFileIO.read(file)
-                                }
+                                val audioFile = safeReadAudioFile(file)
                                 val tag = audioFile.tag
                                 if (tag != null) {
                                     var gainStr = tag.getFirst("REPLAYGAIN_TRACK_GAIN")

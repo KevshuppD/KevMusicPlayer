@@ -706,7 +706,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                 if (!path.isNullOrBlank()) {
                                     val f = File(path)
                                     if (f.exists() && f.isFile) {
-                                        val audioFile = org.jaudiotagger.audio.AudioFileIO.read(f)
+                                        val audioFile = safeReadAudioFile(f)
                                         val tag = audioFile.tag
                                         if (tag != null) {
                                             val t = tag.getFirst(org.jaudiotagger.tag.FieldKey.TITLE)
@@ -754,7 +754,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                 if (!path.isNullOrBlank()) {
                                     val f = File(path)
                                     if (f.exists() && f.isFile) {
-                                        val audioFile = org.jaudiotagger.audio.AudioFileIO.read(f)
+                                        val audioFile = safeReadAudioFile(f)
                                         val tag = audioFile.tag
                                         if (tag != null) {
                                             val t = tag.getFirst(org.jaudiotagger.tag.FieldKey.TITLE)
@@ -1223,6 +1223,20 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     settingsJson.put("normalize_sound", settingsPrefs.getBoolean("normalize_sound", false))
                     settingsJson.put("crossfade_duration", settingsPrefs.getInt("crossfade_duration", 0))
                     settingsJson.put("show_visualizer", settingsPrefs.getBoolean("show_visualizer", true))
+                    settingsJson.put("haptic_feedback_enabled", settingsPrefs.getBoolean("haptic_feedback_enabled", true))
+                    settingsJson.put("song_image_rounded", settingsPrefs.getBoolean("song_image_rounded", true))
+                    settingsJson.put("performance_profile", settingsPrefs.getString("performance_profile", "max"))
+                    settingsJson.put("preload_art_count", settingsPrefs.getInt("preload_art_count", 5))
+                    settingsJson.put("cover_cache_capacity", settingsPrefs.getInt("cover_cache_capacity", 150))
+                    settingsJson.put("art_resolution", settingsPrefs.getInt("art_resolution", 500))
+                    settingsJson.put("disk_cache_quality", settingsPrefs.getInt("disk_cache_quality", 85))
+                    settingsJson.put("lazy_replay_gain", settingsPrefs.getBoolean("lazy_replay_gain", true))
+                    settingsJson.put("ipc_queue_limit", settingsPrefs.getInt("ipc_queue_limit", 1500))
+                    settingsJson.put("auto_clean_temp", settingsPrefs.getBoolean("auto_clean_temp", true))
+                    settingsJson.put("auto_backup_interval", settingsPrefs.getString("auto_backup_interval", "off"))
+                    settingsJson.put("use_same_folder_for_backup", settingsPrefs.getBoolean("use_same_folder_for_backup", false))
+                    settingsJson.put("auto_search_lyrics", settingsPrefs.getBoolean("auto_search_lyrics", false))
+                    settingsJson.put("remember_lyrics_open", settingsPrefs.getBoolean("remember_lyrics_open", true))
                     
                     json.put("settings", settingsJson)
                 }
@@ -1315,6 +1329,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         songJson.put("duration", entity.duration)
                         songJson.put("playCount", entity.playCount)
                         songJson.put("lastPlayed", entity.lastPlayed)
+                        songJson.put("dateAdded", entity.dateAdded)
                         if (entity.replayGain != null) {
                             songJson.put("replayGain", entity.replayGain.toDouble())
                         }
@@ -1475,6 +1490,20 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     if (settingsJson.has("normalize_sound")) edit.putBoolean("normalize_sound", settingsJson.getBoolean("normalize_sound"))
                     if (settingsJson.has("crossfade_duration")) edit.putInt("crossfade_duration", settingsJson.getInt("crossfade_duration"))
                     if (settingsJson.has("show_visualizer")) edit.putBoolean("show_visualizer", settingsJson.getBoolean("show_visualizer"))
+                    if (settingsJson.has("haptic_feedback_enabled")) edit.putBoolean("haptic_feedback_enabled", settingsJson.getBoolean("haptic_feedback_enabled"))
+                    if (settingsJson.has("song_image_rounded")) edit.putBoolean("song_image_rounded", settingsJson.getBoolean("song_image_rounded"))
+                    if (settingsJson.has("performance_profile")) edit.putString("performance_profile", settingsJson.getString("performance_profile"))
+                    if (settingsJson.has("preload_art_count")) edit.putInt("preload_art_count", settingsJson.getInt("preload_art_count"))
+                    if (settingsJson.has("cover_cache_capacity")) edit.putInt("cover_cache_capacity", settingsJson.getInt("cover_cache_capacity"))
+                    if (settingsJson.has("art_resolution")) edit.putInt("art_resolution", settingsJson.getInt("art_resolution"))
+                    if (settingsJson.has("disk_cache_quality")) edit.putInt("disk_cache_quality", settingsJson.getInt("disk_cache_quality"))
+                    if (settingsJson.has("lazy_replay_gain")) edit.putBoolean("lazy_replay_gain", settingsJson.getBoolean("lazy_replay_gain"))
+                    if (settingsJson.has("ipc_queue_limit")) edit.putInt("ipc_queue_limit", settingsJson.getInt("ipc_queue_limit"))
+                    if (settingsJson.has("auto_clean_temp")) edit.putBoolean("auto_clean_temp", settingsJson.getBoolean("auto_clean_temp"))
+                    if (settingsJson.has("auto_backup_interval")) edit.putString("auto_backup_interval", settingsJson.getString("auto_backup_interval"))
+                    if (settingsJson.has("use_same_folder_for_backup")) edit.putBoolean("use_same_folder_for_backup", settingsJson.getBoolean("use_same_folder_for_backup"))
+                    if (settingsJson.has("auto_search_lyrics")) edit.putBoolean("auto_search_lyrics", settingsJson.getBoolean("auto_search_lyrics"))
+                    if (settingsJson.has("remember_lyrics_open")) edit.putBoolean("remember_lyrics_open", settingsJson.getBoolean("remember_lyrics_open"))
                     
                     edit.apply()
 
@@ -1605,6 +1634,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                 }
                                 if (songJson.has("album") && !songJson.isNull("album")) {
                                     updated = updated.copy(album = songJson.getString("album"))
+                                }
+                                if (songJson.has("dateAdded")) {
+                                    updated = updated.copy(dateAdded = songJson.getLong("dateAdded"))
                                 }
                                 songsToUpdate.add(updated)
                             }
@@ -1901,7 +1933,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             // Try to read AlbumArtist first from physical tags (keeps collaborations grouped)
                             var albumArtist: String? = null
                             try {
-                                val audioFile = org.jaudiotagger.audio.AudioFileIO.read(oldFile)
+                                val audioFile = safeReadAudioFile(oldFile)
                                 val tag = audioFile.tag
                                 if (tag != null) {
                                     val aa = tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM_ARTIST)
@@ -3410,7 +3442,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                 // Extract track number if available in tags
                                 var trackPrefix = ""
                                 try {
-                                    val audioFile = AudioFileIO.read(oldFile)
+                                    val audioFile = safeReadAudioFile(oldFile)
                                     val tag = audioFile.tag
                                     val rawTrack = tag?.getFirst(FieldKey.TRACK)?.trim() ?: ""
                                     if (rawTrack.isNotEmpty()) {
@@ -4094,7 +4126,7 @@ fun readLocalLrcOrEmbedded(context: android.content.Context, song: AudioFile): S
         if (!physicalPath.isNullOrBlank()) {
             val f = File(physicalPath)
             if (f.exists() && f.isFile) {
-                val audioFile = AudioFileIO.read(f)
+                val audioFile = safeReadAudioFile(f)
                 val tag = audioFile.tag
                 if (tag != null) {
                     val embeddedLyrics = tag.getFirst(FieldKey.LYRICS)
@@ -4131,7 +4163,7 @@ fun readLocalTranslatedLrcOrEmbedded(context: android.content.Context, song: Aud
         if (!physicalPath.isNullOrBlank()) {
             val f = File(physicalPath)
             if (f.exists() && f.isFile) {
-                val audioFile = AudioFileIO.read(f)
+                val audioFile = safeReadAudioFile(f)
                 val tag = audioFile.tag
                 if (tag != null) {
                     val embedded = tag.getFirst(FieldKey.CUSTOM1)
@@ -4214,11 +4246,60 @@ fun createJaudiotaggerArtwork(coverBytes: ByteArray): org.jaudiotagger.tag.image
 class SafeMp4FileReader : org.jaudiotagger.audio.mp4.Mp4FileReader() {
     override fun getEncodingInfo(path: java.nio.file.Path): org.jaudiotagger.audio.generic.GenericAudioHeader {
         return try {
-            super.getEncodingInfo(path)
+            val header = super.getEncodingInfo(path)
+            header.apply {
+                try {
+                    setChannelNumber(2)
+                } catch (t: Throwable) {
+                    // ignore
+                }
+            }
         } catch (e: Throwable) {
-            android.util.Log.w("SafeMp4FileReader", "Caught error in getEncodingInfo for MP4/M4A, returning empty audio header", e)
-            org.jaudiotagger.audio.generic.GenericAudioHeader()
+            android.util.Log.w("SafeMp4FileReader", "Caught error in getEncodingInfo for MP4/M4A, returning safe audio header", e)
+            org.jaudiotagger.audio.generic.GenericAudioHeader().apply {
+                try { setChannelNumber(2) } catch (t: Throwable) {}
+                try { setSamplingRate(44100) } catch (t: Throwable) {}
+                try { setBitRate(256) } catch (t: Throwable) {}
+                try { setPreciseLength(0.0) } catch (t: Throwable) {}
+            }
         }
+    }
+
+    override fun getTag(path: java.nio.file.Path): org.jaudiotagger.tag.Tag {
+        return try {
+            super.getTag(path)
+        } catch (e: Throwable) {
+            android.util.Log.w("SafeMp4FileReader", "Caught error in getTag for MP4/M4A, returning empty Mp4Tag", e)
+            org.jaudiotagger.tag.mp4.Mp4Tag()
+        }
+    }
+}
+
+fun safeReadAudioFile(file: File): org.jaudiotagger.audio.AudioFile {
+    val ext = file.extension.lowercase()
+    return if (ext in listOf("m4a", "mp4")) {
+        try {
+            val af = SafeMp4FileReader().read(file)
+            af.setExt(ext)
+            af
+        } catch (e: Throwable) {
+            try {
+                AudioFileIO.read(file)
+            } catch (e2: Throwable) {
+                org.jaudiotagger.audio.AudioFile(
+                    file,
+                    org.jaudiotagger.audio.generic.GenericAudioHeader().apply {
+                        try { setChannelNumber(2) } catch (t: Throwable) {}
+                        try { setSamplingRate(44100) } catch (t: Throwable) {}
+                        try { setBitRate(256) } catch (t: Throwable) {}
+                        try { setPreciseLength(0.0) } catch (t: Throwable) {}
+                    },
+                    org.jaudiotagger.tag.mp4.Mp4Tag()
+                ).apply { setExt(ext) }
+            }
+        }
+    } else {
+        AudioFileIO.read(file)
     }
 }
 
@@ -4462,18 +4543,7 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
         } catch (t: Throwable) {
             android.util.Log.e("MetadataWrite", "Failed to set jaudiotagger android mode", t)
         }
-        val audioFile = if (tempFile.extension.lowercase() in listOf("m4a", "mp4")) {
-            try {
-                val file = SafeMp4FileReader().read(tempFile)
-                file.setExt(tempFile.extension.lowercase())
-                file
-            } catch (e: Exception) {
-                android.util.Log.e("MetadataWrite", "SafeMp4FileReader failed, falling back to AudioFileIO", e)
-                AudioFileIO.read(tempFile)
-            }
-        } else {
-            AudioFileIO.read(tempFile)
-        }
+        val audioFile = safeReadAudioFile(tempFile)
         block(audioFile)
         AudioFileIO.write(audioFile)
         android.util.Log.d("MetadataWrite", "Successfully wrote tags to temp file.")
