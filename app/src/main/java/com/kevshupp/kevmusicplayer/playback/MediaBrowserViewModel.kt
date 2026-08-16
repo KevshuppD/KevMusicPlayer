@@ -192,6 +192,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     val requestedTab = mutableStateOf<String?>(null)
     val requestedSubViewType = mutableStateOf<String?>(null)
     val requestedSubViewName = mutableStateOf<String?>(null)
+    val returnToHomeScreenOnDetailBack = mutableStateOf(false)
 
     val isDownloadingAllLyrics = mutableStateOf(false)
     val isDeletingAllLyrics = mutableStateOf(false)

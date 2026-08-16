@@ -51,8 +51,8 @@ graph TD
   - *LoudnessEnhancer:* Normalizador de volumen por hardware.
 - **Normalización ReplayGain:** Lee perezosamente las etiquetas físicas (`REPLAYGAIN_TRACK_GAIN`, `REPLAYGAIN_ALBUM_GAIN`) en `Dispatchers.IO`, calcula la escala y ajusta el volumen del canal de ExoPlayer.
 - **Fundido Cruzado (Crossfade):** Transición suave por software que desvanece de manera gradual el volumen (Fade Out / Fade In) al cambiar de pista.
-- **Modo Aleatorio Verdadero:** Sincroniza la interfaz con `player.shuffleModeEnabled = true` en ExoPlayer.
-- **Recuperación Automática de Errores en Cola:** `onPlayerError` muestra un emergente (Toast) e intenta saltar automáticamente a la siguiente pista de la cola.
+- **Recuperación Automática de Errores y Estabilidad Bluetooth (`onAudioSinkError` / `onPlayerError`):** Si ocurre un fallo transitorio de AudioTrack o búfer de Bluetooth (desincronización A2DP, underrun o cambio de ruta), el servicio realiza una auto-recuperación suave (`prepare() + seekTo + play()`) en lugar de congelar el reproductor. Si el error persiste, avanza automáticamente a la siguiente pista.
+- **Enrutamiento y Efectos Seguros en Bluetooth:** `triggerAudioEffectsRecreation` reaplica la configuración sin destruir ni recrear en caliente los efectos nativos durante streaming continuo, evitando bloqueos (deadlocks) en `AudioFlinger`. `audioFocusChangeListener` conserva el nivel calculado por `ReplayGain` tras recuperar el foco.
 
 ### C. Sistema de Creación de Playlists e Interfaz Intuitiva ([LibraryComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryComponents.kt))
 - **Chips de Sugerencia de Nombre:** Permite elegir nombres predeterminados de 1 toque (`🚗 En el Auto`, `💪 Gimnasio`, `🎉 Fiesta`, `🎧 Chill`, `✈️ Viaje`, `❤️ Favoritas`, `⚡ Noche`).
@@ -111,8 +111,9 @@ graph TD
 - Descarga el APK con barra de progreso y lanza el instalador mediante `FileProvider`.
 
 ### K. Sistema de Imágenes de Artistas ([ArtistImageHelper.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/ArtistImageHelper.kt))
-- Descarga retratos de perfil en alta resolución desde la API pública de Deezer y los almacena localmente en `artist_images/`.
-- Permite la selección manual de imágenes de artista por parte del usuario desde su galería.
+- **Limpieza de Nombres y Filtro Anti-Genéricos (`cleanArtistSearchName`):** Limpia sufijos (`feat.`, `ft.`, `&`, `x`, `vs`) y omite automáticamente nombres genéricos (`Unknown`, `Various Artists`, `Soundtrack`, `Audio`, `WhatsApp`, etc.).
+- **Coincidencia Estricta en Deezer:** Valida que el nombre devuelto por la API de Deezer coincida realmente con el artista antes de descargar la imagen, evitando asignar imágenes de artistas no relacionados.
+- **Gestión Directa en Detalle de Artista:** Menú desplegable en la vista de detalle del artista para elegir imagen desde la galería, buscar en línea o eliminar la foto para volver al avatar por defecto.
 
 ### L. Búsqueda Universal y Normalización Acentuada (`stripAccents()`)
 - Extensión `fun String.stripAccents(): String` (normalización NFD de Unicode).
@@ -123,11 +124,12 @@ graph TD
 - **Respuesta Háptica:** Emite vibración táctil (`TextHandleMove`) al cambiar de letra durante el arrastre vertical.
 - **Burbuja Flotante:** Muestra una burbuja flotante retroiluminada en el color primario del tema con la letra en tamaño 28.sp ExtraBold. Integrada en las pestañas de **Canciones** y **Artistas**.
 
-### N. Rediseño Completo de la Interfaz del Reproductor ([PlayerScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/PlayerScreen.kt))
+### N. Rediseño Completo de la Interfaz del Reproductor y Cola ([PlayerScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/PlayerScreen.kt))
 - **Fila de Controles Principal:** Reordenada exactamente a `[Repetición]` | `[Anterior]` | `[Botón Circular Play/Pausa]` | `[Siguiente]` | `[Aleatorio]`.
 - **Barra de Acciones Inferior (5 Iconos):** `[Letras]`, `[Favoritos/Like]`, `[Temporizador de Sueño (Luna)]`, `[Cola de Reproducción]` y `[3 Puntos (Más Opciones)]`.
-- **Información de Formato de Audio Centrada:** Muestra `MP3 · 320 kb/s · 44.1 kHz` de forma limpia bajo el deslizador de progreso.
-- **Hoja de Opciones Estructurada (`showMoreOptions`):** Despliega las 12 opciones completas con separadores (Ecualizador, Guardar cola, Limpiar cola, Ir al álbum, Ir al artista, Ver artista del álbum, Ir a la carpeta, Agregar a playlist, Editar información, Editar letras, Detalles y Compartir).
+- **Hoja de Opciones Estructurada (`showMoreOptions`):** Despliega las 11 opciones completas con separadores (Guardar cola, Limpiar cola, Ir al álbum, Ir al artista, Ver artista del álbum, Ir a la carpeta, Agregar a playlist, Editar información, Editar letras, Detalles y Compartir).
+- **Cola de Reproducción Neo-Glow (`showQueueSheet`):** ModalBottomSheet oscuro (`0xFF0D0F18`) con cabecera premium (badge de conteo de canciones y botón limpiar estilizado), tarjetas con portada real de cada canción, borde iluminado con badge `EN REPRODUCCIÓN` para la pista activa, duración y botón para remover pistas.
+- **Navegación Retorno a Inicio:** `returnToHomeScreenOnDetailBack` asegura que al abrir Favoritos o listas desde Inicio, al presionar atrás en la UI o gesto del sistema se regrese fluidamente a la pantalla de Inicio.
 - **Actualización Reactiva Instantánea de Favoritos (`isFavorite`):** Claves de memorización en Compose vinculadas a `viewModel?.playlists?.get("Favoritos")` para cambiar el corazón a rojo inmediatamente al presionar me gusta.
 - **Carrusel y Transiciones Suaves:** `scrollToPage` directo en `HorizontalPager` para evitar saltos tipo ruleta y `Crossfade` en carátulas para eliminar parpadeos.
 

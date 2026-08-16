@@ -48,17 +48,33 @@ class PlaybackService : MediaLibraryService() {
         val isCallActive = audioManager.mode == AudioManager.MODE_IN_CALL || 
                            audioManager.mode == AudioManager.MODE_IN_COMMUNICATION
                            
+        val focusChangeStr = when (focusChange) {
+            AudioManager.AUDIOFOCUS_GAIN -> "AUDIOFOCUS_GAIN"
+            AudioManager.AUDIOFOCUS_LOSS -> "AUDIOFOCUS_LOSS"
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> "AUDIOFOCUS_LOSS_TRANSIENT (isCallActive=$isCallActive)"
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> "AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK"
+            else -> "UNKNOWN ($focusChange)"
+        }
+        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+            this@PlaybackService,
+            "Playback_AudioFocus",
+            "AudioFocus change: $focusChangeStr, isPlaying: ${player.isPlaying}, playWhenReady: ${player.playWhenReady}, pos: ${player.currentPosition}"
+        )
+
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
                 if (playOnFocusGain) {
                     player.play()
                     playOnFocusGain = false
                 }
-                player.volume = 1.0f
+                if (!isFadingIn) {
+                    player.volume = currentReplayGainFactor
+                }
             }
             AudioManager.AUDIOFOCUS_LOSS -> {
                 player.pause()
                 playOnFocusGain = false
+                abandonAudioFocus()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 if (isCallActive) {
@@ -67,12 +83,12 @@ class PlaybackService : MediaLibraryService() {
                         player.pause()
                     }
                 } else {
-                    // Duck instead of pausing on transient focus losses like Instagram or notifications
-                    player.volume = 0.2f
+                    // Duck instead of pausing on transient focus losses like notifications
+                    player.volume = 0.2f * currentReplayGainFactor
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                player.volume = 0.2f
+                player.volume = 0.2f * currentReplayGainFactor
             }
         }
     }
@@ -121,7 +137,31 @@ class PlaybackService : MediaLibraryService() {
         val powerManager = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
         wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "KevMusicPlayer:PlaybackWakeLock")
         
-        val player = ExoPlayer.Builder(this)
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                30_000,  // minBufferMs (30s)
+                90_000,  // maxBufferMs (90s)
+                2_000,   // bufferForPlaybackMs (2.0s)
+                4_000    // bufferForPlaybackAfterRebufferMs (4.0s)
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
+        val renderersFactory = object : androidx.media3.exoplayer.DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: android.content.Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): androidx.media3.exoplayer.audio.AudioSink {
+                return androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .build()
+            }
+        }.setEnableAudioTrackPlaybackParams(true)
+
+        val player = ExoPlayer.Builder(this, renderersFactory)
+            .setLoadControl(loadControl)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -138,6 +178,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         startFadeCheckLoop(player)
+        startPlaybackWatchdogLoop(player)
         val eqPrefs = getSharedPreferences("equalizer_prefs", android.content.Context.MODE_PRIVATE)
         eqPrefs.registerOnSharedPreferenceChangeListener(eqPrefsListener)
         val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
@@ -195,13 +236,12 @@ class PlaybackService : MediaLibraryService() {
                     requestAudioFocus()
                     try {
                         if (wakeLock?.isHeld == false) {
-                            wakeLock?.acquire()
+                            wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24h safeguard limit
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
                 } else {
-                    abandonAudioFocus()
                     try {
                         if (wakeLock?.isHeld == true) {
                             wakeLock?.release()
@@ -214,7 +254,35 @@ class PlaybackService : MediaLibraryService() {
             }
 
             override fun onPlaybackStateChanged(state: Int) {
+                val stateStr = when (state) {
+                    Player.STATE_IDLE -> "STATE_IDLE"
+                    Player.STATE_BUFFERING -> "STATE_BUFFERING"
+                    Player.STATE_READY -> "STATE_READY"
+                    Player.STATE_ENDED -> "STATE_ENDED"
+                    else -> "UNKNOWN ($state)"
+                }
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    this@PlaybackService,
+                    "Playback_StateChanged",
+                    "Playback state -> $stateStr | isPlaying=${player.isPlaying}, playWhenReady=${player.playWhenReady}, suppressionReason=${player.playbackSuppressionReason}, pos=${player.currentPosition}"
+                )
                 savePlaybackState(player)
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                val reasonStr = when (reason) {
+                    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "USER_REQUEST"
+                    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "AUDIO_FOCUS_LOSS"
+                    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "AUDIO_BECOMING_NOISY"
+                    Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "REMOTE"
+                    Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "END_OF_MEDIA_ITEM"
+                    else -> "REASON_$reason"
+                }
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    this@PlaybackService,
+                    "Playback_PlayWhenReady",
+                    "playWhenReady -> $playWhenReady (reason: $reasonStr) | isPlaying=${player.isPlaying}, pos=${player.currentPosition}"
+                )
             }
 
             override fun onPositionDiscontinuity(
@@ -222,6 +290,20 @@ class PlaybackService : MediaLibraryService() {
                 newPosition: Player.PositionInfo,
                 reason: Int
             ) {
+                val reasonStr = when (reason) {
+                    Player.DISCONTINUITY_REASON_AUTO_TRANSITION -> "AUTO_TRANSITION"
+                    Player.DISCONTINUITY_REASON_SEEK -> "SEEK"
+                    Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT -> "SEEK_ADJUSTMENT"
+                    Player.DISCONTINUITY_REASON_SKIP -> "SKIP"
+                    Player.DISCONTINUITY_REASON_REMOVE -> "REMOVE"
+                    Player.DISCONTINUITY_REASON_INTERNAL -> "INTERNAL"
+                    else -> "REASON_$reason"
+                }
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    this@PlaybackService,
+                    "Playback_Discontinuity",
+                    "Position discontinuity ($reasonStr): from ${oldPosition.positionMs}ms to ${newPosition.positionMs}ms"
+                )
                 savePlaybackState(player)
             }
 
@@ -261,6 +343,23 @@ class PlaybackService : MediaLibraryService() {
                 }
 
                 serviceScope.launch(Dispatchers.Main) {
+                    // Check if error is an AudioTrack / AudioSink glitch that can be softly recovered
+                    val isAudioSinkIssue = error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
+                            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
+
+                    if (isAudioSinkIssue) {
+                        try {
+                            val currentPos = player.currentPosition
+                            player.prepare()
+                            player.seekTo(currentPos)
+                            player.play()
+                            return@launch
+                        } catch (e: Exception) {
+                            android.util.Log.w("PlaybackService", "Soft recovery failed, skipping to next track: ${e.message}")
+                        }
+                    }
+
                     android.widget.Toast.makeText(this@PlaybackService, msg, android.widget.Toast.LENGTH_LONG).show()
                     if (player.hasNextMediaItem()) {
                         player.seekToNextMediaItem()
@@ -280,9 +379,23 @@ class PlaybackService : MediaLibraryService() {
                 com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
                     this@PlaybackService,
                     "Playback_AudioSinkError",
-                    "AudioSink rendering error: ${audioSinkError.localizedMessage}",
+                    "AudioSink rendering error: ${audioSinkError.localizedMessage}. Attempting soft recovery...",
                     audioSinkError
                 )
+
+                // Soft auto-recovery from Bluetooth AudioTrack stall or buffer glitch
+                serviceScope.launch(Dispatchers.Main) {
+                    try {
+                        if (player.isPlaying || player.playWhenReady) {
+                            val currentPos = player.currentPosition
+                            player.prepare()
+                            player.seekTo(currentPos)
+                            player.play()
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("PlaybackService", "Failed AudioSink auto-recovery: ${e.message}")
+                    }
+                }
             }
 
             override fun onAudioCodecError(
@@ -303,12 +416,29 @@ class PlaybackService : MediaLibraryService() {
                 bufferSizeMs: Long,
                 elapsedSinceLastFeedMs: Long
             ) {
-                if (bufferSizeMs > 500) {
-                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                    this@PlaybackService,
+                    "Playback_AudioUnderrun",
+                    "Audio underrun detected: bufferSize=$bufferSize, bufferSizeMs=$bufferSizeMs, elapsedSinceLastFeedMs=$elapsedSinceLastFeedMs"
+                )
+                // If elapsed time since last feed is significantly higher than buffer size and player is active,
+                // the hardware sink has starved and frozen. Automatically soft-recover the audio pipeline.
+                if (elapsedSinceLastFeedMs > bufferSizeMs + 250L && player.isPlaying) {
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logWarn(
                         this@PlaybackService,
                         "Playback_AudioUnderrun",
-                        "High audio underrun detected: bufferSize=$bufferSize, bufferSizeMs=$bufferSizeMs, elapsedSinceLastFeedMs=$elapsedSinceLastFeedMs"
+                        "AudioSink starved ($elapsedSinceLastFeedMs ms elapsed > $bufferSizeMs ms buffer). Auto-recovering ExoPlayer pipeline..."
                     )
+                    serviceScope.launch {
+                        try {
+                            val currentPos = player.currentPosition
+                            player.seekTo(currentPos)
+                            player.prepare()
+                            player.play()
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
                 }
             }
         }
@@ -874,10 +1004,22 @@ class PlaybackService : MediaLibraryService() {
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+            val devNames = addedDevices?.map { "${it.productName ?: "Device"} (type=${it.type})" }?.joinToString(", ") ?: "none"
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                this@PlaybackService,
+                "Playback_AudioDevice",
+                "Audio devices added: $devNames"
+            )
             triggerAudioEffectsRecreation()
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+            val devNames = removedDevices?.map { "${it.productName ?: "Device"} (type=${it.type})" }?.joinToString(", ") ?: "none"
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                this@PlaybackService,
+                "Playback_AudioDevice",
+                "Audio devices removed: $devNames"
+            )
             triggerAudioEffectsRecreation()
         }
     }
@@ -886,8 +1028,8 @@ class PlaybackService : MediaLibraryService() {
         val player = mediaLibrarySession?.player as? ExoPlayer
         val sessionId = player?.audioSessionId ?: 0
         if (sessionId != 0) {
-            android.util.Log.d("PlaybackService", "Audio routing changed. Recreating audio effects for session: $sessionId")
-            currentAudioSessionId = 0
+            android.util.Log.d("PlaybackService", "Audio routing changed for session: $sessionId")
+            // Reapply existing effects configuration safely without forcing destruct-recreate
             setupAudioEffects(sessionId)
         }
     }
@@ -1054,11 +1196,12 @@ class PlaybackService : MediaLibraryService() {
                     }
                     loudnessEnhancer?.enabled = true
                     try {
-                        loudnessEnhancer?.setTargetGain(800)
+                        // Use safe 250 mB (+2.5 dB) gain to prevent digital clipping and Bluetooth A2DP buffer stalls
+                        loudnessEnhancer?.setTargetGain(250)
                         com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
                             this,
                             "AudioEffects_Loudness",
-                            "LoudnessEnhancer ${if (isNew) "created" else "updated"}: targetGain=800, session=$audioSessionId"
+                            "LoudnessEnhancer ${if (isNew) "created" else "updated"}: targetGain=250, session=$audioSessionId"
                         )
                     } catch (e: Exception) {
                         e.printStackTrace()
@@ -1210,13 +1353,8 @@ class PlaybackService : MediaLibraryService() {
                 
                 val crossfadeSeconds = playbackPrefs.getInt("crossfade_duration", 0)
                 if (crossfadeSeconds <= 0) {
-                    if (player.volume != currentReplayGainFactor && !isFadingIn) {
+                    if (kotlin.math.abs(player.volume - currentReplayGainFactor) > 0.02f && !isFadingIn) {
                         player.volume = currentReplayGainFactor
-                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
-                            this@PlaybackService,
-                            "Playback_Volume",
-                            "Crossfade disabled. Set volume to currentReplayGainFactor: $currentReplayGainFactor"
-                        )
                     }
                     continue
                 }
@@ -1244,15 +1382,54 @@ class PlaybackService : MediaLibraryService() {
                             fadeNewTrackIn(player, crossfadeMs)
                         }
                     } else {
-                        if (player.volume != currentReplayGainFactor && !isFadingIn) {
+                        if (kotlin.math.abs(player.volume - currentReplayGainFactor) > 0.02f && !isFadingIn) {
                             player.volume = currentReplayGainFactor
-                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
-                                this@PlaybackService,
-                                "Playback_Volume",
-                                "Reset volume to currentReplayGainFactor: $currentReplayGainFactor (not in crossfade zone)"
-                            )
                         }
                     }
+                }
+            }
+        }
+    }
+
+    private var watchdogJob: kotlinx.coroutines.Job? = null
+
+    private fun startPlaybackWatchdogLoop(player: ExoPlayer) {
+        watchdogJob?.cancel()
+        watchdogJob = serviceScope.launch {
+            var lastRecordedPos = -1L
+            var stalledTicks = 0
+
+            while (true) {
+                kotlinx.coroutines.delay(2000)
+                try {
+                    if (player.isPlaying && player.playWhenReady && player.playbackState == Player.STATE_READY) {
+                        val currentPos = player.currentPosition
+                        val duration = player.duration
+                        // Detect if playback position is frozen while player reports isPlaying=true (Bluetooth sink stall)
+                        if (currentPos == lastRecordedPos && (duration <= 0 || currentPos < duration - 1500L)) {
+                            stalledTicks++
+                            if (stalledTicks >= 2) { // 4 seconds without progress while isPlaying is true
+                                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logWarn(
+                                    this@PlaybackService,
+                                    "Playback_Watchdog",
+                                    "Detected stalled playback clock at ${currentPos}ms (AudioTrack silent buffer stall). Auto-recovering ExoPlayer pipeline..."
+                                )
+                                stalledTicks = 0
+                                lastRecordedPos = -1L
+                                player.seekTo(currentPos)
+                                player.prepare()
+                                player.play()
+                            }
+                        } else {
+                            stalledTicks = 0
+                            lastRecordedPos = currentPos
+                        }
+                    } else {
+                        stalledTicks = 0
+                        lastRecordedPos = -1L
+                    }
+                } catch (e: Exception) {
+                    // Ignore watchdog loop exceptions
                 }
             }
         }

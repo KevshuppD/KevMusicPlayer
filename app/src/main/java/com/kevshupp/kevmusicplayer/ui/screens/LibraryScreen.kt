@@ -122,6 +122,7 @@ fun LibraryScreen(
 
     val context = LocalContext.current
     val systemLang = remember { context.resources.configuration.locales[0].language }
+    val isEs = systemLang == "es"
     val getLocalized = { es: String, en: String ->
         if (systemLang == "es") es else en
     }
@@ -144,11 +145,15 @@ fun LibraryScreen(
             currentSubView = subViewHistory.removeAt(subViewHistory.size - 1)
         } else {
             currentSubView = null
+            if (viewModel?.returnToHomeScreenOnDetailBack?.value == true) {
+                viewModel.returnToHomeScreenOnDetailBack.value = false
+                onNavigateToHome()
+            }
         }
     }
 
-    // Intercept system back gestures to exit active subview details, clear search queries, or exit multi-select first
-    BackHandler(enabled = isActive && (isMultiSelectMode || searchQuery.isNotEmpty() || currentSubView != null || showInsights)) {
+    // Intercept system back gestures to exit active subview details, clear search queries, exit multi-select, or return to Home
+    BackHandler(enabled = isActive && (isMultiSelectMode || searchQuery.isNotEmpty() || currentSubView != null || showInsights || viewModel?.returnToHomeScreenOnDetailBack?.value == true)) {
         if (isMultiSelectMode) {
             isMultiSelectMode = false
             selectedSongs.clear()
@@ -156,8 +161,11 @@ fun LibraryScreen(
             searchQuery = ""
         } else if (showInsights) {
             showInsights = false
-        } else {
+        } else if (currentSubView != null) {
             navigateBack()
+        } else if (viewModel?.returnToHomeScreenOnDetailBack?.value == true) {
+            viewModel.returnToHomeScreenOnDetailBack.value = false
+            onNavigateToHome()
         }
     }
 
@@ -895,12 +903,66 @@ fun LibraryScreen(
                                 )
                             }
                         } else if (subView is SubView.ArtistDetail) {
-                            IconButton(onClick = { artistImagePickerLauncher.launch("image/*") }) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Edit,
-                                    contentDescription = "Edit Artist Cover",
-                                    tint = MaterialTheme.colorScheme.onBackground
-                                )
+                            var showArtistMenu by remember { mutableStateOf(false) }
+                            val coroutineScope = rememberCoroutineScope()
+
+                            Box {
+                                IconButton(onClick = { showArtistMenu = true }) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Edit,
+                                        contentDescription = "Edit Artist Cover",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showArtistMenu,
+                                    onDismissRequest = { showArtistMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (isEs) "Elegir de la galería" else "Choose from gallery") },
+                                        leadingIcon = {
+                                            Icon(Icons.Rounded.Image, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        },
+                                        onClick = {
+                                            showArtistMenu = false
+                                            artistImagePickerLauncher.launch("image/*")
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(if (isEs) "Buscar foto en línea" else "Search photo online") },
+                                        leadingIcon = {
+                                            Icon(Icons.Rounded.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        },
+                                        onClick = {
+                                            showArtistMenu = false
+                                            coroutineScope.launch {
+                                                val file = com.kevshupp.kevmusicplayer.data.ArtistImageHelper.downloadArtistImage(context, subView.artistName, force = true)
+                                                if (file != null && file.exists()) {
+                                                    android.widget.Toast.makeText(context, if (isEs) "Foto actualizada" else "Photo updated", android.widget.Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    android.widget.Toast.makeText(context, if (isEs) "No se encontró foto coincidente" else "No matching photo found", android.widget.Toast.LENGTH_SHORT).show()
+                                                }
+                                                val temp = currentSubView
+                                                currentSubView = null
+                                                currentSubView = temp
+                                            }
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(if (isEs) "Eliminar foto" else "Remove photo", color = MaterialTheme.colorScheme.error) },
+                                        leadingIcon = {
+                                            Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                        },
+                                        onClick = {
+                                            showArtistMenu = false
+                                            com.kevshupp.kevmusicplayer.data.ArtistImageHelper.deleteArtistImage(context, subView.artistName)
+                                            android.widget.Toast.makeText(context, if (isEs) "Foto eliminada" else "Photo removed", android.widget.Toast.LENGTH_SHORT).show()
+                                            val temp = currentSubView
+                                            currentSubView = null
+                                            currentSubView = temp
+                                        }
+                                    )
+                                }
                             }
                         }
                     }

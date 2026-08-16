@@ -10,10 +10,11 @@ import java.util.Locale
 
 object TelemetryLogger {
     private const val LOG_FILE_NAME = "telemetry_errors.log"
+    private const val MAX_LOG_SIZE_BYTES = 250 * 1024L // 250 KB max
 
     fun isEnabled(context: Context): Boolean {
         val prefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
-        return prefs.getBoolean("telemetry_enabled", false)
+        return prefs.getBoolean("telemetry_enabled", true) // Default to true for diagnostics
     }
 
     fun setEnabled(context: Context, enabled: Boolean) {
@@ -35,35 +36,46 @@ object TelemetryLogger {
         }
     }
 
-    fun logError(context: Context, category: String, message: String, throwable: Throwable? = null) {
-        android.util.Log.e("TelemetryLogger", "[$category] $message", throwable)
-        if (!isEnabled(context)) return
+    @Synchronized
+    private fun appendToFile(context: Context, text: String) {
         try {
             val file = File(context.filesDir, LOG_FILE_NAME)
-            val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-            val timestamp = sdf.format(Date())
-            
-            val logLine = StringBuilder()
-            logLine.append("[$timestamp] [$category] [ERROR] $message\n")
-            if (throwable != null) {
-                var current: Throwable? = throwable
-                while (current != null) {
-                    if (current != throwable) {
-                        logLine.append("  Caused by: ${current.javaClass.name}: ${current.message}\n")
-                    } else {
-                        logLine.append("  Exception: ${current.javaClass.name}: ${current.message}\n")
-                    }
-                    val stackTrace = current.stackTrace.take(15).joinToString("\n") { "    at ${it.className}.${it.methodName}(${it.fileName}:${it.lineNumber})" }
-                    logLine.append("$stackTrace\n")
-                    current = current.cause
-                }
+            if (file.exists() && file.length() > MAX_LOG_SIZE_BYTES) {
+                // Trim older logs, keep newest half
+                val existing = file.readText()
+                val lines = existing.lines()
+                val keptLines = lines.takeLast(lines.size / 2).joinToString("\n")
+                file.writeText(keptLines + "\n")
             }
-            logLine.append("\n")
-            
-            file.appendText(logLine.toString())
+            file.appendText(text)
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    fun logError(context: Context, category: String, message: String, throwable: Throwable? = null) {
+        android.util.Log.e("TelemetryLogger", "[$category] $message", throwable)
+        if (!isEnabled(context)) return
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+        val timestamp = sdf.format(Date())
+        
+        val logLine = StringBuilder()
+        logLine.append("[$timestamp] [$category] [ERROR] $message\n")
+        if (throwable != null) {
+            var current: Throwable? = throwable
+            while (current != null) {
+                if (current != throwable) {
+                    logLine.append("  Caused by: ${current.javaClass.name}: ${current.message}\n")
+                } else {
+                    logLine.append("  Exception: ${current.javaClass.name}: ${current.message}\n")
+                }
+                val stackTrace = current.stackTrace.take(15).joinToString("\n") { "    at ${it.className}.${it.methodName}(${it.fileName}:${it.lineNumber})" }
+                logLine.append("$stackTrace\n")
+                current = current.cause
+            }
+        }
+        logLine.append("\n")
+        appendToFile(context, logLine.toString())
     }
 
     fun logInfo(category: String, message: String) {
@@ -76,6 +88,26 @@ object TelemetryLogger {
 
     fun logInfo(context: Context, category: String, message: String) {
         android.util.Log.i("TelemetryLogger", "[$category] $message")
+        if (!isEnabled(context)) return
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+        val timestamp = sdf.format(Date())
+        appendToFile(context, "[$timestamp] [$category] [INFO] $message\n")
+    }
+
+    fun logWarn(category: String, message: String) {
+        try {
+            logWarn(KevMusicPlayerApplication.instance, category, message)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun logWarn(context: Context, category: String, message: String) {
+        android.util.Log.w("TelemetryLogger", "[$category] $message")
+        if (!isEnabled(context)) return
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+        val timestamp = sdf.format(Date())
+        appendToFile(context, "[$timestamp] [$category] [WARN] $message\n")
     }
 
     fun getLogs(context: Context): String {

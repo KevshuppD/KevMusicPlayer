@@ -242,6 +242,7 @@ fun HomeScreen(
                                     viewModel.requestedTab.value = "Playlists"
                                     viewModel.requestedSubViewType.value = "Playlist"
                                     viewModel.requestedSubViewName.value = "Favoritos"
+                                    viewModel.returnToHomeScreenOnDetailBack.value = true
                                     onNavigateToLibrary()
                                 }
                             },
@@ -262,6 +263,7 @@ fun HomeScreen(
                                     viewModel.requestedTab.value = "Songs"
                                     viewModel.requestedSubViewType.value = "History"
                                     viewModel.requestedSubViewName.value = "History"
+                                    viewModel.returnToHomeScreenOnDetailBack.value = true
                                     onNavigateToLibrary()
                                 }
                             },
@@ -276,6 +278,7 @@ fun HomeScreen(
                                      viewModel.requestedTab.value = "Songs"
                                      viewModel.requestedSubViewType.value = "RecentlyAdded"
                                      viewModel.requestedSubViewName.value = "RecentlyAdded"
+                                     viewModel.returnToHomeScreenOnDetailBack.value = true
                                      onNavigateToLibrary()
                                  }
                              },
