@@ -3,6 +3,7 @@ package com.kevshupp.kevmusicplayer.data
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -10,9 +11,15 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.URLEncoder
 import java.text.Normalizer
+import java.util.concurrent.TimeUnit
 
 object ArtistImageHelper {
-    private val client = OkHttpClient()
+    private val connectionPool = ConnectionPool(5, 5, TimeUnit.MINUTES)
+    private val client = OkHttpClient.Builder()
+        .connectionPool(connectionPool)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
     private val downloadingArtists = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val failedArtists = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 

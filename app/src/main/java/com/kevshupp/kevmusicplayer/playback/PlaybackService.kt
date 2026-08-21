@@ -77,14 +77,9 @@ class PlaybackService : MediaLibraryService() {
                 abandonAudioFocus()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                if (isCallActive) {
-                    if (player.isPlaying) {
-                        playOnFocusGain = true
-                        player.pause()
-                    }
-                } else {
-                    // Duck instead of pausing on transient focus losses like notifications
-                    player.volume = 0.2f * currentReplayGainFactor
+                if (player.isPlaying) {
+                    playOnFocusGain = true
+                    player.pause()
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
@@ -421,15 +416,15 @@ class PlaybackService : MediaLibraryService() {
                     "Playback_AudioUnderrun",
                     "Audio underrun detected: bufferSize=$bufferSize, bufferSizeMs=$bufferSizeMs, elapsedSinceLastFeedMs=$elapsedSinceLastFeedMs"
                 )
-                // If elapsed time since last feed is significantly higher than buffer size and player is active,
-                // the hardware sink has starved and frozen. Automatically soft-recover the audio pipeline.
-                if (elapsedSinceLastFeedMs > bufferSizeMs + 250L && player.isPlaying) {
+                // If elapsed time since last feed indicates the hardware sink has starved or frozen while playing,
+                // automatically soft-recover the audio pipeline immediately instead of leaving it in silence.
+                if ((elapsedSinceLastFeedMs > bufferSizeMs + 100L || elapsedSinceLastFeedMs > 1500L) && (player.isPlaying || player.playWhenReady)) {
                     com.kevshupp.kevmusicplayer.data.TelemetryLogger.logWarn(
                         this@PlaybackService,
                         "Playback_AudioUnderrun",
                         "AudioSink starved ($elapsedSinceLastFeedMs ms elapsed > $bufferSizeMs ms buffer). Auto-recovering ExoPlayer pipeline..."
                     )
-                    serviceScope.launch {
+                    serviceScope.launch(Dispatchers.Main) {
                         try {
                             val currentPos = player.currentPosition
                             player.seekTo(currentPos)

@@ -153,11 +153,21 @@ graph TD
 ## 3. Esquema y Definición de Datos (Room Database)
 
 La tabla `audio_files` actúa como el repositorio centralizado de la aplicación.
-La base de datos actual se define en **Versión 9** ([AppDatabase.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/AppDatabase.kt)) e implementa migración destructiva automática.
+La base de datos actual se define en **Versión 10** ([AppDatabase.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/AppDatabase.kt)) e implementa migración destructiva automática.
 
 ```kotlin
+@Immutable
 @Serializable
-@Entity(tableName = "audio_files")
+@Entity(
+    tableName = "audio_files",
+    indices = [
+        Index(value = ["artist"]),
+        Index(value = ["album"]),
+        Index(value = ["folderPath"]),
+        Index(value = ["playCount"]),
+        Index(value = ["title"])
+    ]
+)
 data class AudioFile(
     @PrimaryKey val id: Long,
     val title: String,
@@ -193,29 +203,37 @@ data class AudioFile(
    - Para evitar `TransactionTooLargeException` en IPC con Media3, se limita la cola interna a un máximo de **1500 canciones** en memoria y se utiliza paginación (`getAudioFilesPaged`).
 3. **Consistencia de Portadas:**
    - Las carátulas de listas manuales se persisten en el directorio de caché interno de la app.
-4. **Optimización de Recomposiciones (`derivedStateOf`):**
+4. **Optimización de Recomposiciones (`derivedStateOf` & `@Immutable`):**
    - Uso de `derivedStateOf` con delegación `by` en listas filtradas, ordenamientos y Pager para evitar recalculos redundantes durante scrolls a 120Hz.
-5. **Caché en Memoria RAM (`albumArtCache`):**
+   - Modelo `AudioFile` anotado con `@Immutable` para habilitar *Smart Skipping* en Compose y evitar recomposiciones masivas durante la reproducción.
+5. **Reciclaje Eficiente de Nodos Compose (`contentType`):**
+   - Implementación de `contentType` en todos los `LazyColumn` principales (`SongListView`, `ScrollingLyricsView`, cola de reproducción en `PlayerScreen`), permitiendo a Compose reutilizar los componentes de UI reciclados sin recalcular su jerarquía en desplazamientos rápidos.
+6. **Optimización de Conexiones HTTP (`ConnectionPool`):**
+   - `LyricsRepository` y `ArtistImageHelper` utilizan pools de conexiones HTTP compartidos (`ConnectionPool(5, 5, TimeUnit.MINUTES)`) con timeouts acotados de 15s para descargas concurrentes de letras e imágenes sin saturar sockets ni agotar descriptores de archivo.
+7. **Índices de Base de Datos Room:**
+   - Índices secundarios en `artist`, `album`, `folderPath`, `playCount` y `title` para consultas y agregaciones instantáneas en bibliotecas grandes (> 3.000 canciones).
+8. **Caché en Memoria RAM (`albumArtCache`):**
    - `albumArtCache` almacena objetos `Bitmap` ya re-muestreados a un tamaño máximo (250p, 500p u 800p), evitando fugas OOM y parpadeos.
-6. **Bypass de Caché y Extracción Física Directa:**
+9. **Bypass de Caché y Extracción Física Directa:**
    - `rememberAlbumArt` y `preloadAlbumArt` extraen la carátula desde la ruta física absoluta de la canción con `MediaMetadataRetriever.setDataSource(physicalPath)` y archivos de carpeta (`cover.jpg` / `folder.jpg`) para omitir cachés obsoletas de MediaStore.
-7. **Precarga en Segundo Plano (`preloadUpcomingArtwork`):**
-   - Precarga asíncronamente las próximas $N$ canciones de la cola en `albumArtCache` para que las carátulas se dibujen al instante al cambiar de pista.
-8. **Aceleración de Compilación en Gradle y R8:**
-   - [gradle.properties](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/gradle.properties) configurado con `-Xmx6144m -XX:+UseParallelGC -Dcom.android.tools.r8.maxNumberOfThreads=8`, compilación incremental Kotlin/KSP y AGP `nonTransitiveRClass`.
-   - Desactivado `lintVital` en `app/build.gradle.kts` (`checkReleaseBuilds = false`, `abortOnError = false`) y regla `-dontoptimize` en `app/proguard-rules.pro`, reduciendo los tiempos de `installRelease` y `assembleRelease` de 5-7 minutos a **8-15 segundos**.
-9. **Eliminación del Warning AWT en KSP CLI:**
-   - `-Djava.awt.headless=true` configurado en `org.gradle.jvmargs` elimina por completo la traza de advertencia headless de AWT en builds desde terminal.
-10. **Perfiles de Rendimiento Predeterminados ([SettingsComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/SettingsComponents.kt)):**
+10. **Precarga en Segundo Plano (`preloadUpcomingArtwork`):**
+    - Precarga asíncronamente las próximas $N$ canciones de la cola en `albumArtCache` para que las carátulas se dibujen al instante al cambiar de pista.
+11. **Aceleración de Compilación en Gradle y R8:**
+    - [gradle.properties](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/gradle.properties) configurado con `-Xmx6144m -XX:+UseParallelGC -Dcom.android.tools.r8.maxNumberOfThreads=8`, compilación incremental Kotlin/KSP y AGP `nonTransitiveRClass`.
+    - Desactivado `lintVital` en `app/build.gradle.kts` (`checkReleaseBuilds = false`, `abortOnError = false`) y regla `-dontoptimize` en `app/proguard-rules.pro`, reduciendo los tiempos de `installRelease` y `assembleRelease` de 5-7 minutos a **8-15 segundos**.
+12. **Eliminación del Warning AWT en KSP CLI:**
+    - `-Djava.awt.headless=true` configurado en `org.gradle.jvmargs` elimina por completo la traza de advertencia headless de AWT en builds desde terminal.
+13. **Perfiles de Rendimiento Predeterminados ([SettingsComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/SettingsComponents.kt)):**
     - `⚡ Máximo Rendimiento`: Fuerza 120Hz, compresión WebP rápida 70%, buffer IPC 500 y deshabilita vibraciones hápticas para 0 lag.
     - `⚖️ Equilibrado`: Tasa a 120Hz, compresión WebP estándar al 85% y vibraciones activas.
     - `🔋 Ahorro de Batería`: Tasa fijada a 60Hz, minimiza lecturas I/O y deshabilita animaciones.
     - `⚙️ Personalizado`: Permite ajustar manualmente cada parámetro de memoria, caché y gráficos.
-11. **Renderizado Nativo Directo de Portadas (Subcomposición 0 ms):**
+14. **Renderizado Nativo Directo de Portadas (Subcomposición 0 ms):**
     - Se reemplazó `SubcomposeAsyncImage` por `Image(bitmap = artBytes.asImageBitmap())` en `SongItem` y `HomeSongCard` cuando el bitmap está cargado en memoria, eliminando las pasadas de medición secundarias de Compose y garantizando desplazamientos (scroll) suaves a 60/120 FPS.
-12. **Desactivación de Auto-Backup en Manifiesto:**
+15. **Desactivación de Auto-Backup en Manifiesto:**
     - Configurado `android:allowBackup="false"` en [AndroidManifest.xml](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/AndroidManifest.xml) para evitar que Google Cloud Backup o Android Backup restauren bases de datos o preferencias obsoletas automáticamente tras una reinstalación.
-13. **Limpieza Completa mediante ADB (`pm clear`):**
+16. **Limpieza Completa mediante ADB (`pm clear`):**
+    - Script [conectar_adb.sh](file:///home/kevin/Escritorio/sh/conectar_adb.sh) ejecuta `adb shell pm clear com.kevshupp.kevmusicplayer` en las opciones `[c]` (Reinstalación limpia) y `[l]` (Limpiar datos) para asegurar la destrucción total de bases de datos SQLite, cachés y preferencias locales.ante ADB (`pm clear`):**
     - Script [conectar_adb.sh](file:///home/kevin/Escritorio/sh/conectar_adb.sh) ejecuta `adb shell pm clear com.kevshupp.kevmusicplayer` en las opciones `[c]` (Reinstalación limpia) y `[l]` (Limpiar datos) para asegurar la destrucción total de bases de datos SQLite, cachés y preferencias locales.
 
 ---

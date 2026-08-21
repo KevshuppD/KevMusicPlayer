@@ -1,12 +1,24 @@
 package com.kevshupp.kevmusicplayer.data
 
 import android.net.Uri
+import androidx.compose.runtime.Immutable
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
 
+@Immutable
 @Serializable
-@Entity(tableName = "audio_files")
+@Entity(
+    tableName = "audio_files",
+    indices = [
+        Index(value = ["artist"]),
+        Index(value = ["album"]),
+        Index(value = ["folderPath"]),
+        Index(value = ["playCount"]),
+        Index(value = ["title"])
+    ]
+)
 data class AudioFile(
     @PrimaryKey val id: Long,
     val title: String,

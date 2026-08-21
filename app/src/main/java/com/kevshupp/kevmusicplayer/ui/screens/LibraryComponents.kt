@@ -129,7 +129,11 @@ fun SongListView(
             if (headerContent != null) {
                 headerContent()
             }
-            itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
+            itemsIndexed(
+                items = songs,
+                key = { _, song -> song.id },
+                contentType = { _, _ -> "song_item" }
+            ) { index, song ->
                 val isSelected = selectedSongs.contains(song)
                 
                 val currentSong by rememberUpdatedState(song)

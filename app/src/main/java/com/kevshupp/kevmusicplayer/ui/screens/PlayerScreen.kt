@@ -2064,7 +2064,11 @@ fun PlayerScreen(
                                 .fillMaxWidth()
                                 .heightIn(max = 480.dp)
                         ) {
-                            itemsIndexed(queueSongs, key = { index, song -> "${song.id}_$index" }) { index, song ->
+                            itemsIndexed(
+                                items = queueSongs,
+                                key = { index, song -> "${song.id}_$index" },
+                                contentType = { _, _ -> "queue_song_item" }
+                            ) { index, song ->
                                 val isCurrent = playerState.currentSong?.mediaId == song.id.toString()
                                 val songArtBytes = rememberAlbumArt(song.uriString)
 

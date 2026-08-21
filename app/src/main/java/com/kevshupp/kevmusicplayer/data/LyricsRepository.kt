@@ -2,6 +2,7 @@ package com.kevshupp.kevmusicplayer.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -27,10 +28,13 @@ data class LrcLibSearchResult(
 )
 
 object LyricsRepository {
+    private val connectionPool = ConnectionPool(5, 5, TimeUnit.MINUTES)
+    
     private val client = OkHttpClient.Builder()
-        .connectTimeout(25, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
-        .writeTimeout(25, TimeUnit.SECONDS)
+        .connectionPool(connectionPool)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val original = chain.request()
             val request = original.newBuilder()
