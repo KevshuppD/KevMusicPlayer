@@ -47,6 +47,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import com.kevshupp.kevmusicplayer.R
+import com.kevshupp.kevmusicplayer.ui.screens.settings.*
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,6 +118,7 @@ fun SettingsScreen(
     var showFolderList by remember { mutableStateOf(false) }
     var showDuplicateFinder by remember { mutableStateOf(false) }
     var showIntegrityChecker by remember { mutableStateOf(false) }
+    var showShortSongsFinder by remember { mutableStateOf(false) }
     val deviceFolders = remember { viewModel.getAllDeviceFolders(context) }
     var excludedFolders by remember { mutableStateOf(viewModel.getExcludedFolders()) }
 
@@ -523,7 +525,8 @@ fun SettingsScreen(
                                 excludedFolders = excludedFolders,
                                 setExcludedFolders = { excludedFolders = it },
                                 onFindDuplicates = { showDuplicateFinder = true },
-                                onCheckIntegrity = { showIntegrityChecker = true }
+                                onCheckIntegrity = { showIntegrityChecker = true },
+                                onFindShortSongs = { showShortSongsFinder = true }
                             )
                         }
                         "about" -> {
@@ -550,6 +553,13 @@ fun SettingsScreen(
         SongIntegrityDialog(
             viewModel = viewModel,
             onDismiss = { showIntegrityChecker = false }
+        )
+    }
+
+    if (showShortSongsFinder) {
+        ShortSongsDialog(
+            viewModel = viewModel,
+            onDismiss = { showShortSongsFinder = false }
         )
     }
 }

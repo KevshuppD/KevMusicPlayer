@@ -90,7 +90,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.rememberCoroutineScope
 import android.app.Activity
-import com.kevshupp.kevmusicplayer.ui.screens.getPhysicalPathFromTreeUri
+import com.kevshupp.kevmusicplayer.ui.screens.settings.getPhysicalPathFromTreeUri
 
 class MainActivity : ComponentActivity() {
     private val refreshRateListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->

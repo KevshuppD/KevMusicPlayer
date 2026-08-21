@@ -98,6 +98,13 @@ graph TD
   - *Fase 2 (Metadatos e igual duración):* Asocia por coincidencia de título, artista y variación de duración <= 3s.
 - **Borrado Masivo Sincronizado (`deleteSongs`):** Elimina el archivo en disco (`File.delete()`), borra en `ContentResolver`, remueve de Room y notifica a ExoPlayer.
 
+### G.2. Buscador de Canciones Cortas / Incompletas ([Dialogs.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/Dialogs.kt#L2362-L2605))
+- **Detección Rápida de Descargas Incompletas:** Filtra canciones con duración inusualmente baja mediante umbrales dinámicos seleccionables (`< 30s`, `< 60s`, `< 90s`, `< 120s`).
+- **Gestión y Re-descarga Fácil:**
+  - Muestra duración exacta formateada (`mm:ss`) con badge de advertencia.
+  - Botón individual para copiar el nombre de la canción y artista al portapapeles con 1 toque para buscarla y descargarla de nuevo.
+  - Botón *"Copiar lista"* para exportar el listado completo de nombres/artistas de canciones cortas al portapapeles.
+
 ### H. Telemetría y Registro de Errores ([TelemetryLogger.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/TelemetryLogger.kt))
 - Captura errores de inicialización, excepciones de ExoPlayer (`onPlayerError`), fallos de red en LRCLIB/Deezer, errores de jaudiotagger/TagLib y excepciones no controladas de Corrutinas via `CoroutineExceptionHandler`.
 - Registra eventos en `telemetry_errors.log` dentro de `filesDir`.
@@ -267,8 +274,15 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 │       ├── LibraryComponents.kt  # Componentes de biblioteca y FastScrollSidebar (Burbuja A-Z Neón)
 │       ├── PlayerScreen.kt       # Pantalla de reproducción a pantalla completa, gestos y letras interactivos
 │       ├── PlayerComponents.kt   # Componentes atómicos de la pantalla del reproductor
-│       ├── SettingsScreen.kt     # Ajustes organizados por pestañas (General, Audio, Sistema, Biblioteca, Rendimiento)
-│       ├── SettingsComponents.kt # Componentes dinámicos de los ajustes y selector de carpetas
+│       ├── SettingsScreen.kt     # Ajustes organizados por pestañas (General, Audio, Sistema, Biblioteca, Rendimiento, Acerca de)
+│       ├── settings/             # Submódulos desacoplados de configuración
+│       │   ├── SettingsCommon.kt # Utilidades, colores y controles gráficos (CircularSlider, VerticalFader)
+│       │   ├── GeneralSettingsSection.kt     # Idioma, tema visual, ordenamiento, gestos
+│       │   ├── AudioSettingsSection.kt       # Ecualizador, Bass Boost, Virtualizer, ReplayGain, Crossfade
+│       │   ├── PerformanceSettingsSection.kt # Perfiles 120Hz, FPS, capacidad de caché RAM/disco
+│       │   ├── SystemSettingsSection.kt      # Permisos, widgets, batería, backups y restauraciones
+│       │   ├── LibrarySettingsSection.kt     # Escaneo, carpetas excluidas, duplicados, integridad, canciones cortas
+│       │   └── AboutSettingsSection.kt       # Versión, telemetría, actualizador y créditos
 │       ├── MusicInsightsScreen.kt# Panel de estadísticas e historial de música
 │       └── UniversalSearchOverlay.kt # Búsqueda universal insensible a acentos en tiempo real
 │
@@ -291,6 +305,7 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 
 - **Creación de Releases:** La publicación de nuevas versiones (Releases en GitHub con tags `v*` y APKs de producción) **únicamente debe realizarse cuando el usuario lo solicite de forma explícita en el chat**. Ninguna IA o proceso automatizado debe crear releases o tags por iniciativa propia.
 - **Consistencia de Firma:** Cualquier compilación local o remota de producción debe utilizar la configuración de firmas compartida `release` en Gradle (`app/shared.keystore`), garantizando que el APK conserve la firma del repositorio y sea actualizable.
+- **Modularidad y Tamaño de Archivos (Principio de Responsabilidad Única):** Ningún archivo de componentes o lógica debe acumular miles de líneas (evitar archivos > 1.500-2.000 líneas). Cuando una pantalla o subsistema crezca por encima de ese umbral, debe descomponerse en paquetes modulares temáticos (como se realizó con `ui/screens/settings/` o los Use Cases/Repositories). Esto garantiza compilaciones incrementales ultrarrápidas, legibilidad, prevención de conflictos git y facilidad de pruebas.
 - **Conexión ADB Inalámbrica (Wi-Fi):** Para conectar el dispositivo físico en entornos Linux, se utiliza la función `adb_smart_connect` (Red Local mDNS/Avahi + fallback a Tailscale).
 - **Preservación del Contexto:** Al implementar nuevas funciones, optimizaciones o cambios arquitectónicos significativos, la IA debe documentarlos de forma oportuna en este archivo para guiar a futuras sesiones de trabajo.
 
