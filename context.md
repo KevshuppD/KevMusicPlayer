@@ -266,7 +266,10 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 │   ├── PlaybackService.kt        # MediaLibraryService de Media3 (ExoPlayer, retención en 2º plano, audio focus y FX)
 │   ├── MediaBrowserViewModel.kt  # ViewModel principal de reproducción e IPC
 │   ├── SmartRules.kt             # Modelos de reglas JSON, ConditionNode, GroupNode y expresiones regulares
-│   └── AudioIOHelpers.kt         # Helpers de lectura/escritura física de audio, metadatos ID3/jaudiotagger y portadas
+│   ├── AudioIOHelpers.kt         # Helpers de lectura/escritura física de audio, metadatos ID3/jaudiotagger y portadas
+│   └── managers/                 # Submódulos desacoplados de lógica de negocio
+│       ├── PlaylistManager.kt    # Listas normales e inteligentes, reglas JSON y portadas
+│       └── IntegrityCheckerManager.kt # Verificación física y decodificación de pistas dañadas
 │
 ├── ui/                           # Interfaz de usuario Jetpack Compose
 │   ├── theme/                    # Paleta de colores, tipografías y definición de temas
