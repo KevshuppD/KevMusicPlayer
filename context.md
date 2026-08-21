@@ -297,6 +297,20 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 
 ## 6. Próximos Pasos y Áreas de Mejora
 
+### A. Plan de Modularización de Archivos Extensos (> 1.500 líneas)
+1. **[MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt)** (~3.820 líneas):
+   - *Progreso actual:* Se extrajeron `SmartRules.kt` y `AudioIOHelpers.kt`.
+   - *Pendiente:* Extraer managers autónomos (`BackupManager`, `PlaylistManager`, `LyricsDownloadManager`, `StorageOrganizerManager`, `TagEditorManager`).
+2. **[Dialogs.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/Dialogs.kt)** (~2.600 líneas):
+   - *Propuesta:* Modularizar en el paquete `ui/screens/dialogs/` (`MetadataEditDialog`, `LyricsEditDialog`, `DuplicateFinderDialog`, `SongIntegrityDialog`, `ShortSongsDialog`, `SmartPlaylistRuleDialog`).
+3. **[PlayerScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/PlayerScreen.kt)** (~2.580 líneas):
+   - *Propuesta:* Desacoplar hojas secundarias (`QueueBottomSheet`, `VisualizerOverlay`, `QuickEqOverlay`) en componentes especializados.
+4. **[LibraryComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryComponents.kt)** (~2.430 líneas) y **[LibraryScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryScreen.kt)** (~1.955 líneas):
+   - *Propuesta:* Modularizar por pestañas en `ui/screens/library/` (`SongTabContent`, `AlbumTabContent`, `ArtistTabContent`, `FolderTabContent`, `PlaylistTabContent`).
+5. **[LibrarySettingsSection.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/settings/LibrarySettingsSection.kt)** (~2.180 líneas):
+   - *Propuesta:* Separar herramientas de mantenimiento físico (`FileOrganizerSection`, `FolderScannerSection`, `IntegrityToolsSection`).
+
+### B. Nuevas Funcionalidades
 - **Recortador de Tonos de Llamada (Ringtone Cutter):** Implementar la función nativa para seleccionar un fragmento de una canción y guardarlo como tono de llamada o alarma en el dispositivo.
 - **Validación de TagLib / jaudiotagger en Almacenamientos Secundarios:** Monitorear escrituras físicas de etiquetas en tarjetas SD externas en dispositivos con restricciones estrictas de SAF.
 - **Sincronización de Respaldo Programada:** Integrar exportación periódica automatizada de respaldos JSON a servicios de nube personal.
