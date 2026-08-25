@@ -51,8 +51,13 @@ object LyricsRepository {
             .trim()
     }
 
+    private val parsedLrcCache = android.util.LruCache<String, List<LyricLine>>(100)
+
     fun parseLrc(lrcText: String?): List<LyricLine> {
         if (lrcText.isNullOrBlank()) return emptyList()
+        val cached = parsedLrcCache.get(lrcText)
+        if (cached != null) return cached
+
         val lines = mutableListOf<LyricLine>()
         val pattern = Regex("\\[(\\d+):(\\d+)(?:\\.(\\d+))?]\\s*(.*)")
         lrcText.lines().forEach { rawLine ->
@@ -72,7 +77,9 @@ object LyricsRepository {
                 lines.add(LyricLine(0L, rawLine.trim()))
             }
         }
-        return lines.sortedBy { it.timeMs }
+        val result = lines.sortedBy { it.timeMs }
+        parsedLrcCache.put(lrcText, result)
+        return result
     }
 
     fun isLrcSynced(lrcText: String?): Boolean {

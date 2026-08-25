@@ -221,7 +221,7 @@ fun LibraryScreen(
     }
 
     // Filter audio files by search query
-    val filteredFiles by remember {
+    val filteredFiles by remember(audioFiles, searchQuery, sortBy) {
         derivedStateOf {
             val queryClean = searchQuery.stripAccents().trim()
             val filtered = if (queryClean.isEmpty()) {
@@ -268,7 +268,7 @@ fun LibraryScreen(
 
     // Active song target index calculations for scrolling
     val currentPlayingMediaId = player?.currentMediaItem?.mediaId?.toLongOrNull()
-    val scrollTargetIndex by remember {
+    val scrollTargetIndex by remember(filteredFiles, currentPlayingMediaId, currentSubView, selectedTab, viewModel?.playlists, viewModel?.smartPlaylists) {
         derivedStateOf {
             if (currentPlayingMediaId == null) return@derivedStateOf -1
 
@@ -298,10 +298,10 @@ fun LibraryScreen(
     }
 
     // Grouping
-    val albums by remember { derivedStateOf { filteredFiles.groupBy { it.album } } }
-    val artists by remember { derivedStateOf { filteredFiles.groupBy { it.artist } } }
-    val genres by remember { derivedStateOf { filteredFiles.groupBy { it.genre } } }
-    val folders by remember { derivedStateOf { filteredFiles.groupBy { it.folderName } } }
+    val albums by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.album } } }
+    val artists by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.artist } } }
+    val genres by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.genre } } }
+    val folders by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.folderName } } }
 
     Box(
         modifier = modifier
@@ -570,8 +570,18 @@ fun LibraryScreen(
                                     modifier = Modifier.size(48.dp)
                                 )
                                 Spacer(modifier = Modifier.height(16.dp))
+                                val prefs = androidx.compose.ui.platform.LocalContext.current.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+                                val selectedFolder = prefs.getString("music_folder_path", null)
+                                val folderDisplayName = if (!selectedFolder.isNullOrBlank()) {
+                                    selectedFolder.substringAfterLast("/")
+                                } else null
+
                                 Text(
-                                    text = getLocalized("Buscando música en el dispositivo...", "Scanning device for music..."),
+                                    text = if (folderDisplayName != null) {
+                                        getLocalized("Buscando música en carpeta $folderDisplayName...", "Scanning folder $folderDisplayName...")
+                                    } else {
+                                        getLocalized("Buscando música en la biblioteca...", "Scanning music library...")
+                                    },
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)

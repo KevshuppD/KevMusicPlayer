@@ -56,8 +56,16 @@ import kotlinx.coroutines.withContext
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Backup
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.FolderSpecial
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material3.Card
@@ -766,6 +774,7 @@ fun OnboardingFlow(
                              onSuccess = {
                                  settingsPrefs.edit().putBoolean("is_first_run", false).apply()
                                  android.widget.Toast.makeText(context, "Copia de seguridad restaurada con éxito", android.widget.Toast.LENGTH_LONG).show()
+                                 (context as? android.app.Activity)?.recreate()
                                  onDismiss()
                              },
                              onError = { error ->
@@ -810,305 +819,440 @@ fun OnboardingFlow(
         }
     }
 
+    val scrollState = rememberScrollState()
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
+            .windowInsetsPadding(WindowInsets.systemBars)
     ) {
+        // Ambient background atmospheric glows
         Box(
             modifier = Modifier
-                .size(300.dp)
+                .size(340.dp)
                 .align(Alignment.TopStart)
-                .offset(x = (-100).dp, y = (-50).dp)
+                .offset(x = (-120).dp, y = (-80).dp)
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), Color.Transparent)
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+                            Color.Transparent
+                        )
                     )
                 )
         )
         Box(
             modifier = Modifier
-                .size(300.dp)
+                .size(320.dp)
                 .align(Alignment.BottomEnd)
-                .offset(x = 100.dp, y = 100.dp)
+                .offset(x = 120.dp, y = 80.dp)
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f), Color.Transparent)
+                        colors = listOf(
+                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f),
+                            Color.Transparent
+                        )
                     )
                 )
         )
 
-        Card(
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .wrapContentHeight(),
-            shape = RoundedCornerShape(32.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (selectedTheme == "monochrome") MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
-            ),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 20.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Header: Brand & Progress Step Indicators
             Column(
-                modifier = Modifier
-                    .padding(32.dp)
-                    .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(24.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                if (step == 1) {
-                    Icon(
-                        imageVector = Icons.Rounded.Backup,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(72.dp)
-                    )
-
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MusicNote,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "¡Bienvenido a Kev Music Player!",
-                        fontSize = 24.sp,
+                        text = "KEV MUSIC PLAYER",
+                        fontSize = 16.sp,
                         fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center
+                        letterSpacing = 2.sp,
+                        color = MaterialTheme.colorScheme.onBackground
                     )
+                }
 
-                    Text(
-                        text = "¿Tienes una copia de seguridad previa de tus ajustes y listas de reproducción?",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        textAlign = TextAlign.Center,
-                        lineHeight = 20.sp
-                    )
+                Spacer(modifier = Modifier.height(14.dp))
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Button(
-                        onClick = {
-                            selectBackupFolderLauncher.launch(null)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
+                // Progress Step Dots
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for (i in 1..3) {
+                        val isActive = step == i
+                        val isDone = step > i
+                        val widthAnim by androidx.compose.animation.core.animateDpAsState(
+                            targetValue = if (isActive) 28.dp else 8.dp,
+                            label = "step_dot_width"
                         )
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Rounded.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                "Seleccionar Carpeta de Copia",
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = { step = 2 },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
-                    ) {
-                        Text(
-                            "Omitir y Configurar Biblioteca",
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                    }
-                } else if (step == 2) {
-                    Icon(
-                        imageVector = Icons.Rounded.FolderOpen,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(72.dp)
-                    )
-
-                    Text(
-                        text = "¿Dónde está tu música?",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center
-                    )
-
-                    Text(
-                        text = "Puedes seleccionar una carpeta específica para tu música o permitir que la aplicación escanee todo el dispositivo.",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        textAlign = TextAlign.Center,
-                        lineHeight = 20.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Button(
-                        onClick = {
-                            selectOnboardingMusicFolderLauncher.launch(null)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Rounded.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                "Elegir carpeta específica",
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            settingsPrefs.edit().remove("music_folder_path").apply()
-                            step = 3
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
-                    ) {
-                        Text(
-                            "Escanear todo el dispositivo",
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                    }
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.Palette,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(72.dp)
-                    )
-
-                    Text(
-                        text = "Elige tu Estilo",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center
-                    )
-
-                    Text(
-                        text = "Selecciona un tema de color que se adapte a tu personalidad:",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        textAlign = TextAlign.Center
-                    )
-
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        val themes = listOf(
-                            Triple("cyberpunk", "Cyberpunk Rosa", Brush.horizontalGradient(listOf(Color(0xFF8A2BE2), Color(0xFFFF007F)))),
-                            Triple("cyberpunk_purpura", "Cyberpunk Púrpura", Brush.horizontalGradient(listOf(Color(0xFF0C0514), Color(0xFFD000FF)))),
-                            Triple("petrol", "Azul Petróleo", Brush.horizontalGradient(listOf(Color(0xFF005F73), Color(0xFF0A9396)))),
-                            Triple("turquoise", "Turquesa", Brush.horizontalGradient(listOf(Color(0xFF00F5D4), Color(0xFF00BBF9)))),
-                            Triple("obsidian", "Obsidiana Oscuro", Brush.horizontalGradient(listOf(Color(0xFF1A1A1A), Color(0xFF0A0A0A)))),
-                            Triple("monochrome", "Blanco y Negro", Brush.horizontalGradient(listOf(Color(0xFFFFFFFF), Color(0xFF888888))))
-                        )
-
-                        themes.forEach { (tag, name, previewBrush) ->
-                            val isSelected = selectedTheme == tag
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(if (isSelected) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f) else Color.Transparent)
-                                    .clickable {
-                                        selectedTheme = tag
-                                        settingsPrefs.edit().putString("app_theme", tag).apply()
+                        Box(
+                            modifier = Modifier
+                                .height(6.dp)
+                                .width(widthAnim)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(
+                                    when {
+                                        isActive -> MaterialTheme.colorScheme.primary
+                                        isDone -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
                                     }
-                                    .border(
-                                        width = if (isSelected) 2.dp else 1.dp,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
-                                        shape = RoundedCornerShape(16.dp)
-                                    )
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(previewBrush)
                                 )
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(
-                                    text = name,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        selectedTheme = tag
-                                        settingsPrefs.edit().putString("app_theme", tag).apply()
-                                    },
-                                    colors = RadioButtonDefaults.colors(
-                                        selectedColor = MaterialTheme.colorScheme.primary,
-                                        unselectedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                                    )
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Button(
-                        onClick = {
-                            settingsPrefs.edit().putBoolean("is_first_run", false).apply()
-                            viewModel.scanFiles(isManual = true)
-                            onDismiss()
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    ) {
-                        Text(
-                            "Comenzar",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 16.sp
                         )
                     }
                 }
             }
+
+            // Central Card Container with AnimatedContent transitions
+            androidx.compose.animation.AnimatedContent(
+                targetState = step,
+                transitionSpec = {
+                    (androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { it / 6 }) togetherWith
+                    (androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 6 })
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = "onboarding_step_content"
+            ) { currentStep ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(28.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .padding(22.dp)
+                            .fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        when (currentStep) {
+                            1 -> {
+                                Box(
+                                    modifier = Modifier
+                                        .size(68.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Backup,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(38.dp)
+                                    )
+                                }
+
+                                Text(
+                                    text = "Restaura tu Música",
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Text(
+                                    text = "¿Tienes una copia de seguridad previa de tus ajustes, letras y listas de reproducción?",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = 18.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(2.dp))
+
+                                Button(
+                                    onClick = { selectBackupFolderLauncher.launch(null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(Icons.Rounded.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            "Restaurar Copia de Seguridad",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                }
+
+                                OutlinedButton(
+                                    onClick = { step = 2 },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(50.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
+                                ) {
+                                    Text(
+                                        "Empezar desde Cero",
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                }
+                            }
+
+                            2 -> {
+                                Box(
+                                    modifier = Modifier
+                                        .size(68.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.FolderOpen,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(38.dp)
+                                    )
+                                }
+
+                                Text(
+                                    text = "Ubicación de Música",
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Text(
+                                    text = "Elige si prefieres reproducir una carpeta específica o dejar que escaneemos todo tu dispositivo.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = 18.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(2.dp))
+
+                                Button(
+                                    onClick = { selectOnboardingMusicFolderLauncher.launch(null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(Icons.Rounded.FolderSpecial, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            "Elegir Carpeta Específica",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        settingsPrefs.edit().remove("music_folder_path").apply()
+                                        step = 3
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(50.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
+                                ) {
+                                    Text(
+                                        "Escanear Todo el Dispositivo",
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                }
+                            }
+
+                            3 -> {
+                                Box(
+                                    modifier = Modifier
+                                        .size(60.dp)
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Palette,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(34.dp)
+                                    )
+                                }
+
+                                Text(
+                                    text = "Elige tu Estilo",
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Text(
+                                    text = "Personaliza el aspecto visual del reproductor:",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                                    textAlign = TextAlign.Center
+                                )
+
+                                val themes = listOf(
+                                    Triple("cyberpunk", "Cyberpunk Rosa", Brush.horizontalGradient(listOf(Color(0xFF8A2BE2), Color(0xFFFF007F)))),
+                                    Triple("cyberpunk_purpura", "Cyberpunk Púrpura", Brush.horizontalGradient(listOf(Color(0xFF0C0514), Color(0xFFD000FF)))),
+                                    Triple("petrol", "Azul Petróleo", Brush.horizontalGradient(listOf(Color(0xFF005F73), Color(0xFF0A9396)))),
+                                    Triple("turquoise", "Turquesa", Brush.horizontalGradient(listOf(Color(0xFF00F5D4), Color(0xFF00BBF9)))),
+                                    Triple("obsidian", "Obsidiana", Brush.horizontalGradient(listOf(Color(0xFF1A1A1A), Color(0xFF0A0A0A)))),
+                                    Triple("monochrome", "Blanco y Negro", Brush.horizontalGradient(listOf(Color(0xFFFFFFFF), Color(0xFF888888))))
+                                )
+
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    themes.forEach { (tag, name, previewBrush) ->
+                                        val isSelected = selectedTheme == tag
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(
+                                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                                                )
+                                                .clickable {
+                                                    selectedTheme = tag
+                                                    settingsPrefs.edit().putString("app_theme", tag).apply()
+                                                }
+                                                .border(
+                                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                                                    shape = RoundedCornerShape(14.dp)
+                                                )
+                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(24.dp, 16.dp)
+                                                    .clip(RoundedCornerShape(5.dp))
+                                                    .background(previewBrush)
+                                            )
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Text(
+                                                text = name,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                fontSize = 13.sp,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            RadioButton(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    selectedTheme = tag
+                                                    settingsPrefs.edit().putString("app_theme", tag).apply()
+                                                },
+                                                colors = RadioButtonDefaults.colors(
+                                                    selectedColor = MaterialTheme.colorScheme.primary,
+                                                    unselectedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(2.dp))
+
+                                Button(
+                                    onClick = {
+                                        settingsPrefs.edit().putBoolean("is_first_run", false).apply()
+                                        viewModel.scanFiles(isManual = true)
+                                        onDismiss()
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Text(
+                                            "¡Empezar a Escuchar!",
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 15.sp
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Footer subtle caption
+            Text(
+                text = "Puedes cambiar estas opciones en cualquier momento desde Ajustes",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
         }
     }
 }

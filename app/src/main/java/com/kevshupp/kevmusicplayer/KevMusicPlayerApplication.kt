@@ -1,9 +1,14 @@
 package com.kevshupp.kevmusicplayer
 
 import android.app.Application
+import android.graphics.Bitmap
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.kevshupp.kevmusicplayer.data.TelemetryLogger
 
-class KevMusicPlayerApplication : Application() {
+class KevMusicPlayerApplication : Application(), ImageLoaderFactory {
     companion object {
         lateinit var instance: KevMusicPlayerApplication
             private set
@@ -28,5 +33,26 @@ class KevMusicPlayerApplication : Application() {
             }
             defaultHandler?.uncaughtException(thread, throwable)
         }
+    }
+
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .strongReferencesEnabled(true)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizePercent(0.05)
+                    .build()
+            }
+            .bitmapConfig(Bitmap.Config.HARDWARE)
+            .crossfade(true)
+            .crossfade(200)
+            .respectCacheHeaders(false)
+            .build()
     }
 }

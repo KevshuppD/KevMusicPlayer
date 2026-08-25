@@ -155,6 +155,118 @@ fun AudioSettingsSection(
             }
         }
 
+        // 0.5. Audio Focus & Stability Control
+        Text(
+            text = getLocalized("ESTABILIDAD Y FOCO DE AUDIO", "STABILITY & AUDIO FOCUS"),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(start = 8.dp)
+        )
+
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = settingsCardContainerColor()
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Ignore transient audio focus (anti-cut with Instagram/social apps)
+                var ignoreTransientFocus by remember {
+                    mutableStateOf(settingsPrefs.getBoolean("ignore_transient_audio_focus", true))
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.GraphicEq,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Atenuar con otras apps (Ducking)", "Audio Ducking with Apps"),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = settingsTextColor()
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Evita que la música se pause cuando usas Instagram, TikTok o llegan notificaciones (baja el volumen suavemente)",
+                                "Prevents playback stopping with Instagram, TikTok or notifications (lowers volume smoothly)"
+                            ),
+                            fontSize = 12.sp,
+                            color = settingsTextMutedColor()
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = ignoreTransientFocus,
+                        onCheckedChange = {
+                            ignoreTransientFocus = it
+                            settingsPrefs.edit().putBoolean("ignore_transient_audio_focus", it).apply()
+                        }
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(settingsDividerColor())
+                )
+
+                // Pause on headphone unplug
+                var pauseOnNoisy by remember {
+                    mutableStateOf(settingsPrefs.getBoolean("pause_on_headphone_unplug", true))
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Headphones,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Pausar al desconectar auriculares", "Pause on Disconnect"),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = settingsTextColor()
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Detiene la música al desconectar audífonos o Bluetooth para evitar que suene por el altavoz",
+                                "Pauses playback when disconnecting headphones or Bluetooth to prevent loudspeaker playback"
+                            ),
+                            fontSize = 12.sp,
+                            color = settingsTextMutedColor()
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = pauseOnNoisy,
+                        onCheckedChange = {
+                            pauseOnNoisy = it
+                            settingsPrefs.edit().putBoolean("pause_on_headphone_unplug", it).apply()
+                        }
+                    )
+                }
+            }
+        }
+
         // 1. Crossfade & Gapless Card
         Text(
             text = getLocalized("REPRODUCCIÓN ININTERRUMPIDA", "SEAMLESS PLAYBACK"),

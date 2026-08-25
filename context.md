@@ -43,7 +43,10 @@ graph TD
 - **Protección de Servicio en Segundo Plano (`onTaskRemoved`):** Si la música está activa o pausada con una cola cargada, al deslizar la aplicación desde la lista de aplicaciones recientes de Android, el servicio de primer plano (`MediaLibrarySession`) se mantiene activo en segundo plano vinculado a la notificación, previniendo la destrucción del proceso (al estilo de reproductores como Frolomuse).
 - **Estabilidad en Segundo Plano:** Mantiene un `WakeLock` parcial y `ExoPlayer.setWakeMode(C.WAKE_MODE_LOCAL)` durante la reproducción activa para evitar suspensiones del sistema. `onStartCommand()` retorna `START_STICKY`.
 - **Filtro de Transiciones en Inicio:** El oyente `onMediaItemTransition` ignora la razón `MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED` durante la restauración inicial del reproductor, previniendo la alteración indebida de `lastPlayed` en el inicio en frío.
-- **Control de Auriculares / Ruido:** `.setHandleAudioBecomingNoisy(true)` para pausar automáticamente al desconectar auriculares jack o Bluetooth.
+- **Control de Auriculares / Ruido y Foco de Audio:**
+  - *Audio Ducking inteligente (`ignore_transient_audio_focus = true`):* Cuando otras apps (Instagram, TikTok, mensajes) solicitan el foco de audio transitorio, la música no se corta bruscamente; en su lugar, atenúa suavemente el volumen al 35% y se restablece al terminar.
+  - *Pausa por Desconexión (`pause_on_headphone_unplug`):* Configuración dinámica para pausar automáticamente ante desconexión de audífonos físicos o Bluetooth (`AUDIO_BECOMING_NOISY`), evitando sorpresas por el altavoz pero protegiendo contra cortes no deseados por microdesconexiones si el usuario lo prefiere.
+  - *Prioridad de llamadas:* Si entra una llamada telefónica (`isCallActive = true`), siempre se pausa la reproducción por privacidad.
 - **Ecualizador de Audio Físico:** Configura efectos de hardware nativos sobre el `audioSessionId` activo de ExoPlayer:
   - *Equalizer:* Ecualizador paramétrico de 5 bandas.
   - *Bass Boost:* Amplificación de bajas frecuencias ajustable.
@@ -53,7 +56,7 @@ graph TD
 - **Fundido Cruzado (Crossfade):** Transición suave por software que desvanece de manera gradual el volumen (Fade Out / Fade In) al cambiar de pista.
 - **Búfer Extendido para Estabilidad Bluetooth (`DefaultLoadControl`):** Configura un búfer de reproducción de 30s (min) a 90s (max) con precarga de 2s a 4s antes de iniciar el stream, tolerando retardos de I/O y latencias del stack A2DP.
 - **Auto-Recuperación de Errores e Inanición de Búfer (`onAudioSinkError` / `onAudioUnderrun` / `onPlayerError`):** Si ocurre un fallo transitorio de AudioTrack o un retraso de entrega de datos en Bluetooth (`elapsedSinceLastFeedMs > bufferSizeMs + 250ms`), el servicio realiza una auto-recuperación suave instantánea (`seekTo + prepare() + play()`) para prevenir que el reproductor quede congelado en silencio.
-- **Watchdog de Estancamiento Silencioso (`startPlaybackWatchdogLoop`):** Hilo guardián en segundo plano que detecta si el reloj de reproducción en hardware se congela durante más de 3 segundos mientras `isPlaying = true`, resincronizando de forma transparente el pipeline de ExoPlayer.
+- **Optimización Asíncrona y Desacoplada del Widget Glance (`updateWidgetState`):** La generación de la carátula `current_widget_art.png` se ejecuta 100% en `Dispatchers.IO` reutilizando directamente los bitmaps pre-escalados del caché en memoria (`albumArtCache`) o el cargador optimizado, eliminando extracciones redundantes por `MediaMetadataRetriever` y previniendo retrasos en el hilo del servicio al cambiar de canción rápidamente.
 - **Enrutamiento y Efectos Seguros en Bluetooth:** `triggerAudioEffectsRecreation` reaplica la configuración sin destruir ni recrear en caliente los efectos nativos durante streaming continuo, evitando bloqueos (deadlocks) en `AudioFlinger`. `LoudnessEnhancer` utiliza una ganancia segura de `250 mB` (+2.5 dB) para prevenir clipping digital y saturación del DAC Bluetooth. `audioFocusChangeListener` conserva el nivel calculado por `ReplayGain` tras recuperar el foco.
 
 ### C. Sistema de Creación de Playlists e Interfaz Intuitiva ([LibraryComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryComponents.kt))
@@ -211,13 +214,18 @@ data class AudioFile(
 3. **Consistencia de Portadas:**
    - Las carátulas de listas manuales se persisten en el directorio de caché interno de la app.
 4. **Optimización de Recomposiciones (`derivedStateOf` & `@Immutable`):**
-   - Uso de `derivedStateOf` con delegación `by` en listas filtradas, ordenamientos y Pager para evitar recalculos redundantes durante scrolls a 120Hz.
+   - Uso de `derivedStateOf` con delegación `by` y claves de memorización precisas (`remember(audioFiles, searchQuery, sortBy)`) en listas filtradas, ordenamientos y Pager para evitar recalculos redundantes durante scrolls a 120Hz.
    - Modelo `AudioFile` anotado con `@Immutable` para habilitar *Smart Skipping* en Compose y evitar recomposiciones masivas durante la reproducción.
-5. **Reciclaje Eficiente de Nodos Compose (`contentType`):**
+5. **Reciclaje Eficiente de Nodos Compose (`contentType` & `LazyRow`):**
    - Implementación de `contentType` en todos los `LazyColumn` principales (`SongListView`, `ScrollingLyricsView`, cola de reproducción en `PlayerScreen`), permitiendo a Compose reutilizar los componentes de UI reciclados sin recalcular su jerarquía en desplazamientos rápidos.
-6. **Optimización de Conexiones HTTP (`ConnectionPool`):**
+   - Virtualización horizontal en `HomeScreen` con `LazyRow` en lugar de `Row` + `horizontalScroll`, ahorrando memoria al renderizar exclusivamente las tarjetas visibles en pantalla.
+   - `rememberAlbumArt` totalmente asíncrono y no bloqueante para el hilo principal (Main/UI thread), garantizando 120 FPS estables sin jank ni tirones durante el scroll veloz de listas extensas de canciones.
+6. **Paginación Inteligente con Jetpack Paging 3 ([AudioDao.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/AudioDao.kt) & [MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt)):**
+   - Integración nativa de `PagingSource<Int, AudioFile>` (`getAudioFilesPagingSource()`, `searchAudioFilesPagingSource()`) y flujo `audioFilesPagingFlow` cacheado en `viewModelScope`.
+   - Permite la carga perezosa bajo demanda en bloques configurables (`pageSize = 40`, `prefetchDistance = 20`, `initialLoadSize = 60`), reduciendo el consumo de memoria RAM y el tiempo de arranque en colecciones de decenas de miles de canciones.
+7. **Optimización de Conexiones HTTP (`ConnectionPool`):**
    - `LyricsRepository` y `ArtistImageHelper` utilizan pools de conexiones HTTP compartidos (`ConnectionPool(5, 5, TimeUnit.MINUTES)`) con timeouts acotados de 15s para descargas concurrentes de letras e imágenes sin saturar sockets ni agotar descriptores de archivo.
-7. **Índices de Base de Datos Room:**
+8. **Índices de Base de Datos Room:**
    - Índices secundarios en `artist`, `album`, `folderPath`, `playCount` y `title` para consultas y agregaciones instantáneas en bibliotecas grandes (> 3.000 canciones).
 8. **Caché en Memoria RAM (`albumArtCache`):**
    - `albumArtCache` almacena objetos `Bitmap` ya re-muestreados a un tamaño máximo (250p, 500p u 800p), evitando fugas OOM y parpadeos.

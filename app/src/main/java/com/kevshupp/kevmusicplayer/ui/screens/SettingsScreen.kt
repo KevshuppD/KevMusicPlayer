@@ -171,7 +171,7 @@ fun SettingsScreen(
                         inputStream = inputStream,
                         onSuccess = {
                             android.widget.Toast.makeText(context, getLocalized("Copia de seguridad restaurada con éxito", "Backup restored successfully"), android.widget.Toast.LENGTH_LONG).show()
-                            viewModel.connect()
+                            (context as? android.app.Activity)?.recreate()
                         },
                         onError = { error ->
                             android.widget.Toast.makeText(context, "${getLocalized("Error al restaurar:", "Failed to restore:")} ${error.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()

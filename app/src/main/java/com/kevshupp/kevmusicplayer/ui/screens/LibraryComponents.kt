@@ -961,6 +961,7 @@ private fun decodeSampledBitmap(bytes: ByteArray, reqWidth: Int, reqHeight: Int)
     android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
     options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
     options.inJustDecodeBounds = false
+    options.inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
     return try {
         android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
     } catch (e: OutOfMemoryError) {
@@ -983,6 +984,7 @@ private fun decodeSampledBitmapFromFile(path: String, reqWidth: Int, reqHeight: 
     android.graphics.BitmapFactory.decodeFile(path, options)
     options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
     options.inJustDecodeBounds = false
+    options.inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
     return try {
         android.graphics.BitmapFactory.decodeFile(path, options)
     } catch (e: OutOfMemoryError) {
@@ -1194,7 +1196,7 @@ fun rememberAlbumArt(uriString: String?): android.graphics.Bitmap? {
     val version = albumArtVersion
 
     val initialBitmap = remember(uriString, version) {
-        albumArtCache.get(uriString) ?: loadAlbumArtBitmapSync(context, uriString)
+        albumArtCache.get(uriString)
     }
     var bitmap by remember(uriString, version) { mutableStateOf(initialBitmap) }
 

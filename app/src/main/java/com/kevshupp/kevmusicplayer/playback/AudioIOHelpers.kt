@@ -581,6 +581,9 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
             return false
         }
         
+        val sourceFile = File(physicalPath)
+        val originalSize = if (sourceFile.exists()) sourceFile.length() else 0L
+
         // 2. Open and modify tag in temp file (running in Android mode)
         try {
             org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
@@ -591,8 +594,19 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
         block(audioFile)
         AudioFileIO.write(audioFile)
         android.util.Log.d("MetadataWrite", "Successfully wrote tags to temp file.")
+
+        // Safety Guard: Verify temp file is not empty and hasn't lost audio payload!
+        val tempSize = tempFile.length()
+        if (tempSize < 1024 || (originalSize > 10240 && tempSize < originalSize * 0.4)) {
+            android.util.Log.e("MetadataWrite", "Aborting write! Temp file size ($tempSize) is abnormally small compared to original ($originalSize)")
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context, "MetadataWrite",
+                "Aborted write to avoid corrupting file for songId $songId. OrigSize: $originalSize, TempSize: $tempSize"
+            )
+            return false
+        }
         
-        // 3. Write temp file back to original source
+        // 3. Write temp file back to original source safely
         var writtenDirectly = false
         try {
             val destFile = File(physicalPath)

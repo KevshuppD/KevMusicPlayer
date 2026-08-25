@@ -61,6 +61,9 @@ class PlaybackService : MediaLibraryService() {
             "AudioFocus change: $focusChangeStr, isPlaying: ${player.isPlaying}, playWhenReady: ${player.playWhenReady}, pos: ${player.currentPosition}"
         )
 
+        val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+        val ignoreTransientFocus = settingsPrefs.getBoolean("ignore_transient_audio_focus", true)
+
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
                 if (playOnFocusGain) {
@@ -77,13 +80,30 @@ class PlaybackService : MediaLibraryService() {
                 abandonAudioFocus()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                if (player.isPlaying) {
+                // If call is active, always pause for phone call privacy
+                if (isCallActive) {
+                    if (player.isPlaying) {
+                        playOnFocusGain = true
+                        player.pause()
+                    }
+                } else if (ignoreTransientFocus) {
+                    // Lower volume slightly (ducking) instead of cutting off music completely
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                        this@PlaybackService,
+                        "Playback_AudioFocus",
+                        "Transient focus loss ignored (ducking enabled). Keeping playback alive."
+                    )
+                    player.volume = 0.35f * currentReplayGainFactor
                     playOnFocusGain = true
-                    player.pause()
+                } else {
+                    if (player.isPlaying) {
+                        playOnFocusGain = true
+                        player.pause()
+                    }
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                player.volume = 0.2f * currentReplayGainFactor
+                player.volume = 0.25f * currentReplayGainFactor
             }
         }
     }
@@ -155,6 +175,9 @@ class PlaybackService : MediaLibraryService() {
             }
         }.setEnableAudioTrackPlaybackParams(true)
 
+        val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+        val pauseOnNoisy = settingsPrefs.getBoolean("pause_on_headphone_unplug", true)
+
         val player = ExoPlayer.Builder(this, renderersFactory)
             .setLoadControl(loadControl)
             .setAudioAttributes(
@@ -164,7 +187,7 @@ class PlaybackService : MediaLibraryService() {
                     .build(),
                 false // handle audio focus manually to prevent Instagram/other apps from cutting music
             )
-            .setHandleAudioBecomingNoisy(true) // pause when headphones unplugged
+            .setHandleAudioBecomingNoisy(pauseOnNoisy)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
 
@@ -176,7 +199,6 @@ class PlaybackService : MediaLibraryService() {
         startPlaybackWatchdogLoop(player)
         val eqPrefs = getSharedPreferences("equalizer_prefs", android.content.Context.MODE_PRIVATE)
         eqPrefs.registerOnSharedPreferenceChangeListener(eqPrefsListener)
-        val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
         settingsPrefs.registerOnSharedPreferenceChangeListener(settingsPrefsListener)
 
         playerListener = object : Player.Listener {
@@ -558,100 +580,61 @@ class PlaybackService : MediaLibraryService() {
     private fun updateWidgetState(title: String, artist: String, isPlaying: Boolean, uriString: String? = null) {
         android.util.Log.d("WidgetDebug", "updateWidgetState: title = $title, artist = $artist, isPlaying = $isPlaying, uri = $uriString")
         
-        // Launch on Main dispatcher to ensure high-priority execution, performing file I/O on IO thread
-        serviceScope.launch(Dispatchers.Main) {
-            kotlinx.coroutines.withContext(Dispatchers.IO) {
-                val artFile = java.io.File(cacheDir, "current_widget_art.png")
-                if (uriString != null) {
-                    val retriever = android.media.MediaMetadataRetriever()
-                    var success = false
-                    try {
-                        var picture: ByteArray? = null
-                        
-                        // 1. Try reading directly from absolute physical path
-                        try {
-                            val songId = uriString.substringAfterLast("/").toLongOrNull()
-                            val physicalPath = if (songId != null) getPhysicalPath(this@PlaybackService, songId, uriString) else null
-                            if (!physicalPath.isNullOrBlank()) {
-                                val file = java.io.File(physicalPath)
-                                if (file.exists() && file.isFile) {
-                                    retriever.setDataSource(physicalPath)
-                                    picture = retriever.embeddedPicture
-                                }
-                            }
-                        } catch (e: Exception) {
-                            android.util.Log.w("Widget_Art_Extract", "Failed direct physical path extraction: $uriString", e)
+        // Execute widget state update and art compression completely asynchronously on IO thread
+        serviceScope.launch(Dispatchers.IO) {
+            val artFile = java.io.File(cacheDir, "current_widget_art.png")
+            if (uriString != null) {
+                var success = false
+                try {
+                    // Check global memory cache first to avoid redundant disk I/O and extraction
+                    val cachedBmp = com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.get(uriString)
+                    val targetSize = 200
+                    
+                    if (cachedBmp != null && !cachedBmp.isRecycled) {
+                        val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(cachedBmp, targetSize, targetSize, true)
+                        val tmpFile = java.io.File(cacheDir, "current_widget_art_tmp.png")
+                        java.io.FileOutputStream(tmpFile).use { out ->
+                            scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 85, out)
                         }
-                        
-                        // 2. Fallback to ParcelFileDescriptor method
-                        if (picture == null) {
-                            var pfd: android.os.ParcelFileDescriptor? = null
-                            try {
-                                pfd = contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
-                                if (pfd != null) {
-                                    retriever.setDataSource(pfd.fileDescriptor)
-                                    picture = retriever.embeddedPicture
-                                }
-                            } finally {
-                                try {
-                                    pfd?.close()
-                                } catch (e: Exception) {}
-                            }
+                        if (tmpFile.exists()) {
+                            tmpFile.renameTo(artFile)
                         }
-                        
-                        if (picture != null) {
-                            val opts = android.graphics.BitmapFactory.Options().apply {
-                                inJustDecodeBounds = true
+                        if (scaledBitmap != cachedBmp) {
+                            scaledBitmap.recycle()
+                        }
+                        success = true
+                    } else {
+                        val loadedBmp = com.kevshupp.kevmusicplayer.ui.screens.loadAlbumArtBitmap(this@PlaybackService, uriString)
+                        if (loadedBmp != null && !loadedBmp.isRecycled) {
+                            val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(loadedBmp, targetSize, targetSize, true)
+                            val tmpFile = java.io.File(cacheDir, "current_widget_art_tmp.png")
+                            java.io.FileOutputStream(tmpFile).use { out ->
+                                scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 85, out)
                             }
-                            android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, opts)
-                            
-                            val targetSize = 200
-                            var sampleSize = 1
-                            val largestDim = maxOf(opts.outWidth, opts.outHeight)
-                            if (largestDim > targetSize) {
-                                sampleSize = Math.round(largestDim.toFloat() / targetSize)
+                            if (tmpFile.exists()) {
+                                tmpFile.renameTo(artFile)
                             }
-                            
-                            val decodeOpts = android.graphics.BitmapFactory.Options().apply {
-                                inSampleSize = sampleSize
-                            }
-                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(picture, 0, picture.size, decodeOpts)
-                            if (bitmap != null) {
-                                val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, targetSize, targetSize, true)
-                                val tmpFile = java.io.File(cacheDir, "current_widget_art_tmp.png")
-                                java.io.FileOutputStream(tmpFile).use { out ->
-                                    scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
-                                }
-                                if (tmpFile.exists()) {
-                                    tmpFile.renameTo(artFile)
-                                }
-                                if (scaledBitmap != bitmap) {
-                                    bitmap.recycle()
-                                }
+                            if (scaledBitmap != loadedBmp) {
                                 scaledBitmap.recycle()
-                                success = true
                             }
+                            success = true
                         }
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        e.printStackTrace()
-                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                            this@PlaybackService,
-                            "Widget_Art_Extract",
-                            "Failed to extract art from uri $uriString for widget",
-                            e
-                        )
-                    } finally {
-                        try {
-                            retriever.release()
-                        } catch (e: Exception) {}
                     }
-                    if (!success) {
-                        if (artFile.exists()) artFile.delete()
-                    }
-                } else {
-                    if (artFile.exists()) artFile.delete()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    e.printStackTrace()
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                        this@PlaybackService,
+                        "Widget_Art_Extract",
+                        "Failed to extract art from uri $uriString for widget",
+                        e
+                    )
                 }
+                if (!success && artFile.exists()) {
+                    artFile.delete()
+                }
+            } else {
+                if (artFile.exists()) artFile.delete()
             }
 
             try {
@@ -1052,6 +1035,11 @@ class PlaybackService : MediaLibraryService() {
                 setupAudioEffects(audioSessionId)
             }
             applyReplayGain(player?.currentMediaItem)
+        } else if (key == "pause_on_headphone_unplug") {
+            val player = mediaLibrarySession?.player as? ExoPlayer
+            val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+            val pauseOnNoisy = settingsPrefs.getBoolean("pause_on_headphone_unplug", true)
+            player?.setHandleAudioBecomingNoisy(pauseOnNoisy)
         }
     }
 
@@ -1340,13 +1328,13 @@ class PlaybackService : MediaLibraryService() {
     private fun startFadeCheckLoop(player: ExoPlayer) {
         fadeJob?.cancel()
         fadeJob = serviceScope.launch {
-            val playbackPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+            val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
             var lastSkippedMediaItem: MediaItem? = null
             while (true) {
                 kotlinx.coroutines.delay(150)
                 if (!player.isPlaying || isFadingIn) continue
                 
-                val crossfadeSeconds = playbackPrefs.getInt("crossfade_duration", 0)
+                val crossfadeSeconds = settingsPrefs.getInt("crossfade_duration", 0)
                 if (crossfadeSeconds <= 0) {
                     if (kotlin.math.abs(player.volume - currentReplayGainFactor) > 0.02f && !isFadingIn) {
                         player.volume = currentReplayGainFactor

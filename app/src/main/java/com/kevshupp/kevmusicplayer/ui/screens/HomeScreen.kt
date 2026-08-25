@@ -7,6 +7,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -72,7 +74,7 @@ fun HomeScreen(
     val coroutineScope = rememberCoroutineScope()
 
     // 1. Recently Played
-    val recentlyPlayed by remember {
+    val recentlyPlayed by remember(audioFiles) {
         derivedStateOf {
             audioFiles.filter { it.lastPlayed > 0L }
                 .sortedByDescending { it.lastPlayed }
@@ -81,7 +83,7 @@ fun HomeScreen(
     }
 
     // 2. Most Played
-    val mostPlayed by remember {
+    val mostPlayed by remember(audioFiles) {
         derivedStateOf {
             audioFiles.filter { it.playCount > 0 }
                 .sortedByDescending { it.playCount }
@@ -90,7 +92,7 @@ fun HomeScreen(
     }
 
     // 3. Recently Added
-    val recentlyAdded by remember {
+    val recentlyAdded by remember(audioFiles) {
         derivedStateOf {
             audioFiles.sortedByDescending { it.dateAdded }
                 .take(10)
@@ -481,25 +483,22 @@ fun HomeHorizontalSection(
                 }
             }
         } else {
-            Row(
+            androidx.compose.foundation.lazy.LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp), // Leaves 24dp padding on edges considering item padding
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp)
             ) {
-                // Spacer at start to give 24dp edge padding
-                Spacer(modifier = Modifier.width(8.dp))
-
-                items.forEach { song ->
+                items(
+                    items = items,
+                    key = { it.id }
+                ) { song ->
                     HomeSongCard(
                         song = song,
                         onClick = { onItemClick(song) }
                     )
                 }
-
-                // Spacer at end
-                Spacer(modifier = Modifier.width(8.dp))
             }
         }
     }

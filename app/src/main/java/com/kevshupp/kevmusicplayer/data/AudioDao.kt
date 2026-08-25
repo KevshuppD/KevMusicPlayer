@@ -14,8 +14,11 @@ interface AudioDao {
     @Query("SELECT * FROM audio_files ORDER BY title ASC")
     suspend fun getAllAudioFiles(): List<AudioFile>
 
-    @Query("SELECT * FROM audio_files ORDER BY title ASC LIMIT :limit OFFSET :offset")
-    suspend fun getAudioFilesPaged(limit: Int, offset: Int): List<AudioFile>
+    @Query("SELECT * FROM audio_files ORDER BY title ASC")
+    fun getAudioFilesPagingSource(): androidx.paging.PagingSource<Int, AudioFile>
+
+    @Query("SELECT * FROM audio_files WHERE title LIKE '%' || :query || '%' OR artist LIKE '%' || :query || '%' OR album LIKE '%' || :query || '%' ORDER BY title ASC")
+    fun searchAudioFilesPagingSource(query: String): androidx.paging.PagingSource<Int, AudioFile>
 
     @Query("SELECT * FROM audio_files WHERE id = :id LIMIT 1")
     suspend fun getAudioFileById(id: Long): AudioFile?
