@@ -77,66 +77,75 @@ fun PerformanceSettingsSection(
                 edit.putString("refresh_rate", "120")
                 onDisableAnimationsChanged(false)
                 edit.putBoolean("disable_animations", false)
-                diskCacheQuality = 70
-                edit.putInt("disk_cache_quality", 70)
-                hapticEnabled = false
-                edit.putBoolean("haptic_feedback_enabled", false)
-                lazyReplayGain = true
-                edit.putBoolean("lazy_replay_gain", true)
-                ipcQueueLimit = 500
-                edit.putInt("ipc_queue_limit", 500)
-                autoCleanTemp = true
-                edit.putBoolean("auto_clean_temp", true)
+                hapticEnabled = true
+                edit.putBoolean("haptic_feedback_enabled", true)
                 preloadCount = 5
                 edit.putInt("preload_art_count", 5)
-                cacheCapacity = 200
-                edit.putInt("cover_cache_capacity", 200)
-                albumArtCache.evictAll()
-                clearDiskAlbumArtCache(context)
+                cacheCapacity = 300
+                edit.putInt("cover_cache_capacity", 300)
+                updateAlbumArtCacheSize(300)
+                artResolution = 500
+                edit.putInt("art_resolution", 500)
+                diskCacheQuality = 85
+                edit.putInt("disk_cache_quality", 85)
+                lazyReplayGain = true
+                edit.putBoolean("lazy_replay_gain", true)
+                ipcQueueLimit = 3000
+                edit.putInt("ipc_queue_limit", 3000)
+                autoCleanTemp = true
+                edit.putBoolean("auto_clean_temp", true)
             }
             "balanced" -> {
                 onRefreshRateSelected("120")
                 edit.putString("refresh_rate", "120")
                 onDisableAnimationsChanged(false)
                 edit.putBoolean("disable_animations", false)
-                diskCacheQuality = 85
-                edit.putInt("disk_cache_quality", 85)
                 hapticEnabled = true
                 edit.putBoolean("haptic_feedback_enabled", true)
+                preloadCount = 3
+                edit.putInt("preload_art_count", 3)
+                cacheCapacity = 150
+                edit.putInt("cover_cache_capacity", 150)
+                updateAlbumArtCacheSize(150)
+                artResolution = 500
+                edit.putInt("art_resolution", 500)
+                diskCacheQuality = 85
+                edit.putInt("disk_cache_quality", 85)
                 lazyReplayGain = true
                 edit.putBoolean("lazy_replay_gain", true)
                 ipcQueueLimit = 1500
                 edit.putInt("ipc_queue_limit", 1500)
                 autoCleanTemp = true
                 edit.putBoolean("auto_clean_temp", true)
-                preloadCount = 5
-                edit.putInt("preload_art_count", 5)
-                cacheCapacity = 150
-                edit.putInt("cover_cache_capacity", 150)
             }
             "battery" -> {
                 onRefreshRateSelected("60")
                 edit.putString("refresh_rate", "60")
                 onDisableAnimationsChanged(true)
                 edit.putBoolean("disable_animations", true)
-                diskCacheQuality = 70
-                edit.putInt("disk_cache_quality", 70)
                 hapticEnabled = false
                 edit.putBoolean("haptic_feedback_enabled", false)
+                preloadCount = 0
+                edit.putInt("preload_art_count", 0)
+                cacheCapacity = 50
+                edit.putInt("cover_cache_capacity", 50)
+                updateAlbumArtCacheSize(50)
+                artResolution = 250
+                edit.putInt("art_resolution", 250)
+                diskCacheQuality = 70
+                edit.putInt("disk_cache_quality", 70)
                 lazyReplayGain = true
                 edit.putBoolean("lazy_replay_gain", true)
                 ipcQueueLimit = 500
                 edit.putInt("ipc_queue_limit", 500)
                 autoCleanTemp = false
                 edit.putBoolean("auto_clean_temp", false)
-                preloadCount = 2
-                edit.putInt("preload_art_count", 2)
-                cacheCapacity = 50
-                edit.putInt("cover_cache_capacity", 50)
             }
             "custom" -> {}
         }
         edit.apply()
+        albumArtCache.evictAll()
+        clearDiskAlbumArtCache(context)
         albumArtVersion++
     }
 
@@ -295,11 +304,12 @@ fun PerformanceSettingsSection(
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(
                                             if (isSelected) MaterialTheme.colorScheme.primary 
-                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
                                         )
                                         .clickable {
                                             onRefreshRateSelected(rate)
                                             settingsPrefs.edit().putString("refresh_rate", rate).apply()
+                                            markCustom()
                                         }
                                         .padding(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
@@ -360,6 +370,7 @@ fun PerformanceSettingsSection(
                             onCheckedChange = { checked ->
                                 onDisableAnimationsChanged(checked)
                                 settingsPrefs.edit().putBoolean("disable_animations", checked).apply()
+                                markCustom()
                             }
                         )
                     }
@@ -410,6 +421,7 @@ fun PerformanceSettingsSection(
                             onCheckedChange = { checked ->
                                 hapticEnabled = checked
                                 settingsPrefs.edit().putBoolean("haptic_feedback_enabled", checked).apply()
+                                markCustom()
                             }
                         )
                     }
@@ -494,6 +506,7 @@ fun PerformanceSettingsSection(
                                         .clickable {
                                             preloadCount = count
                                             settingsPrefs.edit().putInt("preload_art_count", count).apply()
+                                            markCustom()
                                         }
                                         .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
@@ -570,6 +583,7 @@ fun PerformanceSettingsSection(
                                             cacheCapacity = cap
                                             settingsPrefs.edit().putInt("cover_cache_capacity", cap).apply()
                                             updateAlbumArtCacheSize(cap)
+                                            markCustom()
                                         }
                                         .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
@@ -648,6 +662,7 @@ fun PerformanceSettingsSection(
                                             albumArtCache.evictAll()
                                             clearDiskAlbumArtCache(context)
                                             albumArtVersion++
+                                            markCustom()
                                         }
                                         .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
@@ -726,6 +741,7 @@ fun PerformanceSettingsSection(
                                             albumArtCache.evictAll()
                                             clearDiskAlbumArtCache(context)
                                             albumArtVersion++
+                                            markCustom()
                                         }
                                         .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
@@ -743,7 +759,12 @@ fun PerformanceSettingsSection(
                     HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
 
                     // 5. Disk Thumbnail Cache Cleanup
-                    val diskCacheBytes = remember(albumArtVersion) { getDiskAlbumArtCacheSizeBytes(context) }
+                    var diskCacheBytes by remember(albumArtVersion) { mutableLongStateOf(0L) }
+                    LaunchedEffect(albumArtVersion) {
+                        diskCacheBytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            getDiskAlbumArtCacheSizeBytes(context)
+                        }
+                    }
                     val diskCacheMbStr = String.format(java.util.Locale.US, "%.1f MB", diskCacheBytes / (1024f * 1024f))
 
                     Row(
@@ -878,6 +899,7 @@ fun PerformanceSettingsSection(
                             onCheckedChange = { checked ->
                                 lazyReplayGain = checked
                                 settingsPrefs.edit().putBoolean("lazy_replay_gain", checked).apply()
+                                markCustom()
                             }
                         )
                     }
@@ -938,6 +960,7 @@ fun PerformanceSettingsSection(
                                         .clickable {
                                             ipcQueueLimit = limit
                                             settingsPrefs.edit().putInt("ipc_queue_limit", limit).apply()
+                                            markCustom()
                                         }
                                         .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
@@ -998,6 +1021,7 @@ fun PerformanceSettingsSection(
                             onCheckedChange = { checked ->
                                 autoCleanTemp = checked
                                 settingsPrefs.edit().putBoolean("auto_clean_temp", checked).apply()
+                                markCustom()
                             }
                         )
                     }

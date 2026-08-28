@@ -7,6 +7,8 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -35,61 +37,78 @@ class IntegrityCheckerManager(
         
         scope.launch(Dispatchers.IO) {
             val songsToVerify = localAudioFiles.toList()
+            val totalSize = songsToVerify.size
             withContext(Dispatchers.Main) {
-                verifyIntegrityTotal.value = songsToVerify.size
+                verifyIntegrityTotal.value = totalSize
             }
-            val damaged = mutableListOf<Pair<AudioFile, String>>()
+            val damaged = java.util.Collections.synchronizedList(mutableListOf<Pair<AudioFile, String>>())
+            val isEs = java.util.Locale.getDefault().language == "es"
+            val processedCount = java.util.concurrent.atomic.AtomicInteger(0)
+            var lastUiUpdateTime = 0L
 
-            songsToVerify.forEachIndexed { index, song ->
-                withContext(Dispatchers.Main) {
-                    verifyIntegrityCurrent.value = index + 1
-                    verifyIntegrityCurrentName.value = song.title
-                }
-                
-                var isDamaged = false
-                var reason = ""
-                
-                // 1. Check if the URI is readable
-                try {
-                    val uri = Uri.parse(song.uriString)
-                    context.contentResolver.openAssetFileDescriptor(uri, "r")?.use {
-                        // Successfully opened file descriptor
-                    } ?: run {
-                        isDamaged = true
-                        reason = if (java.util.Locale.getDefault().language == "es") "Archivo inaccesible o eliminado" else "File inaccessible or deleted"
-                    }
-                } catch (e: Exception) {
-                    isDamaged = true
-                    reason = if (java.util.Locale.getDefault().language == "es") "No se puede abrir el archivo" else "Cannot open file"
-                }
+            // Process songs in parallel chunks of 16 for high throughput
+            val chunkSize = 16
+            songsToVerify.chunked(chunkSize).forEach { chunk ->
+                coroutineScope {
+                    chunk.map { song ->
+                        async {
+                            var isDamaged = false
+                            var reason = ""
+                            
+                            // 1. Check if the URI is readable
+                            try {
+                                val uri = Uri.parse(song.uriString)
+                                context.contentResolver.openAssetFileDescriptor(uri, "r")?.use {
+                                    // Successfully opened file descriptor
+                                } ?: run {
+                                    isDamaged = true
+                                    reason = if (isEs) "Archivo inaccesible o eliminado" else "File inaccessible or deleted"
+                                }
+                            } catch (e: Exception) {
+                                isDamaged = true
+                                reason = if (isEs) "No se puede abrir el archivo" else "Cannot open file"
+                            }
 
-                // 2. If it is readable, try parsing metadata to see if it's corrupted/damaged
-                if (!isDamaged) {
-                    val retriever = android.media.MediaMetadataRetriever()
-                    try {
-                        val uri = Uri.parse(song.uriString)
-                        retriever.setDataSource(context, uri)
-                        val hasAudio = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
-                        if (hasAudio == null) {
-                            isDamaged = true
-                            reason = if (java.util.Locale.getDefault().language == "es") "Archivo de audio sin pistas válidas" else "Audio file has no valid tracks"
+                            // 2. If it is readable, try parsing metadata to see if it's corrupted/damaged
+                            if (!isDamaged) {
+                                val retriever = android.media.MediaMetadataRetriever()
+                                try {
+                                    val uri = Uri.parse(song.uriString)
+                                    retriever.setDataSource(context, uri)
+                                    val hasAudio = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
+                                    if (hasAudio == null) {
+                                        isDamaged = true
+                                        reason = if (isEs) "Archivo de audio sin pistas válidas" else "Audio file has no valid tracks"
+                                    }
+                                } catch (e: Exception) {
+                                    isDamaged = true
+                                    reason = if (isEs) "Archivo de audio dañado o corrupto" else "Corrupted or damaged audio file"
+                                } finally {
+                                    try { retriever.release() } catch (e: Exception) {}
+                                }
+                            }
+
+                            if (isDamaged) {
+                                damaged.add(Pair(song, reason))
+                            }
+
+                            val count = processedCount.incrementAndGet()
+                            val now = System.currentTimeMillis()
+                            if (now - lastUiUpdateTime > 80L || count == totalSize) {
+                                lastUiUpdateTime = now
+                                withContext(Dispatchers.Main) {
+                                    verifyIntegrityCurrent.value = count
+                                    verifyIntegrityCurrentName.value = song.title
+                                }
+                            }
                         }
-                    } catch (e: Exception) {
-                        isDamaged = true
-                        reason = if (java.util.Locale.getDefault().language == "es") "Archivo de audio dañado o corrupto" else "Corrupted or damaged audio file"
-                    } finally {
-                        try { retriever.release() } catch (e: Exception) {}
-                    }
-                }
-
-                if (isDamaged) {
-                    damaged.add(Pair(song, reason))
+                    }.forEach { it.await() }
                 }
             }
 
             withContext(Dispatchers.Main) {
                 isVerifyingIntegrity.value = false
-                onComplete(damaged)
+                onComplete(damaged.toList())
             }
         }
     }

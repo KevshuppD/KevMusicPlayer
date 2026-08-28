@@ -150,6 +150,7 @@ graph TD
   1. Copia y mueve automáticamente archivos de letras físicos (`.lrc`, `.txt`) hacia la nueva carpeta del álbum.
   2. Si la canción posee letras en la base de datos y no existe archivo `.lrc` físico en la carpeta destino, lo escribe automáticamente.
   3. Traslada los archivos de portada de origen si ya existían previamente. Las imágenes de portada embebidas en las etiquetas de los archivos de audio se mantienen estrictamente dentro del archivo y **NUNCA se extraen a disco automáticamente**.
+
 ### P. KevWrapped & Resumen Musical Interactivo ([MusicInsightsScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/MusicInsightsScreen.kt))
 - **Filtros Temporales:** Selector interactivo de período (*Todo el tiempo*, *Este año*, *Este mes*, *Últimos 30 días*).
 - **Ranking Top 5:** Top Canciones (con badges de oro/plata/bronce), Top Artistas (con fotos circulares) y Top Álbumes (con portadas HD).
@@ -209,54 +210,44 @@ data class AudioFile(
    - Todas las llamadas al editor de etiquetas de TagLib / jaudiotagger, lecturas de archivos físicos y consultas SQL se ejecutan en `Dispatchers.IO`.
    - `AudioScanner` realiza cargas diferidas (lazy loads) de `ReplayGain`.
    - El escaneo y la conexión `MediaBrowser` están diferidos hasta completar el Onboarding.
-   - La información de totales en Ajustes se almacena en caché local (`SharedPreferences`).
+   - El cálculo del tamaño de la caché de portadas en disco se ejecuta asíncronamente en `Dispatchers.IO`.
 2. **Límites IPC:**
-   - Para evitar `TransactionTooLargeException` en IPC con Media3, se limita la cola interna a un máximo de **1500 canciones** en memoria y se utiliza paginación (`getAudioFilesPaged`).
+   - Para evitar `TransactionTooLargeException` en IPC con Media3, se limita la cola interna a un máximo configurable (500, 1500 o 3000 canciones) en memoria y se utiliza paginación (`getAudioFilesPaged`).
 3. **Consistencia de Portadas:**
    - Las carátulas de listas manuales se persisten en el directorio de caché interno de la app.
 4. **Optimización de Recomposiciones (`derivedStateOf` & `@Immutable`):**
    - Uso de `derivedStateOf` con delegación `by` y claves de memorización precisas (`remember(audioFiles, searchQuery, sortBy)`) en listas filtradas, ordenamientos y Pager para evitar recalculos redundantes durante scrolls a 120Hz.
    - Modelo `AudioFile` anotado con `@Immutable` para habilitar *Smart Skipping* en Compose y evitar recomposiciones masivas durante la reproducción.
+   - Aislamiento de ítems en `SongListItem` con gestos `combinedClickable` en lugar de interceptores táctiles pesados, logrando scrolling perfecto a 120 FPS sin bloqueos.
 5. **Reciclaje Eficiente de Nodos Compose (`contentType` & `LazyRow`):**
    - Implementación de `contentType` en todos los `LazyColumn` principales (`SongListView`, `ScrollingLyricsView`, cola de reproducción en `PlayerScreen`), permitiendo a Compose reutilizar los componentes de UI reciclados sin recalcular su jerarquía en desplazamientos rápidos.
-   - Virtualización horizontal en `HomeScreen` con `LazyRow` en lugar de `Row` + `horizontalScroll`, ahorrando memoria al renderizar exclusivamente las tarjetas visibles en pantalla.
-   - `rememberAlbumArt` totalmente asíncrono y no bloqueante para el hilo principal (Main/UI thread), garantizando 120 FPS estables sin jank ni tirones durante el scroll veloz de listas extensas de canciones.
+   - Virtualización horizontal en `HomeScreen` con `LazyRow` en lugar de `Row` + `horizontalScroll`.
+   - `rememberAlbumArt` totalmente asíncrono y no bloqueante para el hilo principal (Main/UI thread), garantizando 120 FPS estables sin jank ni tirones.
    - Decodificación optimizada a **`Bitmap.Config.RGB_565`** en miniaturas de listas para ahorrar un **50% de memoria RAM** por cada imagen.
    - Configuración global de Coil con **`ImageLoaderFactory`** en `KevMusicPlayerApplication` utilizando **`Bitmap.Config.HARDWARE`**, `MemoryCache` dedicado (25% RAM) y `DiskCache` local para almacenar texturas directamente en la GPU.
 6. **Paginación Inteligente con Jetpack Paging 3 ([AudioDao.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/AudioDao.kt) & [MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt)):**
    - Integración nativa de `PagingSource<Int, AudioFile>` (`getAudioFilesPagingSource()`, `searchAudioFilesPagingSource()`) y flujo `audioFilesPagingFlow` cacheado en `viewModelScope`.
-   - Permite la carga perezosa bajo demanda en bloques configurables (`pageSize = 40`, `prefetchDistance = 20`, `initialLoadSize = 60`), reduciendo el consumo de memoria RAM y el tiempo de arranque en colecciones de decenas de miles de canciones.
+   - Permite la carga perezosa bajo demanda en bloques configurables (`pageSize = 40`, `prefetchDistance = 20`, `initialLoadSize = 60`), reduciendo el consumo de memoria RAM y el tiempo de arranque.
 7. **Caché LRU para Letras y Desacople de Red ([LyricsRepository.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/LyricsRepository.kt)):**
    - `parsedLrcCache`: Caché LRU en memoria (`LruCache<String, List<LyricLine>>(100)`) que evita volver a parsear expresiones regulares `Regex` en cada frame/recomposición del reproductor.
    - Búsqueda automática en LRCLIB con debounce suave en segundo plano, aislada del hilo de renderizado.
 8. **Optimización de Conexiones HTTP (`ConnectionPool`):**
-   - `LyricsRepository` y `ArtistImageHelper` utilizan pools de conexiones HTTP compartidos (`ConnectionPool(5, 5, TimeUnit.MINUTES)`) con timeouts acotados de 15s para descargas concurrentes de letras e imágenes sin saturar sockets ni agotar descriptores de archivo.
-9. **Índices de Base de Datos Room:**
-   - Índices secundarios en `artist`, `album`, `folderPath`, `playCount`, `title` y `dateAdded` para consultas, ordenamientos por fecha y agregaciones instantáneas en bibliotecas grandes (> 3.000 canciones).
+   - `LyricsRepository` y `ArtistImageHelper` utilizan pools de conexiones HTTP compartidos (`ConnectionPool(5, 5, TimeUnit.MINUTES)`) con timeouts acotados de 15s para descargas concurrentes de letras e imágenes sin saturar sockets.
+9. **Loop de Fundido Cruzado (Crossfade) Inteligente:**
+   - `startFadeCheckLoop` en `PlaybackService` duerme hasta 1000ms cuando la canción está lejos del punto de crossfade y se suspende por completo si `crossfade_duration == 0` o el reproductor está en pausa, consumiendo 0% de CPU innecesaria en segundo plano.
 10. **Caché en Memoria RAM (`albumArtCache`) y Desacople de Widget/Notificaciones:**
-    - `albumArtCache` almacena objetos `Bitmap` ya re-muestreados a un tamaño máximo (250p, 500p u 800p), evitando fugas OOM y parpadeos.
-    - Generación y compresión PNG de carátulas para el widget Glance 100% aisladas en `Dispatchers.IO` dentro de `PlaybackService`, sin bloquear transiciones de canciones ni eventos de audio.
-11. **Bypass de Caché y Extracción Física Directa:**
-    - `rememberAlbumArt` y `preloadAlbumArt` extraen la carátula desde la ruta física absoluta de la canción con `MediaMetadataRetriever.setDataSource(physicalPath)` y archivos de carpeta (`cover.jpg` / `folder.jpg`) para omitir cachés obsoletas de MediaStore.
-12. **Precarga en Segundo Plano (`preloadUpcomingArtwork`):**
-    - Precarga asíncronamente las próximas $N$ canciones de la cola en `albumArtCache` para que las carátulas se dibujen al instante al cambiar de pista.
-13. **Aceleración de Compilación en Gradle y R8:**
+    - `albumArtCache` almacena objetos `Bitmap` ya re-muestreados a un tamaño máximo (250p, 500p u 800p), con tamaño dinámicamente ajustable en caliente (`updateAlbumArtCacheSize`).
+    - Generación y compresión PNG de carátulas para el widget Glance 100% aisladas en `Dispatchers.IO` dentro de `PlaybackService`.
+11. **Perfiles de Rendimiento Coherentes y Conmutación Automática a Personalizado ([PerformanceSettingsSection.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/settings/PerformanceSettingsSection.kt)):**
+    - `⚡ Máximo Rendimiento`: 120Hz, Animaciones activas, Caché RAM 300 (Alta), Precarga 5, Calidad 500p, Compresión WebP 85%, Búfer IPC 3000.
+    - `⚖️ Equilibrado`: 120Hz, Animaciones activas, Caché RAM 150 (Med), Precarga 3, Calidad 500p, Compresión WebP 85%, Búfer IPC 1500.
+    - `🔋 Ahorro de Batería`: 60Hz, Sin animaciones, Caché RAM 50 (Baja), Precarga Off (0), Calidad 250p, Compresión WebP 70% (Rápida), Búfer IPC 500.
+    - `⚙️ Personalizado`: Conmuta automáticamente al perfil manual tan pronto como el usuario modifica cualquier control individual en pantalla.
+12. **Aceleración de Compilación en Gradle y R8:**
     - [gradle.properties](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/gradle.properties) configurado con `-Xmx6144m -XX:+UseParallelGC -Dcom.android.tools.r8.maxNumberOfThreads=8`, compilación incremental Kotlin/KSP y AGP `nonTransitiveRClass`.
-    - Desactivado `lintVital` en `app/build.gradle.kts` (`checkReleaseBuilds = false`, `abortOnError = false`) y regla `-dontoptimize` en `app/proguard-rules.pro`, reduciendo los tiempos de `installRelease` y `assembleRelease` de 5-7 minutos a **8-15 segundos**.
-14. **Eliminación del Warning AWT en KSP CLI:**
-    - `-Djava.awt.headless=true` configurado en `org.gradle.jvmargs` elimina por completo la traza de advertencia headless de AWT en builds desde terminal.
-15. **Perfiles de Rendimiento Predeterminados ([SettingsComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/SettingsComponents.kt)):**
-    - `⚡ Máximo Rendimiento`: Fuerza 120Hz, compresión WebP rápida 70%, buffer IPC 500 y deshabilita vibraciones hápticas para 0 lag.
-    - `⚖️ Equilibrado`: Tasa a 120Hz, compresión WebP estándar al 85% y vibraciones activas.
-    - `🔋 Ahorro de Batería`: Tasa fijada a 60Hz, minimiza lecturas I/O y deshabilita animaciones.
-    - `⚙️ Personalizado`: Permite ajustar manualmente cada parámetro de memoria, caché y gráficos.
-16. **Renderizado Nativo Directo de Portadas (Subcomposición 0 ms):**
-    - Se reemplazó `SubcomposeAsyncImage` por `Image(bitmap = artBytes.asImageBitmap())` en `SongItem` y `HomeSongCard` cuando el bitmap está cargado en memoria, eliminando las pasadas de medición secundarias de Compose y garantizando desplazamientos (scroll) suaves a 60/120 FPS.
-17. **Desactivación de Auto-Backup en Manifiesto:**
-    - Configurado `android:allowBackup="false"` en [AndroidManifest.xml](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/AndroidManifest.xml) para evitar que Google Cloud Backup o Android Backup restauren bases de datos o preferencias obsoletas automáticamente tras una reinstalación.
-18. **Limpieza Completa mediante ADB (`pm clear`):**
-    - Script [conectar_adb.sh](file:///home/kevin/Escritorio/sh/conectar_adb.sh) ejecuta `adb shell pm clear com.kevshupp.kevmusicplayer` en las opciones `[c]` (Reinstalación limpia) y `[l]` (Limpiar datos) para asegurar la destrucción total de bases de datos SQLite, cachés y preferencias locales.ante ADB (`pm clear`):**
-    - Script [conectar_adb.sh](file:///home/kevin/Escritorio/sh/conectar_adb.sh) ejecuta `adb shell pm clear com.kevshupp.kevmusicplayer` en las opciones `[c]` (Reinstalación limpia) y `[l]` (Limpiar datos) para asegurar la destrucción total de bases de datos SQLite, cachés y preferencias locales.
+    - Desactivado `lintVital` en `app/build.gradle.kts` (`checkReleaseBuilds = false`, `abortOnError = false`) y regla `-dontoptimize` en `app/proguard-rules.pro`, reduciendo los tiempos de `assembleDebug` y `installRelease` a solo **8-15 segundos**.
+13. **Desactivación de Auto-Backup en Manifiesto:**
+    - Configurado `android:allowBackup="false"` en [AndroidManifest.xml](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/AndroidManifest.xml) para evitar que Google Cloud Backup restaure bases de datos obsoletas tras una reinstalación.
 
 ---
 
@@ -269,8 +260,8 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 │
 ├── data/                         # Capa de datos y persistencia
 │   ├── AudioFile.kt              # Entidad Room para representar pistas
-│   ├── AudioDao.kt               # Consultas Room
-│   ├── AppDatabase.kt            # Inicializador Room DB (Versión 9)
+│   ├── AudioDao.kt               # Consultas Room ligeras y bajo demanda
+│   ├── AppDatabase.kt            # Inicializador Room DB (Versión 10)
 │   ├── AudioScanner.kt           # Lógica de escaneo inteligente del dispositivo
 │   ├── LyricsRepository.kt       # API LRCLIB (anti 520, User-Agent, cleanSearchTerm), parser LRC
 │   ├── AppUpdater.kt             # Actualizador automático desde GitHub Releases
@@ -281,27 +272,34 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 │   ├── PlaybackService.kt        # MediaLibraryService de Media3 (ExoPlayer, retención en 2º plano, audio focus y FX)
 │   ├── MediaBrowserViewModel.kt  # ViewModel principal de reproducción e IPC
 │   ├── SmartRules.kt             # Modelos de reglas JSON, ConditionNode, GroupNode y expresiones regulares
-│   ├── AudioIOHelpers.kt         # Helpers de lectura/escritura física de audio, metadatos ID3/jaudiotagger y portadas
+│   ├── AudioIOHelpers.kt         # Helpers de lectura/escritura física de audio, metadatos y letras .lrc exclusivas
 │   └── managers/                 # Submódulos desacoplados de lógica de negocio
 │       ├── PlaylistManager.kt    # Listas normales e inteligentes, reglas JSON y portadas
-│       └── IntegrityCheckerManager.kt # Verificación física y decodificación de pistas dañadas
+│       ├── IntegrityCheckerManager.kt # Verificación física paralela (16 corrutinas)
+│       └── QueueManager.kt       # Gestión modular de cola de reproducción
 │
 ├── ui/                           # Interfaz de usuario Jetpack Compose
 │   ├── theme/                    # Paleta de colores, tipografías y definición de temas
 │   └── screens/                  # Vistas del flujo de la aplicación
-│       ├── Dialogs.kt            # Editores de metadatos, letras y creador de playlists inteligentes
+│       ├── Dialogs.kt            # Diálogos principales
+│       ├── dialogs/              # Diálogos modulares desacoplados
+│       │   ├── SleepTimerDialog.kt   # Temporizador de apagado
+│       │   ├── SaveQueueDialog.kt    # Guardar cola activa como playlist
+│       │   ├── SearchLyricsDialog.kt # Búsqueda de letras en línea
+│       │   ├── DeleteSongDialog.kt   # Confirmación de borrado de canción
+│       │   └── AudioSpecsDialog.kt   # Especificaciones técnicas de audio
 │       ├── LibraryScreen.kt      # Biblioteca (Canciones, Álbumes, Artistas, Carpetas, Listas) y filtro sin acentos
-│       ├── LibraryComponents.kt  # Componentes de biblioteca y FastScrollSidebar (Burbuja A-Z Neón)
+│       ├── LibraryComponents.kt  # Componentes de biblioteca (SongListItem optimizado) y FastScrollSidebar
 │       ├── PlayerScreen.kt       # Pantalla de reproducción a pantalla completa, gestos y letras interactivos
 │       ├── PlayerComponents.kt   # Componentes atómicos de la pantalla del reproductor
-│       ├── SettingsScreen.kt     # Ajustes organizados por pestañas (General, Audio, Sistema, Biblioteca, Rendimiento, Acerca de)
+│       ├── SettingsScreen.kt     # Ajustes organizados por pestañas
 │       ├── settings/             # Submódulos desacoplados de configuración
-│       │   ├── SettingsCommon.kt # Utilidades, colores y controles gráficos (CircularSlider, VerticalFader)
+│       │   ├── SettingsCommon.kt # Utilidades, colores y controles gráficos
 │       │   ├── GeneralSettingsSection.kt     # Idioma, tema visual, ordenamiento, gestos
 │       │   ├── AudioSettingsSection.kt       # Ecualizador, Bass Boost, Virtualizer, ReplayGain, Crossfade
-│       │   ├── PerformanceSettingsSection.kt # Perfiles 120Hz, FPS, capacidad de caché RAM/disco
+│       │   ├── PerformanceSettingsSection.kt # Perfiles 120Hz, FPS, capacidad de caché RAM/disco alineados
 │       │   ├── SystemSettingsSection.kt      # Permisos, widgets, batería, backups y restauraciones
-│       │   ├── LibrarySettingsSection.kt     # Escaneo, carpetas excluidas, duplicados, integridad, canciones cortas
+│       │   ├── LibrarySettingsSection.kt     # Escaneo, carpetas excluidas, duplicados, integridad, letras
 │       │   └── AboutSettingsSection.kt       # Versión, telemetría, actualizador y créditos
 │       ├── MusicInsightsScreen.kt# Panel de estadísticas e historial de música
 │       └── UniversalSearchOverlay.kt # Búsqueda universal insensible a acentos en tiempo real
@@ -316,16 +314,15 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 ## 6. Próximos Pasos y Áreas de Mejora
 
 ### A. Plan de Modularización de Archivos Extensos (> 1.500 líneas)
-1. **[MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt)** (~3.820 líneas):
-   - *Progreso actual:* Se extrajeron `SmartRules.kt` y `AudioIOHelpers.kt`.
-   - *Pendiente:* Extraer managers autónomos (`BackupManager`, `PlaylistManager`, `LyricsDownloadManager`, `StorageOrganizerManager`, `TagEditorManager`).
-2. **[Dialogs.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/Dialogs.kt)** (~2.600 líneas):
-   - *Propuesta:* Modularizar en el paquete `ui/screens/dialogs/` (`MetadataEditDialog`, `LyricsEditDialog`, `DuplicateFinderDialog`, `SongIntegrityDialog`, `ShortSongsDialog`, `SmartPlaylistRuleDialog`).
-3. **[PlayerScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/PlayerScreen.kt)** (~2.580 líneas):
-   - *Propuesta:* Desacoplar hojas secundarias (`QueueBottomSheet`, `VisualizerOverlay`, `QuickEqOverlay`) en componentes especializados.
-4. **[LibraryComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryComponents.kt)** (~2.430 líneas) y **[LibraryScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryScreen.kt)** (~1.955 líneas):
+1. **[MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt)**:
+   - *Progreso actual:* Se extrajeron `SmartRules.kt`, `AudioIOHelpers.kt`, `PlaylistManager.kt`, `IntegrityCheckerManager.kt` y `QueueManager.kt`.
+   - *Pendiente:* Extraer managers restantes (`BackupManager`, `LyricsDownloadManager`, `StorageOrganizerManager`, `TagEditorManager`).
+2. **[PlayerScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/PlayerScreen.kt)**:
+   - *Progreso actual:* Se extrajeron los diálogos a `ui/screens/dialogs/` (`SleepTimerDialog`, `SaveQueueDialog`, `SearchLyricsDialog`, `DeleteSongDialog`, `AudioSpecsDialog`).
+   - *Pendiente:* Desacoplar hojas secundarias (`QueueBottomSheet`, `VisualizerOverlay`).
+3. **[LibraryComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryComponents.kt)** y **[LibraryScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryScreen.kt)**:
    - *Propuesta:* Modularizar por pestañas en `ui/screens/library/` (`SongTabContent`, `AlbumTabContent`, `ArtistTabContent`, `FolderTabContent`, `PlaylistTabContent`).
-5. **[LibrarySettingsSection.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/settings/LibrarySettingsSection.kt)** (~2.180 líneas):
+4. **[LibrarySettingsSection.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/settings/LibrarySettingsSection.kt)**:
    - *Propuesta:* Separar herramientas de mantenimiento físico (`FileOrganizerSection`, `FolderScannerSection`, `IntegrityToolsSection`).
 
 ### B. Nuevas Funcionalidades

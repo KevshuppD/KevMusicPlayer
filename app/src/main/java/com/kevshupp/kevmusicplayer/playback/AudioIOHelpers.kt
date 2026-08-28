@@ -113,58 +113,97 @@ fun hasAudioFiles(dir: File): Boolean {
 
 
 fun saveLyricsPhysical(context: android.content.Context, songId: Long, songTitle: String, folderPath: String, lyrics: String) {
-    // 1. Save to .lrc file next to the song
+    // 1. Save to .lrc file next to the song (by title and by physical file name)
     try {
         val cleanTitle = songTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val lrcFile = File(folderPath, "$cleanTitle.lrc")
-        lrcFile.writeText(lyrics)
+        if (folderPath.isNotBlank()) {
+            val lrcFile = File(folderPath, "$cleanTitle.lrc")
+            lrcFile.writeText(lyrics)
+        }
     } catch (e: Exception) {
         e.printStackTrace()
     }
 
-    // 2. Save directly inside the song metadata using jaudiotagger
-    writeMetadataWithTempFile(context, songId, null) { audioFile ->
-        val tag = audioFile.getTagOrCreateAndSetDefault()
-        tag.setField(FieldKey.LYRICS, lyrics)
-        audioFile.tag = tag
+    // 2. Save a copy in app internal storage as a guaranteed fallback
+    try {
+        val lyricsDir = File(context.filesDir, "lyrics")
+        if (!lyricsDir.exists()) lyricsDir.mkdirs()
+        val internalLrc = File(lyricsDir, "$songId.lrc")
+        internalLrc.writeText(lyrics)
+    } catch (e: Exception) {
+        e.printStackTrace()
     }
 }
 
 fun saveTranslatedLyricsPhysical(context: android.content.Context, songId: Long, songTitle: String, folderPath: String, translatedLyrics: String?) {
     if (translatedLyrics.isNullOrBlank()) return
+    val locale = java.util.Locale.getDefault().language
+
+    // 1. Save to .$locale.lrc file next to the song
     try {
         val cleanTitle = songTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val locale = java.util.Locale.getDefault().language
-        val lrcFile = File(folderPath, "$cleanTitle.$locale.lrc")
-        lrcFile.writeText(translatedLyrics)
+        if (folderPath.isNotBlank()) {
+            val lrcFile = File(folderPath, "$cleanTitle.$locale.lrc")
+            lrcFile.writeText(translatedLyrics)
+        }
     } catch (e: Exception) {
         e.printStackTrace()
     }
 
-    writeMetadataWithTempFile(context, songId, null) { audioFile ->
-        val tag = audioFile.getTagOrCreateAndSetDefault()
-        val locale = java.util.Locale.getDefault().language
-        tag.setField(FieldKey.CUSTOM1, "TRANSLATED_LYRICS_$locale:$translatedLyrics")
-        audioFile.tag = tag
+    // 2. Save a copy in app internal storage
+    try {
+        val lyricsDir = File(context.filesDir, "lyrics")
+        if (!lyricsDir.exists()) lyricsDir.mkdirs()
+        val internalLrc = File(lyricsDir, "$songId.$locale.lrc")
+        internalLrc.writeText(translatedLyrics)
+    } catch (e: Exception) {
+        e.printStackTrace()
     }
 }
 
 fun readLocalLrcOrEmbedded(context: android.content.Context, song: AudioFile): String? {
-    // 1. Try reading .lrc file next to the song
+    val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+
+    // 1. Try reading .lrc file next to the song by clean title
     try {
-        val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val lrcFile = File(song.folderPath, "$cleanTitle.lrc")
-        if (lrcFile.exists() && lrcFile.isFile) {
-            val content = lrcFile.readText()
-            if (content.isNotBlank()) {
-                return content
+        if (song.folderPath.isNotBlank()) {
+            val lrcFile = File(song.folderPath, "$cleanTitle.lrc")
+            if (lrcFile.exists() && lrcFile.isFile) {
+                val content = lrcFile.readText()
+                if (content.isNotBlank()) return content
             }
         }
-    } catch (e: java.lang.Exception) {
+    } catch (e: Exception) {
         e.printStackTrace()
     }
 
-    // 2. Try reading inside the song metadata using jaudiotagger
+    // 2. Try reading .lrc matching the audio file's name on disk
+    try {
+        val physicalPath = getPhysicalPath(context, song.id, song.uriString)
+        if (!physicalPath.isNullOrBlank()) {
+            val audioF = File(physicalPath)
+            val lrcByFileName = File(audioF.parentFile, "${audioF.nameWithoutExtension}.lrc")
+            if (lrcByFileName.exists() && lrcByFileName.isFile) {
+                val content = lrcByFileName.readText()
+                if (content.isNotBlank()) return content
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    // 3. Try reading from app internal lyrics storage
+    try {
+        val internalLrc = File(File(context.filesDir, "lyrics"), "${song.id}.lrc")
+        if (internalLrc.exists() && internalLrc.isFile) {
+            val content = internalLrc.readText()
+            if (content.isNotBlank()) return content
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    // 4. Read-only fallback: check embedded lyrics in metadata WITHOUT modifying the file
     try {
         val physicalPath = getPhysicalPath(context, song.id, song.uriString)
         if (!physicalPath.isNullOrBlank()) {
@@ -180,7 +219,7 @@ fun readLocalLrcOrEmbedded(context: android.content.Context, song: AudioFile): S
                 }
             }
         }
-    } catch (e: java.lang.Exception) {
+    } catch (e: Exception) {
         e.printStackTrace()
     }
 
@@ -189,37 +228,47 @@ fun readLocalLrcOrEmbedded(context: android.content.Context, song: AudioFile): S
 
 fun readLocalTranslatedLrcOrEmbedded(context: android.content.Context, song: AudioFile): String? {
     val locale = java.util.Locale.getDefault().language
+    val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+
+    // 1. Try reading .$locale.lrc next to the song
     try {
-        val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val lrcFile = File(song.folderPath, "$cleanTitle.$locale.lrc")
-        if (lrcFile.exists() && lrcFile.isFile) {
-            val content = lrcFile.readText()
-            if (content.isNotBlank()) {
-                return content
+        if (song.folderPath.isNotBlank()) {
+            val lrcFile = File(song.folderPath, "$cleanTitle.$locale.lrc")
+            if (lrcFile.exists() && lrcFile.isFile) {
+                val content = lrcFile.readText()
+                if (content.isNotBlank()) return content
             }
         }
     } catch (e: Exception) {
         e.printStackTrace()
     }
 
+    // 2. Try reading .$locale.lrc by physical file name
     try {
         val physicalPath = getPhysicalPath(context, song.id, song.uriString)
         if (!physicalPath.isNullOrBlank()) {
-            val f = File(physicalPath)
-            if (f.exists() && f.isFile) {
-                val audioFile = safeReadAudioFile(f)
-                val tag = audioFile.tag
-                if (tag != null) {
-                    val embedded = tag.getFirst(FieldKey.CUSTOM1)
-                    if (!embedded.isNullOrBlank() && embedded.startsWith("TRANSLATED_LYRICS_$locale:")) {
-                        return embedded.substringAfter("TRANSLATED_LYRICS_$locale:")
-                    }
-                }
+            val audioF = File(physicalPath)
+            val lrcByFileName = File(audioF.parentFile, "${audioF.nameWithoutExtension}.$locale.lrc")
+            if (lrcByFileName.exists() && lrcByFileName.isFile) {
+                val content = lrcByFileName.readText()
+                if (content.isNotBlank()) return content
             }
         }
     } catch (e: Exception) {
         e.printStackTrace()
     }
+
+    // 3. Try reading from internal storage
+    try {
+        val internalLrc = File(File(context.filesDir, "lyrics"), "${song.id}.$locale.lrc")
+        if (internalLrc.exists() && internalLrc.isFile) {
+            val content = internalLrc.readText()
+            if (content.isNotBlank()) return content
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
     return null
 }
 

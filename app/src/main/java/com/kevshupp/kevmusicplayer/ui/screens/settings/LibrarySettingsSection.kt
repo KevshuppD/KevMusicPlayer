@@ -82,7 +82,7 @@ fun LibrarySettingsSection(
     var activeOrganizerAction by remember { mutableStateOf("") }
     var showDeleteCoversDialog by remember { mutableStateOf(false) }
     var showDeleteNoMediaDialog by remember { mutableStateOf(false) }
-    var showDeleteLyricsDialog by remember { mutableStateOf(false) }
+    var showDeleteAllLyricsConfirmDialog by remember { mutableStateOf(false) }
     var isDeepScanning by remember { mutableStateOf(false) }
 
     val settingsPrefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
@@ -408,13 +408,7 @@ fun LibrarySettingsSection(
 
             Button(
                 onClick = {
-                    viewModel.deleteAllLyrics(context) {
-                        android.widget.Toast.makeText(
-                            context,
-                            getLocalized("Todas las letras han sido eliminadas", "All lyrics have been deleted"),
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
-                    }
+                    showDeleteAllLyricsConfirmDialog = true
                 },
                 enabled = !viewModel.isDownloadingAllLyrics.value && !isScanning && !isRenaming && !viewModel.isDeletingAllLyrics.value,
                 shape = RoundedCornerShape(20.dp),
@@ -703,53 +697,6 @@ fun LibrarySettingsSection(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Borrar Archivos .nomedia", "Delete .nomedia Files"),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Button(
-                onClick = {
-                    showDeleteLyricsDialog = true
-                },
-                enabled = activeOrganizerAction == "" && !isScanning,
-                shape = RoundedCornerShape(20.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                    disabledContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-            ) {
-                if (isRenaming && activeOrganizerAction == "delete_lyrics") {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "$renamingCurrent/$renamingTotal: $renamingCurrentName",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.DeleteSweep,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = getLocalized("Borrar Archivos de Letras", "Delete Lyrics Files"),
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         color = MaterialTheme.colorScheme.onErrorContainer
@@ -1534,12 +1481,12 @@ fun LibrarySettingsSection(
         )
     }
 
-    if (showDeleteLyricsDialog) {
+    if (showDeleteAllLyricsConfirmDialog) {
         AlertDialog(
-            onDismissRequest = { showDeleteLyricsDialog = false },
+            onDismissRequest = { showDeleteAllLyricsConfirmDialog = false },
             title = {
                 Text(
-                    text = getLocalized("¿Borrar archivos de letras?", "Delete lyrics files?"),
+                    text = getLocalized("¿Eliminar todas las letras?", "Delete all lyrics?"),
                     color = settingsTextColor(),
                     fontWeight = FontWeight.Bold
                 )
@@ -1547,8 +1494,8 @@ fun LibrarySettingsSection(
             text = {
                 Text(
                     text = getLocalized(
-                        "Esta acción buscará y eliminará en paralelo los archivos físicos de letras (.lrc y .txt) de tus carpetas de música. Las letras almacenadas en la base de datos de la app continuarán intactas.",
-                        "This will search and delete physical lyrics files (.lrc and .txt) in parallel from your music folders. Lyrics saved inside the app database will remain intact."
+                        "Esta acción eliminará todas las letras guardadas (.lrc) y la caché local de la biblioteca. Las canciones permanecerán intactas.",
+                        "This will delete all saved lyrics (.lrc files) and the library cache. Audio tracks will remain untouched."
                     ),
                     color = settingsTextMutedColor()
                 )
@@ -1556,40 +1503,25 @@ fun LibrarySettingsSection(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        showDeleteLyricsDialog = false
-                        activeOrganizerAction = "delete_lyrics"
-                        setIsRenaming(true)
-                        viewModel.deleteAllLyricsFiles(
-                            context = context,
-                            onProgress = { current, total ->
-                                setRenamingCurrent(current)
-                                setRenamingTotal(total)
-                                setRenamingCurrentName(getLocalized("Eliminando letras...", "Deleting lyrics..."))
-                            },
-                            onComplete = { deletedCount ->
-                                setIsRenaming(false)
-                                activeOrganizerAction = ""
-                                android.widget.Toast.makeText(
-                                    context,
-                                    getLocalized(
-                                        "Se eliminaron $deletedCount archivos de letras.",
-                                        "Deleted $deletedCount lyrics files."
-                                    ),
-                                    android.widget.Toast.LENGTH_LONG
-                                ).show()
-                            }
-                        )
+                        showDeleteAllLyricsConfirmDialog = false
+                        viewModel.deleteAllLyrics(context) {
+                            android.widget.Toast.makeText(
+                                context,
+                                getLocalized("Todas las letras han sido eliminadas", "All lyrics have been deleted"),
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }
                 ) {
                     Text(
-                        text = getLocalized("Borrar", "Delete"),
+                        text = getLocalized("Eliminar", "Delete"),
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.Bold
                     )
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteLyricsDialog = false }) {
+                TextButton(onClick = { showDeleteAllLyricsConfirmDialog = false }) {
                     Text(
                         text = getLocalized("Cancelar", "Cancel"),
                         color = settingsTextMutedColor()

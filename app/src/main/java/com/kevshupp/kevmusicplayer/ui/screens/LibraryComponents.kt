@@ -85,6 +85,133 @@ fun getGradientForString(name: String): Brush {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+fun SongListItem(
+    song: AudioFile,
+    index: Int,
+    isSelected: Boolean,
+    isMultiSelectMode: Boolean,
+    showTrackNumbers: Boolean,
+    onSongClick: (AudioFile) -> Unit,
+    onSongLongClick: (AudioFile) -> Unit,
+    onSongSelectToggle: ((AudioFile) -> Unit)?,
+    onPlayDirectly: ((AudioFile) -> Unit)?,
+    modifier: Modifier = Modifier
+) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+            )
+            .then(
+                if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
+                else Modifier
+            )
+            .combinedClickable(
+                onClick = {
+                    if (isMultiSelectMode) {
+                        onSongSelectToggle?.invoke(song)
+                    } else {
+                        onPlayDirectly?.invoke(song)
+                    }
+                },
+                onLongClick = {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    onSongLongClick(song)
+                }
+            )
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (isMultiSelectMode) {
+            Icon(
+                imageVector = if (isSelected) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                contentDescription = "Selection",
+                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                modifier = Modifier.padding(end = 12.dp).size(24.dp)
+            )
+        }
+        if (showTrackNumbers) {
+            Box(
+                modifier = Modifier.size(48.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                val trackNum = if (song.track > 0) (song.track % 1000) else (index + 1)
+                Text(
+                    text = trackNum.toString(),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    fontSize = 15.sp
+                )
+            }
+        } else {
+            // Sleek Gradient Song Icon
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape)
+                    .background(getGradientForString(song.title)),
+                contentAlignment = Alignment.Center
+            ) {
+                val artBytes = rememberAlbumArt(song.uriString)
+                if (artBytes != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = artBytes.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.MusicNote,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.width(16.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = song.title,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "${song.artist} • ${song.album}",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        
+        if (!isMultiSelectMode) {
+            IconButton(
+                onClick = { onSongClick(song) }
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.MoreVert,
+                    contentDescription = "Options",
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 fun SongListView(
     songs: List<AudioFile>,
     onSongClick: (AudioFile) -> Unit,
@@ -104,17 +231,7 @@ fun SongListView(
     showTrackNumbers: Boolean = false,
     headerContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
 ) {
-    val coroutineScope = rememberCoroutineScope()
-    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    
-
-    
-
-
     BoxWithConstraints(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)) {
-        val totalHeight = constraints.maxHeight.toFloat()
-        val constraintsMaxHeight = maxHeight
-        
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -135,262 +252,19 @@ fun SongListView(
                 contentType = { _, _ -> "song_item" }
             ) { index, song ->
                 val isSelected = selectedSongs.contains(song)
-                
-                val currentSong by rememberUpdatedState(song)
-                val currentIndex by rememberUpdatedState(index)
-                val currentSongsList by rememberUpdatedState(songs)
-                val currentSelectedSongsSet by rememberUpdatedState(selectedSongs)
-                val currentIsMultiSelectModeVal by rememberUpdatedState(isMultiSelectMode)
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .pointerInput(song) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = true)
-                                var hasDragged = false
-                                var longPressTriggered = false
-                                val longPressTimeout = 400L
-                                val startTime = System.currentTimeMillis()
-                                val touchSlop = viewConfiguration.touchSlop
-                                
-                                var currentY = down.position.y
-                                var targetIndex = currentIndex
-                                
-                                val startSelection = currentSelectedSongsSet.toSet()
-                                val startSelecting = !startSelection.contains(currentSong)
-                                
-                                var isDraggingActive = true
-                                var dragViewportY: Float? = null
-                                var scrollJob: Job? = null
-                                
-                                fun updateSelectionAtY(viewportY: Float) {
-                                    val pressedItemInfo = listState.layoutInfo.visibleItemsInfo.find { it.index == currentIndex }
-                                    if (pressedItemInfo != null) {
-                                        val hoverItem = listState.layoutInfo.visibleItemsInfo.find { itemInfo ->
-                                            viewportY.toInt() in itemInfo.offset..(itemInfo.offset + itemInfo.size)
-                                        }
-                                        val sList = currentSongsList
-                                        if (hoverItem != null && hoverItem.index in sList.indices) {
-                                            val hoverIndex = hoverItem.index
-                                            if (hoverIndex != targetIndex) {
-                                                targetIndex = hoverIndex
-                                                
-                                                val start = minOf(currentIndex, hoverIndex)
-                                                val end = maxOf(currentIndex, hoverIndex)
-                                                val rangeSongs = sList.subList(start, end + 1)
-                                                
-                                                val newSelection = startSelection.toMutableSet()
-                                                if (startSelecting) {
-                                                    newSelection.addAll(rangeSongs)
-                                                } else {
-                                                    newSelection.removeAll(rangeSongs)
-                                                }
-                                                onSelectionChanged?.invoke(newSelection)
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                fun startScrollIfNeeded() {
-                                    if (scrollJob == null) {
-                                        scrollJob = coroutineScope.launch {
-                                            while (isDraggingActive) {
-                                                val y = dragViewportY
-                                                if (y != null) {
-                                                    val viewportHeight = listState.layoutInfo.viewportSize.height
-                                                    val threshold = 120f
-                                                    var scrollAmount = 0f
-                                                    
-                                                    if (y < threshold) {
-                                                        val factor = (threshold - y) / threshold
-                                                        scrollAmount = -18f * factor.coerceIn(0.2f, 1.0f)
-                                                    } else if (y > viewportHeight - threshold) {
-                                                        val factor = (y - (viewportHeight - threshold)) / threshold
-                                                        scrollAmount = 18f * factor.coerceIn(0.2f, 1.0f)
-                                                    }
-                                                    
-                                                    if (scrollAmount != 0f) {
-                                                        listState.scrollBy(scrollAmount)
-                                                        updateSelectionAtY(y)
-                                                    }
-                                                }
-                                                delay(16)
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                try {
-                                    while (true) {
-                                        val elapsed = System.currentTimeMillis() - startTime
-                                        val remaining = longPressTimeout - elapsed
-                                        
-                                        val event = if (remaining > 0 && !longPressTriggered) {
-                                            withTimeoutOrNull(remaining) {
-                                                awaitPointerEvent(PointerEventPass.Main)
-                                            }
-                                        } else {
-                                            awaitPointerEvent(PointerEventPass.Main)
-                                        }
-                                        
-                                        if (event == null) {
-                                            // Timeout reached! Long press triggers selection mode directly
-                                            longPressTriggered = true
-                                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                            onSongLongClick(currentSong)
-                                            continue
-                                        }
-                                        
-                                        val changes = event.changes
-                                        val anyPressed = changes.any { it.pressed }
-                                        
-                                        if (!anyPressed) {
-                                            // Released!
-                                            if (elapsed < longPressTimeout) {
-                                                // Tap / Click!
-                                                if (currentIsMultiSelectModeVal) {
-                                                    onSongSelectToggle?.invoke(currentSong)
-                                                } else {
-                                                    onPlayDirectly?.invoke(currentSong)
-                                                }
-                                            }
-                                            break
-                                        } else {
-                                            // Still holding
-                                            val change = changes.firstOrNull()
-                                            if (change != null) {
-                                                if (change.isConsumed) {
-                                                    break
-                                                }
-                                                currentY = change.position.y
-                                                val dragDistanceX = Math.abs(change.position.x - down.position.x)
-                                                val dragDistanceY = Math.abs(currentY - down.position.y)
-                                                val dragDistance = Math.max(dragDistanceX, dragDistanceY)
-                                                
-                                                // If they scroll/drag too much BEFORE long press, cancel and let parent handle scrolling
-                                                if (!longPressTriggered && dragDistance > touchSlop) {
-                                                    break
-                                                }
-                                                
-                                                if (longPressTriggered) {
-                                                    change.consume()
-                                                    val pressedItemInfo = listState.layoutInfo.visibleItemsInfo.find { it.index == currentIndex }
-                                                    if (pressedItemInfo != null) {
-                                                        val viewportY = pressedItemInfo.offset + currentY
-                                                        dragViewportY = viewportY
-                                                        hasDragged = true
-                                                        
-                                                        updateSelectionAtY(viewportY)
-                                                        startScrollIfNeeded()
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                } finally {
-                                    isDraggingActive = false
-                                    scrollJob?.cancel()
-                                }
-                            }
-                        }
-                        .background(
-                            if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
-                        )
-                        .then(
-                            if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
-                            else Modifier
-                        )
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (isMultiSelectMode) {
-                        Icon(
-                            imageVector = if (isSelected) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
-                            contentDescription = "Selection",
-                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                            modifier = Modifier.padding(end = 12.dp).size(24.dp)
-                        )
-                    }
-                    if (showTrackNumbers) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            val trackNum = if (song.track > 0) (song.track % 1000) else (index + 1)
-                            Text(
-                                text = trackNum.toString(),
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                                fontSize = 15.sp
-                            )
-                        }
-                    } else {
-                        // Sleek Gradient Song Icon
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape)
-                                .background(getGradientForString(song.title)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            val artBytes = rememberAlbumArt(song.uriString)
-                            if (artBytes != null) {
-                                androidx.compose.foundation.Image(
-                                    bitmap = artBytes.asImageBitmap(),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Rounded.MusicNote,
-                                    contentDescription = null,
-                                    tint = Color.White.copy(alpha = 0.8f),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = song.title,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 15.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "${song.artist} • ${song.album}",
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    
-                    if (!isMultiSelectMode) {
-                        IconButton(
-                            onClick = { onSongClick(song) }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.MoreVert,
-                                contentDescription = "Options",
-                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                        }
-                    }
+                SongListItem(
+                    song = song,
+                    index = index,
+                    isSelected = isSelected,
+                    isMultiSelectMode = isMultiSelectMode,
+                    showTrackNumbers = showTrackNumbers,
+                    onSongClick = onSongClick,
+                    onSongLongClick = onSongLongClick,
+                    onSongSelectToggle = onSongSelectToggle,
+                    onPlayDirectly = onPlayDirectly
+                )
             }
         }
-    }
         val songTitles = remember(songs) { songs.map { it.title } }
         FastScrollSidebar(
             items = songTitles,

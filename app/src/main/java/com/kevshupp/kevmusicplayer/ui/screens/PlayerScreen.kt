@@ -1,5 +1,6 @@
 package com.kevshupp.kevmusicplayer.ui.screens
 
+import com.kevshupp.kevmusicplayer.ui.screens.dialogs.*
 import androidx.compose.animation.*
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -1736,106 +1737,18 @@ fun PlayerScreen(
 
         // Sleep Timer Dialog
         if (showSleepTimerDialog) {
-            AlertDialog(
-                onDismissRequest = { showSleepTimerDialog = false },
-                title = { Text("Temporizador de apagado", color = Color.White, fontWeight = FontWeight.Bold) },
-                text = {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        val options = listOf(
-                            0 to "Desactivado",
-                            15 to "15 minutos",
-                            30 to "30 minutos",
-                            45 to "45 minutos",
-                            60 to "60 minutos",
-                            -1 to "Al finalizar esta canción"
-                        )
-                        options.forEach { (mins, label) ->
-                            val isSelected = sleepTimerMinutes == mins
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        sleepTimerMinutes = mins
-                                        showSleepTimerDialog = false
-                                    }
-                                    .padding(vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        sleepTimerMinutes = mins
-                                        showSleepTimerDialog = false
-                                    },
-                                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(label, color = Color.White, fontSize = 15.sp)
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showSleepTimerDialog = false }) {
-                        Text("Cancelar", color = Color.White.copy(alpha = 0.7f))
-                    }
-                },
-                containerColor = Color(0xFF161829),
-                titleContentColor = Color.White,
-                textContentColor = Color.White
+            SleepTimerDialog(
+                sleepTimerMinutes = sleepTimerMinutes,
+                onSelectMinutes = { sleepTimerMinutes = it },
+                onDismiss = { showSleepTimerDialog = false }
             )
         }
 
         // Save Queue as Playlist Dialog
         if (showSaveQueueDialog) {
-            var playlistNameInput by remember { mutableStateOf("") }
-            AlertDialog(
-                onDismissRequest = { showSaveQueueDialog = false },
-                title = { Text("Guardar cola de reproducción", color = Color.White, fontWeight = FontWeight.Bold) },
-                text = {
-                    Column {
-                        Text("Introduce un nombre para la nueva lista:", color = Color.White.copy(alpha = 0.8f))
-                        Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = playlistNameInput,
-                            onValueChange = { playlistNameInput = it },
-                            label = { Text("Nombre de lista") },
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = Color.White.copy(alpha = 0.3f)
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            if (playlistNameInput.isNotBlank() && viewModel != null) {
-                                val queue = viewModel.getPlayerQueue()
-                                viewModel.createPlaylist(playlistNameInput)
-                                queue.forEach { song ->
-                                    viewModel.addSongToPlaylist(playlistNameInput, song.id)
-                                }
-                            }
-                            showSaveQueueDialog = false
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Text("Guardar", color = Color.Black, fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showSaveQueueDialog = false }) {
-                        Text("Cancelar", color = Color.White.copy(alpha = 0.7f))
-                    }
-                },
-                containerColor = Color(0xFF161829),
-                titleContentColor = Color.White,
-                textContentColor = Color.White
+            SaveQueueDialog(
+                viewModel = viewModel,
+                onDismiss = { showSaveQueueDialog = false }
             )
         }
 
@@ -2269,228 +2182,21 @@ fun PlayerScreen(
         }
 
         if (showSearchLyricsDialog && currentSongFile != null) {
-            val getLocalized = { es: String, en: String ->
-                if (targetLang == "es") es else en
-            }
-            AlertDialog(
-                onDismissRequest = { 
-                    if (!isSearchingOnline) showSearchLyricsDialog = false 
-                },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.CloudSync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(getLocalized("Buscar Letras en Línea", "Search Lyrics Online"), fontWeight = FontWeight.Bold)
-                    }
-                },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(
-                            text = getLocalized("Corrige el artista o título para buscar coincidencias alternativas:", "Correct the artist or title below to search alternative matches:"),
-                            fontSize = 13.sp,
-                            color = Color.White.copy(alpha = 0.7f)
-                        )
-                        OutlinedTextField(
-                            value = searchArtist,
-                            onValueChange = { searchArtist = it },
-                            label = { Text(getLocalized("Artista", "Artist"), color = Color.White.copy(alpha = 0.5f)) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                                cursorColor = MaterialTheme.colorScheme.primary
-                            )
-                        )
-                        OutlinedTextField(
-                            value = searchTitle,
-                            onValueChange = { searchTitle = it },
-                            label = { Text(getLocalized("Título de Canción", "Song Title"), color = Color.White.copy(alpha = 0.5f)) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                                cursorColor = MaterialTheme.colorScheme.primary
-                            )
-                        )
-                        
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    searchStatusMessage = getLocalized("Buscando en la base de datos...", "Searching LRCLIB database...")
-                                    isSearchingOnline = true
-                                    val results = LyricsRepository.searchLyricsOptionsFromLrcLib(searchArtist, searchTitle)
-                                    searchLyricsResults = results
-                                    if (results.isNotEmpty()) {
-                                        searchStatusMessage = getLocalized("Se encontraron ${results.size} resultados.", "Found ${results.size} results.")
-                                    } else {
-                                        searchStatusMessage = getLocalized("No se encontraron letras. Intenta refinar la búsqueda.", "No lyrics found. Try refining the query!")
-                                    }
-                                    isSearchingOnline = false
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !isSearchingOnline
-                        ) {
-                            if (isSearchingOnline) {
-                                CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            } else {
-                                Text(getLocalized("Buscar Coincidencias", "Search Matches"), fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        if (searchStatusMessage.isNotEmpty()) {
-                            Text(
-                                text = searchStatusMessage,
-                                color = if (searchLyricsResults.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-
-                        if (searchLyricsResults.isNotEmpty()) {
-                            HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
-                            Text(
-                                text = getLocalized("SELECCIONA UNA LETRA:", "SELECT LYRICS TO APPLY:"),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                letterSpacing = 1.sp
-                            )
-                            LazyColumn(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 200.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                items(searchLyricsResults, key = { it.id }) { result ->
-                                    val isSynced = result.syncedLyrics != null
-                                    Card(
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = Color.White.copy(alpha = 0.05f)
-                                        ),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                val lyricsToApply = result.syncedLyrics ?: result.plainLyrics
-                                                if (!lyricsToApply.isNullOrEmpty()) {
-                                                    viewModel?.updateSongLyrics(currentSongFile.id, lyricsToApply)
-                                                    showSearchLyricsDialog = false
-                                                    searchLyricsResults = emptyList()
-                                                    searchStatusMessage = ""
-                                                }
-                                            }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = result.trackName,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color.White,
-                                                    fontSize = 13.sp
-                                                )
-                                                Text(
-                                                    text = "${result.artistName} • ${result.albumName}",
-                                                    color = Color.White.copy(alpha = 0.5f),
-                                                    fontSize = 11.sp
-                                                )
-                                            }
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(
-                                                        if (isSynced) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                                        else MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
-                                                    )
-                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                                            ) {
-                                                Text(
-                                                    text = if (isSynced) getLocalized("Sincro", "Synced") else getLocalized("Texto", "Plain"),
-                                                    color = if (isSynced) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 10.sp
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(
-                        onClick = { 
-                            showSearchLyricsDialog = false 
-                            searchLyricsResults = emptyList()
-                            searchStatusMessage = ""
-                        },
-                        enabled = !isSearchingOnline
-                    ) {
-                        Text(getLocalized("Cancelar", "Cancel"), color = Color.White.copy(alpha = 0.6f))
-                    }
-                },
-                containerColor = Color(0xFF161829),
-                titleContentColor = Color.White,
-                textContentColor = Color.White
+            SearchLyricsDialog(
+                song = currentSongFile,
+                viewModel = viewModel,
+                onDismiss = { showSearchLyricsDialog = false }
             )
         }
 
         if (showDeleteDialog && currentSongFile != null) {
             val context = LocalContext.current
-            AlertDialog(
-                onDismissRequest = { showDeleteDialog = false },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.Delete,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Delete Track?", fontWeight = FontWeight.Bold)
-                    }
-                },
-                text = {
-                    Column {
-                        Text("Are you sure you want to permanently delete this track from your device?", color = Color.White.copy(alpha = 0.8f))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(currentSongFile.title, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text(currentSongFile.artist, fontSize = 13.sp, color = Color.White.copy(alpha = 0.6f))
-                    }
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            showDeleteDialog = false
-                            viewModel?.deleteSong(context, currentSongFile.id)
-                            onBack()
-                        },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("Delete", fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDeleteDialog = false }) {
-                        Text("Cancel", color = Color.White.copy(alpha = 0.6f))
-                    }
-                },
-                containerColor = Color(0xFF161829),
-                titleContentColor = Color.White,
-                textContentColor = Color.White
+            DeleteSongDialog(
+                song = currentSongFile,
+                viewModel = viewModel,
+                context = context,
+                onDeleted = onBack,
+                onDismiss = { showDeleteDialog = false }
             )
         }
 
@@ -2504,52 +2210,10 @@ fun PlayerScreen(
 
         // Technical Audio Info Dialog
         if (showFileInfoDialog) {
-            val currentSongUriString = remember(playerState.currentSong?.mediaId) {
-                val mediaId = playerState.currentSong?.mediaId
-                if (mediaId != null) "content://media/external/audio/media/$mediaId" else null
-            }
-            val detailedInfo by produceState(
-                initialValue = DetailedAudioFileInfo("Loading...", "Loading...", "Loading...", "Loading...", "Loading...", "Loading...", "Loading..."),
-                key1 = playerState.currentSong?.mediaId
-            ) {
-                value = getDetailedAudioFileInfo(context, currentSongUriString)
-            }
-            val getLocalized = { es: String, en: String ->
-                if (java.util.Locale.getDefault().language == "es") es else en
-            }
-            AlertDialog(
-                onDismissRequest = { showFileInfoDialog = false },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(getLocalized("Especificaciones de Audio", "Audio Specifications"), fontWeight = FontWeight.Bold)
-                    }
-                },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(getLocalized("Título: ${detailedInfo.title}", "Title: ${detailedInfo.title}"), fontWeight = FontWeight.Bold, color = Color.White)
-                        Text(getLocalized("Artista: ${detailedInfo.artist}", "Artist: ${detailedInfo.artist}"), color = Color.White.copy(alpha = 0.8f))
-                        Text(getLocalized("Álbum: ${detailedInfo.album}", "Album: ${detailedInfo.album}"), color = Color.White.copy(alpha = 0.8f))
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(getLocalized("Ubicación: ${detailedInfo.location}", "Location: ${detailedInfo.location}"), fontSize = 12.sp, color = Color.White.copy(alpha = 0.7f))
-                        Text(getLocalized("Tipo: ${detailedInfo.type}", "Type: ${detailedInfo.type}"), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Text(getLocalized("Tasa de bits: ${detailedInfo.bitrate}", "Bitrate: ${detailedInfo.bitrate}"), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Text(getLocalized("Tamaño: ${detailedInfo.size}", "Size: ${detailedInfo.size}"), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showFileInfoDialog = false }) {
-                        Text(getLocalized("Cerrar", "Close"), fontWeight = FontWeight.Bold)
-                    }
-                },
-                containerColor = Color(0xFF161829),
-                titleContentColor = Color.White,
-                textContentColor = Color.White
+            AudioSpecsDialog(
+                mediaId = playerState.currentSong?.mediaId,
+                context = context,
+                onDismiss = { showFileInfoDialog = false }
             )
         }
     }

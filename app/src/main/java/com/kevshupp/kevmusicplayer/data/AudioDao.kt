@@ -14,6 +14,9 @@ interface AudioDao {
     @Query("SELECT * FROM audio_files ORDER BY title ASC")
     suspend fun getAllAudioFiles(): List<AudioFile>
 
+    @Query("SELECT id, title, artist, album, genre, duration, uriString, folderPath, folderName, NULL as lyrics, NULL as translatedLyrics, playCount, dateAdded, lastPlayed, replayGain, year, dateModified, track FROM audio_files ORDER BY title ASC")
+    suspend fun getAllAudioFilesLightweight(): List<AudioFile>
+
     @Query("SELECT * FROM audio_files ORDER BY title ASC")
     fun getAudioFilesPagingSource(): androidx.paging.PagingSource<Int, AudioFile>
 
@@ -22,6 +25,12 @@ interface AudioDao {
 
     @Query("SELECT * FROM audio_files WHERE id = :id LIMIT 1")
     suspend fun getAudioFileById(id: Long): AudioFile?
+
+    @Query("SELECT lyrics FROM audio_files WHERE id = :id LIMIT 1")
+    suspend fun getLyricsById(id: Long): String?
+
+    @Query("SELECT translatedLyrics FROM audio_files WHERE id = :id LIMIT 1")
+    suspend fun getTranslatedLyricsById(id: Long): String?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(audioFiles: List<AudioFile>)

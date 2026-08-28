@@ -251,6 +251,7 @@ class PlaybackService : MediaLibraryService() {
 
                 if (isPlaying) {
                     requestAudioFocus()
+                    startFadeCheckLoop(player)
                     try {
                         if (wakeLock?.isHeld == false) {
                             wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24h safeguard limit
@@ -1040,6 +1041,11 @@ class PlaybackService : MediaLibraryService() {
             val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
             val pauseOnNoisy = settingsPrefs.getBoolean("pause_on_headphone_unplug", true)
             player?.setHandleAudioBecomingNoisy(pauseOnNoisy)
+        } else if (key == "crossfade_duration") {
+            val player = mediaLibrarySession?.player as? ExoPlayer
+            if (player != null) {
+                startFadeCheckLoop(player)
+            }
         }
     }
 
@@ -1327,33 +1333,43 @@ class PlaybackService : MediaLibraryService() {
 
     private fun startFadeCheckLoop(player: ExoPlayer) {
         fadeJob?.cancel()
+        val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+        val initialCrossfade = settingsPrefs.getInt("crossfade_duration", 0)
+        if (initialCrossfade <= 0) {
+            if (kotlin.math.abs(player.volume - currentReplayGainFactor) > 0.02f && !isFadingIn) {
+                player.volume = currentReplayGainFactor
+            }
+            return
+        }
+
         fadeJob = serviceScope.launch {
-            val settingsPrefs = getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
             var lastSkippedMediaItem: MediaItem? = null
             while (true) {
-                kotlinx.coroutines.delay(150)
-                if (!player.isPlaying || isFadingIn) continue
-                
                 val crossfadeSeconds = settingsPrefs.getInt("crossfade_duration", 0)
                 if (crossfadeSeconds <= 0) {
                     if (kotlin.math.abs(player.volume - currentReplayGainFactor) > 0.02f && !isFadingIn) {
                         player.volume = currentReplayGainFactor
                     }
+                    break
+                }
+
+                if (!player.isPlaying || isFadingIn) {
+                    kotlinx.coroutines.delay(1000)
                     continue
                 }
-                
+
                 val duration = player.duration
                 val position = player.currentPosition
                 val currentItem = player.currentMediaItem
                 if (duration > 0) {
                     val remainingMs = duration - position
                     val crossfadeMs = crossfadeSeconds * 1000L
-                    
+
                     if (remainingMs <= crossfadeMs) {
                         val progress = remainingMs.toFloat() / crossfadeMs
                         val targetVol = progress.coerceIn(0f, 1f) * currentReplayGainFactor
                         player.volume = targetVol
-                        
+
                         if (remainingMs <= 200L && player.hasNextMediaItem() && currentItem != lastSkippedMediaItem) {
                             com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
                                 this@PlaybackService,
@@ -1364,11 +1380,17 @@ class PlaybackService : MediaLibraryService() {
                             player.seekToNextMediaItem()
                             fadeNewTrackIn(player, crossfadeMs)
                         }
+                        kotlinx.coroutines.delay(100)
                     } else {
                         if (kotlin.math.abs(player.volume - currentReplayGainFactor) > 0.02f && !isFadingIn) {
                             player.volume = currentReplayGainFactor
                         }
+                        val timeUntilCrossfade = remainingMs - crossfadeMs
+                        val sleepMs = timeUntilCrossfade.coerceIn(150L, 1000L)
+                        kotlinx.coroutines.delay(sleepMs)
                     }
+                } else {
+                    kotlinx.coroutines.delay(1000)
                 }
             }
         }

@@ -95,11 +95,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             checkAutoBackup(application)
         }
 
-        // Instantly load all cached songs from SQLite database to ensure the screen loads atomically without UI jumps or shifts!
+        // Instantly load cached songs with lightweight metadata from SQLite database (lyrics loaded on demand to minimize startup RAM)
         initialDbLoadJob = viewModelScope.launch {
             try {
                 val allFiles = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    audioDao.getAllAudioFiles()
+                    audioDao.getAllAudioFilesLightweight()
                 }
                 if (allFiles.isNotEmpty()) {
                     localAudioFiles.clear()
@@ -447,6 +447,28 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
                 val song = localAudioFiles.find { it.id == id } ?: return@launch
                 
+                // 0. If lyrics or translated lyrics are not yet loaded in RAM, load them from SQLite DB
+                var currentSongLyrics = song.lyrics
+                var currentSongTranslation = song.translatedLyrics
+                if (currentSongLyrics == null || currentSongTranslation == null) {
+                    val (dbLyrics, dbTranslation) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val l = if (currentSongLyrics == null) audioDao.getLyricsById(id) else currentSongLyrics
+                        val t = if (currentSongTranslation == null) audioDao.getTranslatedLyricsById(id) else currentSongTranslation
+                        l to t
+                    }
+                    if (dbLyrics != currentSongLyrics || dbTranslation != currentSongTranslation) {
+                        currentSongLyrics = dbLyrics
+                        currentSongTranslation = dbTranslation
+                        val index = localAudioFiles.indexOfFirst { it.id == id }
+                        if (index != -1) {
+                            localAudioFiles[index] = localAudioFiles[index].copy(
+                                lyrics = dbLyrics,
+                                translatedLyrics = dbTranslation
+                            )
+                        }
+                    }
+                }
+
                 // 1. Check local/embedded sources first (LRC file next to it or embedded tag) on Dispatchers.IO
                 val localLyrics = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     readLocalLrcOrEmbedded(context, song)
@@ -454,17 +476,18 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 val localTranslation = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     readLocalTranslatedLrcOrEmbedded(context, song)
                 }
-                if (!localTranslation.isNullOrBlank() && song.translatedLyrics != localTranslation) {
+                if (!localTranslation.isNullOrBlank() && currentSongTranslation != localTranslation) {
                     updateSongTranslatedLyrics(id, localTranslation)
+                    currentSongTranslation = localTranslation
                 }
 
                 if (!localLyrics.isNullOrBlank()) {
                     val localIsSynced = LyricsRepository.isLrcSynced(localLyrics)
-                    val dbIsSynced = LyricsRepository.isLrcSynced(song.lyrics)
+                    val dbIsSynced = LyricsRepository.isLrcSynced(currentSongLyrics)
                     
                     // If local is synced, or if DB is empty, use local lyrics!
-                    if (localIsSynced || (song.lyrics.isNullOrBlank() && !localIsSynced)) {
-                        if (song.lyrics != localLyrics) {
+                    if (localIsSynced || (currentSongLyrics.isNullOrBlank() && !localIsSynced)) {
+                        if (currentSongLyrics != localLyrics) {
                             updateSongLyrics(id, localLyrics)
                         }
                         if (localIsSynced) {
@@ -474,7 +497,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 // 2. If currently stored DB lyrics are already synchronized, do not fetch online
-                if (LyricsRepository.isLrcSynced(song.lyrics)) {
+                if (LyricsRepository.isLrcSynced(currentSongLyrics)) {
                     return@launch
                 }
 
@@ -841,17 +864,22 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     .setOngoing(true)
                     .setOnlyAlertOnce(true)
                 
+                var lastNotifTime = 0L
                 songsToProcess.forEachIndexed { index, song ->
                     if (!isDownloadingAllLyrics.value) return@launch // Cancel if requested
                     
                     downloadAllLyricsCurrent.value = index + 1
                     downloadAllLyricsCurrentName.value = song.title
                     
-                    // Update progress notification
-                    val titleText = song.title
-                    builder.setContentText("$titleText (${index + 1}/$total)")
-                        .setProgress(total, index + 1, false)
-                    notificationManager.notify(NOTIFICATION_ID, builder.build())
+                    // Update progress notification (throttled to avoid notification rate-limits and IPC overhead)
+                    val now = System.currentTimeMillis()
+                    if (now - lastNotifTime > 500L || index == 0 || index == total - 1) {
+                        lastNotifTime = now
+                        val titleText = song.title
+                        builder.setContentText("$titleText (${index + 1}/$total)")
+                            .setProgress(total, index + 1, false)
+                        notificationManager.notify(NOTIFICATION_ID, builder.build())
+                    }
                     
                     // Check if song already has synced lyrics in DB
                     val dbHasSynced = !song.lyrics.isNullOrBlank() && LyricsRepository.isLrcSynced(song.lyrics)
@@ -1160,32 +1188,30 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     songsToProcess.forEach { song ->
                         try {
                             val cleanTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-                            val lrcFile = File(song.folderPath, "$cleanTitle.lrc")
-                            if (lrcFile.exists()) {
-                                lrcFile.delete()
-                            }
-                            val locale = java.util.Locale.getDefault().language
-                            val transLrcFile = File(song.folderPath, "$cleanTitle.$locale.lrc")
-                            if (transLrcFile.exists()) {
-                                transLrcFile.delete()
-                            }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                        
-                        try {
-                            writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
-                                val tag = audioFile.getTagOrCreateAndSetDefault()
-                                tag.deleteField(FieldKey.LYRICS)
-                                tag.deleteField(FieldKey.CUSTOM1)
-                                audioFile.tag = tag
+                            if (song.folderPath.isNotBlank()) {
+                                val lrcFile = File(song.folderPath, "$cleanTitle.lrc")
+                                if (lrcFile.exists()) lrcFile.delete()
+                                
+                                val locale = java.util.Locale.getDefault().language
+                                val transLrcFile = File(song.folderPath, "$cleanTitle.$locale.lrc")
+                                if (transLrcFile.exists()) transLrcFile.delete()
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
                     }
 
-                    // 2. Recursively delete all .lrc files in the root music folder
+                    // 2. Clear app internal lyrics storage directory
+                    try {
+                        val internalLyricsDir = File(context.filesDir, "lyrics")
+                        if (internalLyricsDir.exists() && internalLyricsDir.isDirectory) {
+                            internalLyricsDir.deleteRecursively()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+
+                    // 3. Recursively delete all .lrc files in the root music folder
                     if (baseMusicDir != null && baseMusicDir.exists() && baseMusicDir.isDirectory) {
                         try {
                             baseMusicDir.walk().forEach { file ->
@@ -1808,103 +1834,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun addSongsToPlaylist(playlistName: String, songIds: List<Long>) = playlistManager.addSongsToPlaylist(playlistName, songIds)
     fun removeSongFromPlaylist(playlistName: String, songId: Long) = playlistManager.removeSongFromPlaylist(playlistName, songId)
     fun deletePlaylist(name: String) = playlistManager.deletePlaylist(name)
+
     // Queue system
-    fun addToQueue(file: AudioFile) {
-        val b = browser.value ?: return
-        val trackUri = Uri.parse(file.uriString)
-        val mediaItem = MediaItem.Builder()
-            .setMediaId(file.id.toString())
-            .setUri(trackUri)
-            .setRequestMetadata(
-                MediaItem.RequestMetadata.Builder()
-                    .setMediaUri(trackUri)
-                    .build()
-            )
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(file.title)
-                    .setArtist(file.artist)
-                    .setAlbumTitle(file.album)
-                    .setIsPlayable(true)
-                    .setIsBrowsable(false)
-                    .build()
-            )
-            .build()
-        b.addMediaItem(mediaItem)
-        savePlaybackState()
-    }
+    val queueManager = com.kevshupp.kevmusicplayer.playback.managers.QueueManager(browser, localAudioFiles) { savePlaybackState() }
 
-    fun playNext(file: AudioFile) {
-        val b = browser.value ?: return
-        val trackUri = Uri.parse(file.uriString)
-        val mediaItem = MediaItem.Builder()
-            .setMediaId(file.id.toString())
-            .setUri(trackUri)
-            .setRequestMetadata(
-                MediaItem.RequestMetadata.Builder()
-                    .setMediaUri(trackUri)
-                    .build()
-            )
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(file.title)
-                    .setArtist(file.artist)
-                    .setAlbumTitle(file.album)
-                    .setIsPlayable(true)
-                    .setIsBrowsable(false)
-                    .build()
-            )
-            .build()
-        
-        val currentIndex = b.currentMediaItemIndex
-        val nextIndex = if (currentIndex < 0) 0 else currentIndex + 1
-
-        if (nextIndex < b.mediaItemCount) {
-            b.addMediaItem(nextIndex, mediaItem)
-        } else {
-            b.addMediaItem(mediaItem)
-        }
-        savePlaybackState()
-    }
-
-    fun getPlayerQueue(): List<AudioFile> {
-        val b = browser.value ?: return emptyList()
-        val list = mutableListOf<AudioFile>()
-        for (i in 0 until b.mediaItemCount) {
-            val item = b.getMediaItemAt(i)
-            val id = item.mediaId.toLongOrNull() ?: continue
-            val song = localAudioFiles.find { it.id == id }
-            if (song != null) {
-                list.add(song)
-            } else {
-                list.add(
-                    AudioFile(
-                        id = id,
-                        title = item.mediaMetadata.title?.toString() ?: "Unknown",
-                        artist = item.mediaMetadata.artist?.toString() ?: "Unknown",
-                        album = item.mediaMetadata.albumTitle?.toString() ?: "Unknown",
-                        duration = 0L,
-                        uriString = item.requestMetadata.mediaUri?.toString() ?: ""
-                    )
-                )
-            }
-        }
-        return list
-    }
-
-    fun removeFromQueue(index: Int) {
-        val b = browser.value ?: return
-        if (index in 0 until b.mediaItemCount) {
-            b.removeMediaItem(index)
-            savePlaybackState()
-        }
-    }
-
-    fun clearQueue() {
-        val b = browser.value ?: return
-        b.clearMediaItems()
-        savePlaybackState()
-    }
+    fun addToQueue(file: AudioFile) = queueManager.addToQueue(file)
+    fun playNext(file: AudioFile) = queueManager.playNext(file)
+    fun getPlayerQueue(): List<AudioFile> = queueManager.getPlayerQueue()
+    fun removeFromQueue(index: Int) = queueManager.removeFromQueue(index)
+    fun clearQueue() = queueManager.clearQueue()
 
     fun deleteSong(context: android.content.Context, songId: Long) {
         viewModelScope.launch {
