@@ -912,27 +912,25 @@ fun PlayerScreen(
                             ) {
                                 Spacer(modifier = Modifier.weight(0.2f))
 
+                                val isArtRounded = com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current
+                                val artShape = if (isArtRounded) RoundedCornerShape(28.dp) else androidx.compose.ui.graphics.RectangleShape
+
                                 // Premium Album Art Container with rich shadow and organic roundings
-                                Card(
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth(0.9f)
                                         .aspectRatio(1f)
                                         .shadow(
-                                            elevation = 32.dp,
-                                            shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(32.dp) else androidx.compose.ui.graphics.RectangleShape,
-                                            clip = false,
-                                            ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                                            spotColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)
-                                        ),
-                                    shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(32.dp) else androidx.compose.ui.graphics.RectangleShape,
-                                    colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                                            elevation = 16.dp,
+                                            shape = artShape,
+                                            clip = true,
+                                            ambientColor = Color.Black.copy(alpha = 0.35f),
+                                            spotColor = Color.Black.copy(alpha = 0.45f)
+                                        )
+                                        .clip(artShape)
+                                        .background(pageArtGradient),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(pageArtGradient),
-                                        contentAlignment = Alignment.Center
-                                    ) {
                                         val pageArtBytes = rememberAlbumArt(pageUriString)
                                         if (disableAnimations) {
                                             if (pageArtBytes != null) {
@@ -1033,7 +1031,6 @@ fun PlayerScreen(
                                             )
                                         }
                                     }
-                                }
 
                                 if (isVisualizerEnabled) {
                                     val waveColor = animatedColor
@@ -1207,21 +1204,25 @@ fun PlayerScreen(
                                          )
                                      }
 
-                                     // Shuffle Button (Far Right)
-                                     IconButton(
-                                         onClick = {
-                                             val newShuffle = !shuffleEnabled
-                                             player.shuffleModeEnabled = newShuffle
-                                         },
-                                         modifier = Modifier.size(44.dp)
-                                     ) {
-                                         Icon(
-                                             imageVector = Icons.Rounded.Shuffle,
-                                             contentDescription = "Shuffle",
-                                             tint = if (shuffleEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                                             modifier = Modifier.size(24.dp)
-                                         )
-                                     }
+                                      // Shuffle Button (Far Right)
+                                      val isShuffle = viewModel?.isShuffleActive?.value ?: shuffleEnabled
+                                      IconButton(
+                                          onClick = {
+                                              if (viewModel != null) {
+                                                  viewModel.toggleShuffle()
+                                              } else {
+                                                  player.shuffleModeEnabled = !shuffleEnabled
+                                              }
+                                          },
+                                          modifier = Modifier.size(44.dp)
+                                      ) {
+                                          Icon(
+                                              imageVector = Icons.Rounded.Shuffle,
+                                              contentDescription = "Shuffle",
+                                              tint = if (isShuffle) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                              modifier = Modifier.size(24.dp)
+                                          )
+                                      }
                                  }
 
                                  Spacer(modifier = Modifier.weight(0.15f))
@@ -1866,8 +1867,16 @@ fun PlayerScreen(
                         .navigationBarsPadding(),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    val queueSongs = remember(playerState.currentSong, showQueueSheet) {
+                    val queueSongs = remember(playerState.currentSong, playerState.playlistVersion, playerState.currentMediaItemIndex, showQueueSheet) {
                         viewModel?.getPlayerQueue() ?: emptyList()
+                    }
+                    val queueListState = rememberLazyListState()
+
+                    LaunchedEffect(showQueueSheet, playerState.currentMediaItemIndex) {
+                        if (showQueueSheet && playerState.currentMediaItemIndex in queueSongs.indices) {
+                            val targetIndex = (playerState.currentMediaItemIndex - 1).coerceAtLeast(0)
+                            queueListState.scrollToItem(targetIndex)
+                        }
                     }
 
                     // Header
@@ -1972,6 +1981,7 @@ fun PlayerScreen(
                         }
                     } else {
                         LazyColumn(
+                            state = queueListState,
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1982,7 +1992,7 @@ fun PlayerScreen(
                                 key = { index, song -> "${song.id}_$index" },
                                 contentType = { _, _ -> "queue_song_item" }
                             ) { index, song ->
-                                val isCurrent = playerState.currentSong?.mediaId == song.id.toString()
+                                val isCurrent = index == playerState.currentMediaItemIndex || (playerState.currentSong?.mediaId == song.id.toString() && queueSongs.indexOfFirst { it.id.toString() == playerState.currentSong?.mediaId } == index)
                                 val songArtBytes = rememberAlbumArt(song.uriString)
 
                                 Surface(

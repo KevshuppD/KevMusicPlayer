@@ -77,7 +77,8 @@ fun LibrarySettingsSection(
     setExcludedFolders: (List<String>) -> Unit,
     onFindDuplicates: () -> Unit,
     onCheckIntegrity: () -> Unit,
-    onFindShortSongs: () -> Unit
+    onFindShortSongs: () -> Unit,
+    onFindMissingCovers: () -> Unit = {}
 ) {
     var activeOrganizerAction by remember { mutableStateOf("") }
     var showDeleteCoversDialog by remember { mutableStateOf(false) }
@@ -130,14 +131,14 @@ fun LibrarySettingsSection(
 
     // Single unified card for Statistics and Maintenance Sections
     Card(
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
             containerColor = settingsCardContainerColor()
         ),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 1. Library Statistics Row
@@ -147,8 +148,8 @@ fun LibrarySettingsSection(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -156,11 +157,11 @@ fun LibrarySettingsSection(
                         imageVector = Icons.Rounded.MusicNote,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -170,7 +171,7 @@ fun LibrarySettingsSection(
                         color = MaterialTheme.colorScheme.primary,
                         letterSpacing = 1.sp
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     val sizeText = if (totalSizeMb >= 1024) {
                         String.format("%.2f GB", totalSizeMb / 1024)
                     } else {
@@ -187,27 +188,32 @@ fun LibrarySettingsSection(
 
             HorizontalDivider(
                 color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 20.dp)
+                modifier = Modifier.padding(vertical = 12.dp)
             )
 
-            // 2. Maintenance / Re-scan button Section (Glowing and premium)
-            Text(
-                text = getLocalized("MANTENIMIENTO DE BIBLIOTECA", "LIBRARY MAINTENANCE"),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                letterSpacing = 1.sp
-            )
+            // 2. Maintenance / Re-scan button Section
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = getLocalized("MANTENIMIENTO DE BIBLIOTECA", "LIBRARY MAINTENANCE"),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingsInfoButton(
+                    title = getLocalized("Mantenimiento de Biblioteca", "Library Maintenance"),
+                    infoText = getLocalized(
+                        "Fuerza la actualización de tu biblioteca y reescaneo profundo para recuperar archivos de audio.",
+                        "Force refresh audio library and perform deep scan to recover audio files."
+                    )
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = getLocalized("Forzar la actualización completa de tu biblioteca de audio y reescanear el almacenamiento", "Force refresh your entire audio library and re-scan device storage"),
-                fontSize = 12.sp,
-                color = settingsTextMutedColor()
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             Button(
                 onClick = {
@@ -218,15 +224,15 @@ fun LibrarySettingsSection(
                         setIsScanning(false)
                     }
                 },
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 if (isScanning) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         color = MaterialTheme.colorScheme.onPrimary,
                         strokeWidth = 2.dp
                     )
@@ -234,24 +240,24 @@ fun LibrarySettingsSection(
                     Text(
                         text = getLocalized("Escaneando archivos...", "Scanning Files..."),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+                        fontSize = 14.sp
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.Refresh,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Escanear Biblioteca", "Re-scan Library"),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+                        fontSize = 14.sp
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Button(
                 onClick = {
@@ -271,15 +277,15 @@ fun LibrarySettingsSection(
                     }
                 },
                 enabled = !isScanning && !isDeepScanning,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 if (isDeepScanning) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                         strokeWidth = 2.dp
                     )
@@ -287,83 +293,69 @@ fun LibrarySettingsSection(
                     Text(
                         text = getLocalized("Escaneando disco directamente...", "Scanning disk directly..."),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.FolderZip,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Forzar Escaneo Profundo de Carpetas", "Force Deep Folder Scan"),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Text(
-                text = getLocalized(
-                    "Escanea físicamente la carpeta seleccionada buscando archivos de audio (.mp3, .flac, etc.) para recuperar canciones de carpetas donde habías borrado un .nomedia.",
-                    "Physically scans the selected folder looking for audio files (.mp3, .flac, etc.) to recover songs from folders where .nomedia was deleted."
-                ),
-                fontSize = 11.sp,
-                color = settingsTextMutedColor()
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
             HorizontalDivider(
                 color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 8.dp)
+                modifier = Modifier.padding(vertical = 12.dp)
             )
+
+            // 3. Descargador de letras
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = getLocalized("DESCARGADOR DE LETRAS", "LYRICS DOWNLOADER"),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingsInfoButton(
+                    title = getLocalized("Descargador de Letras", "Lyrics Downloader"),
+                    infoText = getLocalized(
+                        "Descarga automáticamente letras sincronizadas de internet o elimina las almacenadas.",
+                        "Automatically download synced lyrics from the internet or clear stored ones."
+                    )
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = getLocalized("DESCARGADOR DE LETRAS", "LYRICS DOWNLOADER"),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                letterSpacing = 1.sp,
-                modifier = Modifier.align(Alignment.Start)
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = getLocalized(
-                    "Descarga automáticamente letras (sincronizadas si están disponibles) de internet para toda tu música.",
-                    "Automatically download lyrics (synchronized if available) from the internet for all your music."
-                ),
-                fontSize = 12.sp,
-                color = settingsTextMutedColor(),
-                modifier = Modifier.align(Alignment.Start)
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             Button(
                 onClick = {
                     viewModel.downloadAllLyrics(context)
                 },
                 enabled = !viewModel.isDownloadingAllLyrics.value && !isScanning && !isRenaming,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 if (viewModel.isDownloadingAllLyrics.value) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         color = MaterialTheme.colorScheme.onPrimary,
                         strokeWidth = 2.dp
                     )
@@ -371,7 +363,7 @@ fun LibrarySettingsSection(
                     Text(
                         text = "${viewModel.downloadAllLyricsCurrent.value}/${viewModel.downloadAllLyricsTotal.value}: ${viewModel.downloadAllLyricsCurrentName.value}",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onPrimary,
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -393,36 +385,36 @@ fun LibrarySettingsSection(
                     Icon(
                         imageVector = Icons.Rounded.CloudDownload,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Descargar Letras de la Biblioteca", "Download Library Lyrics"),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+                        fontSize = 14.sp
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Button(
                 onClick = {
                     showDeleteAllLyricsConfirmDialog = true
                 },
                 enabled = !viewModel.isDownloadingAllLyrics.value && !isScanning && !isRenaming && !viewModel.isDeletingAllLyrics.value,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
                     contentColor = MaterialTheme.colorScheme.onError
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 if (viewModel.isDeletingAllLyrics.value) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         color = MaterialTheme.colorScheme.onError,
                         strokeWidth = 2.dp
                     )
@@ -430,21 +422,21 @@ fun LibrarySettingsSection(
                     Text(
                         text = getLocalized("Eliminando...", "Deleting..."),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
+                        fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onError
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.DeleteForever,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.onError
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Eliminar Todas las Letras", "Delete All Lyrics"),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
+                        fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onError
                     )
                 }
@@ -453,30 +445,31 @@ fun LibrarySettingsSection(
             // Organize Files Section
             HorizontalDivider(
                 color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 16.dp)
+                modifier = Modifier.padding(vertical = 12.dp)
             )
 
-            Text(
-                text = getLocalized("ORGANIZADOR DE ARCHIVOS", "FILE ORGANIZER"),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.align(Alignment.Start)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = getLocalized("ORGANIZADOR DE ARCHIVOS", "FILE ORGANIZER"),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingsInfoButton(
+                    title = getLocalized("Organizador de Archivos", "File Organizer"),
+                    infoText = getLocalized(
+                        "Renombra archivos según metadatos, organízalos por carpetas de artistas o limpia archivos residuales.",
+                        "Rename files by tags, organize into artist folders, or delete leftover files."
+                    )
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = getLocalized(
-                    "Organiza tu música física. Puedes renombrar los archivos en base a sus metadatos o agruparlos físicamente en carpetas por artista.",
-                    "Organize your physical music. You can rename files based on their metadata or physically group them into folders by artist."
-                ),
-                fontSize = 12.sp,
-                color = settingsTextMutedColor(),
-                modifier = Modifier.align(Alignment.Start)
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             Button(
                 onClick = {
@@ -504,18 +497,18 @@ fun LibrarySettingsSection(
                     )
                 },
                 enabled = activeOrganizerAction == "" && !isScanning,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 if (isRenaming && activeOrganizerAction == "rename") {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         color = MaterialTheme.colorScheme.onPrimary,
                         strokeWidth = 2.dp
                     )
@@ -523,27 +516,27 @@ fun LibrarySettingsSection(
                     Text(
                         text = "$renamingCurrent/$renamingTotal: $renamingCurrentName",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onPrimary
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.DriveFileRenameOutline,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.onPrimary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Renombrar Archivos", "Rename Files"),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
+                        fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onPrimary
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Button(
                 onClick = {
@@ -571,18 +564,18 @@ fun LibrarySettingsSection(
                     )
                 },
                 enabled = activeOrganizerAction == "" && !isScanning,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 if (isRenaming && activeOrganizerAction == "organize") {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         color = MaterialTheme.colorScheme.onPrimary,
                         strokeWidth = 2.dp
                     )
@@ -590,34 +583,34 @@ fun LibrarySettingsSection(
                     Text(
                         text = "$renamingCurrent/$renamingTotal: $renamingCurrentName",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onPrimary
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.FolderCopy,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.onPrimary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Organizar por Artista", "Organize by Artist"),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
+                        fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onPrimary
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Button(
                 onClick = {
                     showDeleteCoversDialog = true
                 },
                 enabled = activeOrganizerAction == "" && !isScanning,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.errorContainer,
                     contentColor = MaterialTheme.colorScheme.onErrorContainer,
@@ -625,11 +618,11 @@ fun LibrarySettingsSection(
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 if (isRenaming && activeOrganizerAction == "delete_covers") {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         strokeWidth = 2.dp
                     )
@@ -637,34 +630,34 @@ fun LibrarySettingsSection(
                     Text(
                         text = "$renamingCurrent/$renamingTotal: $renamingCurrentName",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.DeleteSweep,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.onErrorContainer
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Borrar Imágenes de Portadas", "Delete Folder Covers"),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
+                        fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Button(
                 onClick = {
                     showDeleteNoMediaDialog = true
                 },
                 enabled = activeOrganizerAction == "" && !isScanning,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.errorContainer,
                     contentColor = MaterialTheme.colorScheme.onErrorContainer,
@@ -672,11 +665,11 @@ fun LibrarySettingsSection(
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 if (isRenaming && activeOrganizerAction == "delete_nomedia") {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         strokeWidth = 2.dp
                     )
@@ -684,21 +677,21 @@ fun LibrarySettingsSection(
                     Text(
                         text = "$renamingCurrent/$renamingTotal: $renamingCurrentName",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.DeleteSweep,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.onErrorContainer
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = getLocalized("Borrar Archivos .nomedia", "Delete .nomedia Files"),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
+                        fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
                 }
@@ -707,53 +700,54 @@ fun LibrarySettingsSection(
             // Duplicate Finder Section
             HorizontalDivider(
                 color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 16.dp)
+                modifier = Modifier.padding(vertical = 12.dp)
             )
 
-            Text(
-                text = getLocalized("BUSCADOR DE DUPLICADOS", "DUPLICATE FINDER"),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.align(Alignment.Start)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = getLocalized("BUSCADOR DE DUPLICADOS", "DUPLICATE FINDER"),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingsInfoButton(
+                    title = getLocalized("Buscador de Duplicados", "Duplicate Finder"),
+                    infoText = getLocalized(
+                        "Busca y elimina canciones duplicadas en tu almacenamiento para liberar espacio.",
+                        "Search and delete duplicate songs on your storage to free up space."
+                    )
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = getLocalized(
-                    "Busca y elimina canciones duplicadas en tu almacenamiento para liberar espacio.",
-                    "Search and delete duplicate songs on your storage to free up space."
-                ),
-                fontSize = 12.sp,
-                color = settingsTextMutedColor(),
-                modifier = Modifier.align(Alignment.Start)
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             Button(
                 onClick = onFindDuplicates,
                 enabled = !isScanning && !isRenaming,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.DeleteSweep,
                     contentDescription = null,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = getLocalized("Buscar Canciones Duplicadas", "Search Duplicate Songs"),
                     fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onPrimary
                 )
             }
@@ -761,53 +755,54 @@ fun LibrarySettingsSection(
             // Integrity Checker Section
             HorizontalDivider(
                 color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 16.dp)
+                modifier = Modifier.padding(vertical = 12.dp)
             )
 
-            Text(
-                text = getLocalized("VERIFICADOR DE INTEGRIDAD", "INTEGRITY CHECKER"),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.align(Alignment.Start)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = getLocalized("VERIFICADOR DE INTEGRIDAD", "INTEGRITY CHECKER"),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingsInfoButton(
+                    title = getLocalized("Verificador de Integridad", "Integrity Checker"),
+                    infoText = getLocalized(
+                        "Busca archivos de audio dañados, corruptos o inaccesibles para mantener limpia tu biblioteca.",
+                        "Search for damaged, corrupted, or inaccessible audio files to keep your library clean."
+                    )
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = getLocalized(
-                    "Busca archivos de audio dañados, corruptos o inaccesibles para mantener limpia tu biblioteca.",
-                    "Search for damaged, corrupted, or inaccessible audio files to keep your library clean."
-                ),
-                fontSize = 12.sp,
-                color = settingsTextMutedColor(),
-                modifier = Modifier.align(Alignment.Start)
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             Button(
                 onClick = onCheckIntegrity,
                 enabled = !isScanning && !isRenaming,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.OfflinePin,
                     contentDescription = null,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = getLocalized("Verificar Integridad", "Verify Integrity"),
                     fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onPrimary
                 )
             }
@@ -815,53 +810,109 @@ fun LibrarySettingsSection(
             // Short Songs Finder Section
             HorizontalDivider(
                 color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 16.dp)
+                modifier = Modifier.padding(vertical = 12.dp)
             )
 
-            Text(
-                text = getLocalized("CANCIONES CORTAS / INCOMPLETAS", "SHORT / INCOMPLETE SONGS"),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.align(Alignment.Start)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = getLocalized("CANCIONES CORTAS / INCOMPLETAS", "SHORT / INCOMPLETE SONGS"),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingsInfoButton(
+                    title = getLocalized("Canciones Cortas / Incompletas", "Short / Incomplete Songs"),
+                    infoText = getLocalized(
+                        "Busca canciones con duración inusualmente corta (descargas truncadas o cortadas) para listar nombres y artistas.",
+                        "Search for songs with unusually short duration (truncated or incomplete downloads)."
+                    )
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = getLocalized(
-                    "Busca canciones con duración inusualmente corta (descargas truncadas o cortadas) para listar sus nombres y artistas y copiarlos fácilmente.",
-                    "Search for songs with unusually short duration (truncated or incomplete downloads) to list their titles and artists for easy re-downloading."
-                ),
-                fontSize = 12.sp,
-                color = settingsTextMutedColor(),
-                modifier = Modifier.align(Alignment.Start)
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             Button(
                 onClick = onFindShortSongs,
                 enabled = !isScanning && !isRenaming,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(46.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.HourglassBottom,
                     contentDescription = null,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = getLocalized("Buscar Canciones Cortas", "Search Short Songs"),
                     fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+
+            // Missing Covers Finder Section
+            HorizontalDivider(
+                color = settingsDividerColor(),
+                modifier = Modifier.padding(vertical = 12.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = getLocalized("PORTADAS FALTANTES", "MISSING ALBUM ART"),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingsInfoButton(
+                    title = getLocalized("Portadas Faltantes", "Missing Album Art"),
+                    infoText = getLocalized(
+                        "Descubre en lote qué álbumes o canciones no tienen carátula y busca portadas en línea o asígnalas con 1 toque.",
+                        "Discover in batch which albums or tracks lack artwork and fetch covers online or assign them in 1 tap."
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Button(
+                onClick = onFindMissingCovers,
+                enabled = !isScanning && !isRenaming,
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AddPhotoAlternate,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = getLocalized("Buscar Portadas Faltantes", "Search Missing Covers"),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onPrimary
                 )
             }
@@ -869,32 +920,31 @@ fun LibrarySettingsSection(
             // Excluded Folders Section
             HorizontalDivider(
                 color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 16.dp)
+                modifier = Modifier.padding(vertical = 12.dp)
             )
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { setShowFolderList(!showFolderList) }
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = getLocalized("CARPETAS EXCLUIDAS", "EXCLUDED FOLDERS"),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                Text(
+                    text = getLocalized("CARPETAS EXCLUIDAS", "EXCLUDED FOLDERS"),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingsInfoButton(
+                    title = getLocalized("Carpetas Excluidas", "Excluded Folders"),
+                    infoText = getLocalized(
+                        "Oculta carpetas de la biblioteca (ej: WhatsApp Audio, tonos de llamada).",
+                        "Hide folders from library (e.g. WhatsApp Audio, ringtones)."
                     )
-                    Text(
-                        text = getLocalized(
-                            "Oculta carpetas de la biblioteca (ej: WhatsApp Audio)",
-                            "Hide folders from library (e.g. WhatsApp Audio)"
-                        ),
-                        fontSize = 11.sp,
-                        color = settingsTextMutedColor()
-                    )
-                }
+                )
+                Spacer(modifier = Modifier.width(4.dp))
                 Icon(
                     imageVector = if (showFolderList) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                     contentDescription = null,
@@ -994,14 +1044,28 @@ fun LibrarySettingsSection(
     }
 
     Column {
-        Text(
-            text = getLocalized("COPIAS DE SEGURIDAD", "BACKUP & RESTORE"),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            letterSpacing = 1.sp,
-            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = getLocalized("COPIAS DE SEGURIDAD", "BACKUP & RESTORE"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp,
+                modifier = Modifier.weight(1f)
+            )
+            SettingsInfoButton(
+                title = getLocalized("Copias de Seguridad", "Backup & Restore"),
+                infoText = getLocalized(
+                    "Resguarda tus listas de reproducción, preferencias de visualización y letras a un archivo JSON local de manera persistente.",
+                    "Safeguard your custom playlists, visual settings, and lyrics to a persistent local JSON file."
+                )
+            )
+        }
 
         Card(
             shape = RoundedCornerShape(24.dp),
@@ -1011,20 +1075,10 @@ fun LibrarySettingsSection(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
+                modifier = Modifier.padding(14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    text = getLocalized(
-                        "Resguarda tus listas de reproducción, preferencias de visualización y letras traducidas a un archivo local en una carpeta fija de manera persistente.",
-                        "Safeguard your custom playlists, visual settings, and translated lyrics to a local file in a fixed folder persistently."
-                    ),
-                    fontSize = 12.sp,
-                    color = settingsTextMutedColor(),
-                    textAlign = TextAlign.Center
-                )
-
                 // Folder status indicator
                 Surface(
                     shape = RoundedCornerShape(16.dp),
@@ -1728,11 +1782,11 @@ fun LibrarySettingsSection(
         )
     }
 
-    Spacer(modifier = Modifier.height(20.dp))
+    Spacer(modifier = Modifier.height(14.dp))
 
     // Switch card for "Utilizar la misma carpeta"
     Card(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = settingsCardContainerColor()
         ),
@@ -1741,7 +1795,7 @@ fun LibrarySettingsSection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
@@ -1753,8 +1807,8 @@ fun LibrarySettingsSection(
                 )
                 Text(
                     text = getLocalized(
-                        "Guarda y restaura la copia de seguridad directamente en la raíz de tu carpeta de música.",
-                        "Save and restore the backup directly in the root of your music folder."
+                        "Guarda y restaura la copia directamente en la raíz de tu música.",
+                        "Save and restore backup directly in root music folder."
                     ),
                     fontSize = 11.sp,
                     color = settingsTextMutedColor()
@@ -1774,7 +1828,7 @@ fun LibrarySettingsSection(
         }
     }
 
-    Spacer(modifier = Modifier.height(20.dp))
+    Spacer(modifier = Modifier.height(14.dp))
 
     val selectMusicFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -1809,42 +1863,47 @@ fun LibrarySettingsSection(
     }
 
     Column {
-        Text(
-            text = getLocalized("CARPETA DE MÚSICA ESPECÍFICA", "SPECIFIC MUSIC FOLDER"),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            letterSpacing = 1.sp,
-            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = getLocalized("CARPETA DE MÚSICA ESPECÍFICA", "SPECIFIC MUSIC FOLDER"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp,
+                modifier = Modifier.weight(1f)
+            )
+            SettingsInfoButton(
+                title = getLocalized("Carpeta de Música Específica", "Specific Music Folder"),
+                infoText = getLocalized(
+                    "Selecciona una carpeta para buscar música. Si se selecciona, solo se escaneará esta carpeta.",
+                    "Select a folder to search for music. If selected, only this folder will be scanned."
+                )
+            )
+        }
 
         Card(
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = settingsCardContainerColor()
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    text = getLocalized(
-                        "Selecciona una carpeta para buscar música. Si se selecciona, solo se escaneará esta carpeta.",
-                        "Select a folder to search for music. If selected, only this folder will be scanned."
-                    ),
-                    fontSize = 12.sp,
-                    color = settingsTextMutedColor()
-                )
-
                 if (selectedMusicFolder != null) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
+                            .clip(RoundedCornerShape(14.dp))
                             .background(settingsDividerColor())
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -1883,12 +1942,12 @@ fun LibrarySettingsSection(
                 } else {
                     Button(
                         onClick = { selectMusicFolderLauncher.launch(null) },
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                             contentColor = MaterialTheme.colorScheme.primary
                         ),
-                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                        modifier = Modifier.fillMaxWidth().height(46.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.FolderOpen,
@@ -1907,21 +1966,144 @@ fun LibrarySettingsSection(
         }
     }
 
-    Spacer(modifier = Modifier.height(20.dp))
+    Spacer(modifier = Modifier.height(14.dp))
+
+    // 0. Library Display Mode Section (Normal vs Compact)
+    var libraryLayoutMode by remember {
+        mutableStateOf(settingsPrefs.getString("library_layout_mode", "normal") ?: "normal")
+    }
+
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = getLocalized("DISEÑO DE BIBLIOTECA", "LIBRARY LAYOUT"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp,
+                modifier = Modifier.weight(1f)
+            )
+            SettingsInfoButton(
+                title = getLocalized("Diseño de Biblioteca", "Library Layout"),
+                infoText = getLocalized(
+                    "Alterna entre el modo normal y el modo compacto optimizado para ver más contenido en pantalla.",
+                    "Switch between normal mode and compact mode optimized to display more items on screen."
+                )
+            )
+        }
+
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = settingsCardContainerColor()
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
+                val layoutModes = listOf(
+                    Triple(
+                        "normal",
+                        getLocalized("Modo Normal", "Normal Mode"),
+                        getLocalized("Diseño espacioso con cabecera y lista holgada", "Spacious layout with full header and relaxed list")
+                    ),
+                    Triple(
+                        "compact",
+                        getLocalized("Modo Compacto", "Compact Mode"),
+                        getLocalized("Diseño optimizado para ver más canciones en pantalla", "Optimized layout to see more songs on screen")
+                    )
+                )
+
+                layoutModes.forEachIndexed { index, (mode, name, desc) ->
+                    val isSelected = libraryLayoutMode == mode
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                libraryLayoutMode = mode
+                                settingsPrefs.edit().putString("library_layout_mode", mode).apply()
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = {
+                                libraryLayoutMode = mode
+                                settingsPrefs.edit().putString("library_layout_mode", mode).apply()
+                            },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = MaterialTheme.colorScheme.primary
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = if (mode == "normal") Icons.Rounded.ViewAgenda else Icons.Rounded.DensityMedium,
+                                contentDescription = null,
+                                tint = if (isSelected) MaterialTheme.colorScheme.primary else settingsTextMutedColor(),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = name,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = settingsTextColor()
+                                )
+                                Text(
+                                    text = desc,
+                                    fontSize = 11.sp,
+                                    color = settingsTextMutedColor()
+                                )
+                            }
+                        }
+                    }
+                    if (index < layoutModes.size - 1) {
+                        HorizontalDivider(
+                            color = settingsDividerColor(),
+                            modifier = Modifier.padding(horizontal = 14.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
 
     // 1. Visible Navigation Categories Section (Drag-to-Reorder)
     Column {
-        Text(
-            text = stringResource(R.string.library_categories_title),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            letterSpacing = 1.sp,
-            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.library_categories_title),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp,
+                modifier = Modifier.weight(1f)
+            )
+            SettingsInfoButton(
+                title = stringResource(R.string.library_categories_title),
+                infoText = stringResource(R.string.library_categories_drag_hint)
+            )
+        }
 
         Card(
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = settingsCardContainerColor()
             ),

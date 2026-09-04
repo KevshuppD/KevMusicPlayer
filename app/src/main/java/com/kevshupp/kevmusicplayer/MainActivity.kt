@@ -299,6 +299,12 @@ fun AppNavigation() {
                                 backStack.add(Screen.Player(file.id))
                             }
                         },
+                        onShuffleClick = { list, startSong ->
+                            val startedSong = viewModel.shuffleAll(list, startSong)
+                            if (startedSong != null && backStack.none { it is Screen.Player && it.fileId == startedSong.id }) {
+                                backStack.add(Screen.Player(startedSong.id))
+                            }
+                        },
                         onMiniPlayerClick = {
                             val currentId = viewModel.browser.value?.currentMediaItem?.mediaId?.toLongOrNull() ?: 0L
                             if (backStack.none { it is Screen.Player && it.fileId == currentId }) {
@@ -332,6 +338,12 @@ fun AppNavigation() {
                             // In adaptive layout, adding Player to backstack shows it in detail pane
                             if (backStack.none { it is Screen.Player && it.fileId == file.id }) {
                                 backStack.add(Screen.Player(file.id))
+                            }
+                        },
+                        onShuffleClick = { list, startSong ->
+                            val startedSong = viewModel.shuffleAll(list, startSong)
+                            if (startedSong != null && backStack.none { it is Screen.Player && it.fileId == startedSong.id }) {
+                                backStack.add(Screen.Player(startedSong.id))
                             }
                         },
                         onMiniPlayerClick = {

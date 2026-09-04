@@ -45,6 +45,7 @@ fun HomeScreen(
     onSettingsClick: () -> Unit,
     onNavigateToLibrary: () -> Unit,
     viewModel: MediaBrowserViewModel? = null,
+    onShuffleClick: ((List<AudioFile>?, AudioFile?) -> Unit)? = null,
     isActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -224,9 +225,14 @@ fun HomeScreen(
                             gradient = Brush.linearGradient(listOf(Color(0xFF8E2DE2), Color(0xFF4A00E0))),
                             onClick = {
                                 if (audioFiles.isNotEmpty()) {
-                                    val randomSong = audioFiles.random()
-                                    onFileClick(randomSong, audioFiles)
-                                    player?.shuffleModeEnabled = true
+                                    if (onShuffleClick != null) {
+                                        onShuffleClick(audioFiles, null)
+                                    } else if (viewModel != null) {
+                                        val started = viewModel.shuffleAll(audioFiles, null)
+                                        if (started != null) {
+                                            onFileClick(started, audioFiles)
+                                        }
+                                    }
                                 }
                             },
                             modifier = Modifier.weight(1f)

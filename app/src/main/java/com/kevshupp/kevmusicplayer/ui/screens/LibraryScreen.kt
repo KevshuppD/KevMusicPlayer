@@ -112,6 +112,7 @@ fun LibraryScreen(
     enabledTabs: List<String>,
     sortBy: String,
     viewModel: MediaBrowserViewModel? = null,
+    onShuffleClick: ((List<AudioFile>?, AudioFile?) -> Unit)? = null,
     isActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -126,6 +127,28 @@ fun LibraryScreen(
     val getLocalized = { es: String, en: String ->
         if (systemLang == "es") es else en
     }
+    val settingsPrefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
+    var libraryLayoutMode by remember {
+        mutableStateOf(settingsPrefs.getString("library_layout_mode", "normal") ?: "normal")
+    }
+
+    // Keep preference in sync if updated elsewhere
+    DisposableEffect(isActive) {
+        if (isActive) {
+            libraryLayoutMode = settingsPrefs.getString("library_layout_mode", "normal") ?: "normal"
+        }
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "library_layout_mode") {
+                libraryLayoutMode = settingsPrefs.getString("library_layout_mode", "normal") ?: "normal"
+            }
+        }
+        settingsPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose {
+            settingsPrefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+    val isCompact = libraryLayoutMode == "compact"
+
     var selectedTab by rememberSaveable { mutableStateOf("Songs") }
     var currentSubView by rememberSaveable(stateSaver = SubViewSaver) { mutableStateOf<SubView?>(null) }
     var showInsights by remember { mutableStateOf(false) }
@@ -324,83 +347,161 @@ fun LibraryScreen(
         ) {
             if (currentSubView == null) {
                 // Primary Header
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 20.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
+                if (isCompact) {
+                    // Compact Single-Row Header with standard 48.dp buttons
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 20.dp, end = 16.dp, top = 10.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
                             text = "Kev Music",
-                            style = MaterialTheme.typography.headlineLarge.copy(
+                            style = MaterialTheme.typography.headlineMedium.copy(
                                 fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = (-1).sp
+                                letterSpacing = (-0.5).sp
                             ),
                             color = MaterialTheme.colorScheme.primary
                         )
-                        Text(
-                            text = "Discover your premium sounds",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                        )
-                    }
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val isScanning = viewModel?.isScanning?.value == true
-                        IconButton(
-                            onClick = { viewModel?.scanFiles(isManual = true) },
-                            enabled = !isScanning,
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                            ),
-                            modifier = Modifier.size(48.dp)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (isScanning) {
-                                CircularProgressIndicator(
-                                    color = MaterialTheme.colorScheme.primary,
-                                    strokeWidth = 2.dp,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            } else {
+                            val isScanning = viewModel?.isScanning?.value == true
+                            IconButton(
+                                onClick = { viewModel?.scanFiles(isManual = true) },
+                                enabled = !isScanning,
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                if (isScanning) {
+                                    CircularProgressIndicator(
+                                        color = MaterialTheme.colorScheme.primary,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = "Reload Library",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                            }
+
+                            IconButton(
+                                onClick = { showInsights = true },
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                modifier = Modifier.size(48.dp)
+                            ) {
                                 Icon(
-                                    imageVector = Icons.Rounded.Refresh,
-                                    contentDescription = "Reload Library",
+                                    imageVector = Icons.Rounded.Insights,
+                                    contentDescription = "Estadísticas",
+                                    tint = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+
+                            IconButton(
+                                onClick = onSettingsClick,
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Settings,
+                                    contentDescription = "Settings",
                                     tint = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                         }
-
-                        IconButton(
-                            onClick = { showInsights = true },
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                            ),
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Insights,
-                                contentDescription = "Estadísticas",
-                                tint = MaterialTheme.colorScheme.onBackground
+                    }
+                } else {
+                    // Normal Spacious Header
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 20.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Kev Music",
+                                style = MaterialTheme.typography.headlineLarge.copy(
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = (-1).sp
+                                ),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Discover your premium sounds",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
                             )
                         }
 
-                        IconButton(
-                            onClick = onSettingsClick,
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                            ),
-                            modifier = Modifier.size(48.dp)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Settings,
-                                contentDescription = "Settings",
-                                tint = MaterialTheme.colorScheme.onBackground
-                            )
+                            val isScanning = viewModel?.isScanning?.value == true
+                            IconButton(
+                                onClick = { viewModel?.scanFiles(isManual = true) },
+                                enabled = !isScanning,
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                if (isScanning) {
+                                    CircularProgressIndicator(
+                                        color = MaterialTheme.colorScheme.primary,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = "Reload Library",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                            }
+
+                            IconButton(
+                                onClick = { showInsights = true },
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Insights,
+                                    contentDescription = "Estadísticas",
+                                    tint = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+
+                            IconButton(
+                                onClick = onSettingsClick,
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Settings,
+                                    contentDescription = "Settings",
+                                    tint = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
                         }
                     }
                 }
@@ -409,14 +510,24 @@ fun LibraryScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                        .padding(horizontal = if (isCompact) 16.dp else 20.dp, vertical = if (isCompact) 4.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text(stringResource(R.string.search_placeholder)) },
+                        placeholder = { 
+                            Text(
+                                stringResource(R.string.search_placeholder), 
+                                fontSize = 14.sp,
+                                maxLines = 1
+                            ) 
+                        },
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onBackground
+                        ),
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Rounded.Search,
@@ -427,19 +538,21 @@ fun LibraryScreen(
                         },
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {
-                                  IconButton(onClick = { searchQuery = "" }) {
-                                      Icon(
-                                          imageVector = Icons.Rounded.Clear,
-                                          contentDescription = "Clear",
-                                          tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                          modifier = Modifier.size(18.dp)
-                                      )
-                                  }
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Clear,
+                                        contentDescription = "Clear",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
                         },
                         singleLine = true,
-                        shape = RoundedCornerShape(24.dp),
+                        shape = RoundedCornerShape(20.dp),
                         colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
                             focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
                             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
                             focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
@@ -447,7 +560,7 @@ fun LibraryScreen(
                         ),
                         modifier = Modifier
                             .weight(1f)
-                            .height(52.dp)
+                            .heightIn(min = 48.dp)
                     )
 
                     val showLocateButtonMain = activeTab == "Songs" && scrollTargetIndex != -1
@@ -470,13 +583,13 @@ fun LibraryScreen(
                             colors = IconButtonDefaults.iconButtonColors(
                                 containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                             ),
-                            modifier = Modifier.size(40.dp)
+                            modifier = Modifier.size(if (isCompact) 36.dp else 40.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.MusicNote,
                                 contentDescription = "Ir a canción actual",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(if (isCompact) 16.dp else 18.dp)
                             )
                         }
                     }
@@ -484,21 +597,26 @@ fun LibraryScreen(
                     IconButton(
                         onClick = {
                             if (filteredFiles.isNotEmpty()) {
-                                val randomSong = filteredFiles.random()
-                                onFileClick(randomSong, filteredFiles)
-                                player?.shuffleModeEnabled = true
+                                if (onShuffleClick != null) {
+                                    onShuffleClick(filteredFiles, null)
+                                } else if (viewModel != null) {
+                                    val started = viewModel.shuffleAll(filteredFiles, null)
+                                    if (started != null) {
+                                        onFileClick(started, filteredFiles)
+                                    }
+                                }
                             }
                         },
                         colors = IconButtonDefaults.iconButtonColors(
                             containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                         ),
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(if (isCompact) 36.dp else 40.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Shuffle,
                             contentDescription = "Shuffle Play",
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(if (isCompact) 16.dp else 18.dp)
                         )
                     }
                 }
@@ -507,9 +625,9 @@ fun LibraryScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                        .padding(horizontal = if (isCompact) 14.dp else 20.dp, vertical = if (isCompact) 4.dp else 12.dp)
                         .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(if (isCompact) 6.dp else 8.dp)
                 ) {
                     val tabLabelMap = mapOf(
                         "Songs" to stringResource(R.string.category_songs),
@@ -530,11 +648,11 @@ fun LibraryScreen(
                                 Text(
                                     text = (tabLabelMap[tab] ?: tab).uppercase(),
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp,
-                                    letterSpacing = 0.5.sp
+                                    fontSize = if (isCompact) 11.sp else 12.sp,
+                                    letterSpacing = if (isCompact) 0.3.sp else 0.5.sp
                                 )
                             },
-                            shape = RoundedCornerShape(20.dp),
+                            shape = RoundedCornerShape(if (isCompact) 14.dp else 20.dp),
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = MaterialTheme.colorScheme.primary,
                                 selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
@@ -546,7 +664,8 @@ fun LibraryScreen(
                                 selected = isSelected,
                                 selectedBorderColor = Color.Transparent,
                                 borderColor = Color.Transparent
-                            )
+                            ),
+                            modifier = if (isCompact) Modifier.height(32.dp) else Modifier
                         )
                     }
                 }
@@ -617,6 +736,7 @@ fun LibraryScreen(
                                     SongListView(
                                         songs = filteredFiles,
                                         listState = songsListState,
+                                        isCompact = isCompact,
                                         onSongClick = { song ->
                                             songForOptionsSheet = song
                                             playlistContextForOptionsSheet = null
@@ -983,6 +1103,7 @@ fun LibraryScreen(
                             songs = subSongs,
                             showTrackNumbers = subView is SubView.AlbumDetail,
                             listState = subViewSongsListState,
+                            isCompact = isCompact,
                             onSongClick = { song ->
                                 songForOptionsSheet = song
                                 playlistContextForOptionsSheet = if (subView is SubView.PlaylistDetail) {
@@ -1268,9 +1389,14 @@ fun LibraryScreen(
                                             FilledTonalButton(
                                                 onClick = {
                                                     if (subSongs.isNotEmpty()) {
-                                                        val randomSong = subSongs.random()
-                                                        onFileClick(randomSong, subSongs)
-                                                        player?.shuffleModeEnabled = true
+                                                        if (onShuffleClick != null) {
+                                                            onShuffleClick(subSongs, null)
+                                                        } else if (viewModel != null) {
+                                                            val started = viewModel.shuffleAll(subSongs, null)
+                                                            if (started != null) {
+                                                                onFileClick(started, subSongs)
+                                                            }
+                                                        }
                                                     }
                                                 },
                                                 shape = RoundedCornerShape(50),

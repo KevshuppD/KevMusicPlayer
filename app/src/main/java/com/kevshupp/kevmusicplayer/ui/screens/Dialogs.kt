@@ -52,3 +52,9 @@ fun ShortSongsDialog(
     viewModel: MediaBrowserViewModel,
     onDismiss: () -> Unit
 ) = com.kevshupp.kevmusicplayer.ui.screens.dialogs.ShortSongsDialog(viewModel, onDismiss)
+
+@Composable
+fun MissingCoverFinderDialog(
+    viewModel: MediaBrowserViewModel,
+    onDismiss: () -> Unit
+) = com.kevshupp.kevmusicplayer.ui.screens.dialogs.MissingCoverFinderDialog(viewModel, onDismiss)

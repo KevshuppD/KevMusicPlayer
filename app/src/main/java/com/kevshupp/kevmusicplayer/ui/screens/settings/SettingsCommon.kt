@@ -84,6 +84,88 @@ fun settingsCardContainerColor(): Color {
     return if (isMonochrome) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
 }
 
+@Composable
+fun SettingsInfoButton(
+    infoText: String,
+    title: String? = null,
+    modifier: Modifier = Modifier
+) {
+    var showDialog by remember { mutableStateOf(false) }
+
+    IconButton(
+        onClick = { showDialog = true },
+        modifier = modifier.size(32.dp)
+    ) {
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.HelpOutline,
+            contentDescription = title ?: "Información",
+            tint = settingsTextMutedColor().copy(alpha = 0.7f),
+            modifier = Modifier.size(18.dp)
+        )
+    }
+
+    if (showDialog) {
+        val isMonochrome = MaterialTheme.colorScheme.background == Color.White
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = if (isMonochrome) MaterialTheme.colorScheme.surfaceVariant else Color(0xFF1E213A),
+            icon = {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.HelpOutline,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            },
+            title = {
+                Text(
+                    text = title ?: "Información",
+                    color = settingsTextColor(),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            text = {
+                Text(
+                    text = infoText,
+                    color = settingsTextMutedColor(),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showDialog = false },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Entendido",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
+            }
+        )
+    }
+}
+
 
 @Composable
 fun CircularSlider(

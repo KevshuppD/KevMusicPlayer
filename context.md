@@ -58,6 +58,10 @@ graph TD
 - **Auto-Recuperación de Errores e Inanición de Búfer (`onAudioSinkError` / `onAudioUnderrun` / `onPlayerError`):** Si ocurre un fallo transitorio de AudioTrack o un retraso de entrega de datos en Bluetooth (`elapsedSinceLastFeedMs > bufferSizeMs + 250ms`), el servicio realiza una auto-recuperación suave instantánea (`seekTo + prepare() + play()`) para prevenir que el reproductor quede congelado en silencio.
 - **Optimización Asíncrona y Desacoplada del Widget Glance (`updateWidgetState`):** La generación de la carátula `current_widget_art.png` se ejecuta 100% en `Dispatchers.IO` reutilizando directamente los bitmaps pre-escalados del caché en memoria (`albumArtCache`) o el cargador optimizado, eliminando extracciones redundantes por `MediaMetadataRetriever` y previniendo retrasos en el hilo del servicio al cambiar de canción rápidamente.
 - **Enrutamiento y Efectos Seguros en Bluetooth:** `triggerAudioEffectsRecreation` reaplica la configuración sin destruir ni recrear en caliente los efectos nativos durante streaming continuo, evitando bloqueos (deadlocks) en `AudioFlinger`. `LoudnessEnhancer` utiliza una ganancia segura de `250 mB` (+2.5 dB) para prevenir clipping digital y saturación del DAC Bluetooth. `audioFocusChangeListener` conserva el nivel calculado por `ReplayGain` tras recuperar el foco.
+- **Cola Aleatoria Real y Sincronización 1:1 (`shuffleAll` / `QueueManager`):**
+  - *Generación de Entropía Pura:* Los botones de "Modo Aleatorio" (en Inicio, barra de búsqueda y detalle de Álbum/Artista/Playlist) utilizan `shuffleAll(list)` con semillas de alta entropía (`Random(System.nanoTime())`), barajando toda la colección antes de acotarla a los límites de memoria IPC. Esto elimina por completo el sesgo donde ciertas canciones nunca salían o se repetían patrones cíclicos.
+  - *Sincronización Total de la Cola:* La cola en `ExoPlayer` almacena la lista en el orden exacto de reproducción aleatoria, ubicando la pista inicial en el índice 0. De este modo, la hoja de cola (`Playback Queue`), el carrusel de carátulas (`HorizontalPager`), los saltos de pista (siguiente/anterior) y los widgets reflejan 100% las canciones que sonarán a continuación en orden visual estricto.
+  - *Auto-Scroll a Pista Activa y Toggle Dinámico:* Al abrir la cola, la vista se desplaza automáticamente a la canción en reproducción (`scrollToItem`). El botón de aleatorio en `PlayerScreen` alterna dinámicamente entre barajar las pistas restantes (`shuffleUpcomingQueue`) o restaurar el orden original (`restoreUnshuffledQueue`) sin interrumpir la pista activa.
 
 ### C. Sistema de Creación de Playlists e Interfaz Intuitiva ([LibraryComponents.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryComponents.kt))
 - **Chips de Sugerencia de Nombre:** Permite elegir nombres predeterminados de 1 toque (`🚗 En el Auto`, `💪 Gimnasio`, `🎉 Fiesta`, `🎧 Chill`, `✈️ Viaje`, `❤️ Favoritas`, `⚡ Noche`).
@@ -101,12 +105,18 @@ graph TD
   - *Fase 2 (Metadatos e igual duración):* Asocia por coincidencia de título, artista y variación de duración <= 3s.
 - **Borrado Masivo Sincronizado (`deleteSongs`):** Elimina el archivo en disco (`File.delete()`), borra en `ContentResolver`, remueve de Room y notifica a ExoPlayer.
 
-### G.2. Buscador de Canciones Cortas / Incompletas ([Dialogs.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/Dialogs.kt#L2362-L2605))
+### G.2. Buscador de Canciones Cortas / Incompletas ([Dialogs.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/Dialogs.kt))
 - **Detección Rápida de Descargas Incompletas:** Filtra canciones con duración inusualmente baja mediante umbrales dinámicos seleccionables (`< 30s`, `< 60s`, `< 90s`, `< 120s`).
 - **Gestión y Re-descarga Fácil:**
   - Muestra duración exacta formateada (`mm:ss`) con badge de advertencia.
   - Botón individual para copiar el nombre de la canción y artista al portapapeles con 1 toque para buscarla y descargarla de nuevo.
   - Botón *"Copiar lista"* para exportar el listado completo de nombres/artistas de canciones cortas al portapapeles.
+
+### G.3. Buscador y Gestor de Portadas Faltantes ([MissingCoverFinderDialog.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/dialogs/MissingCoverFinderDialog.kt))
+- **Detección Asíncrona en Lote:** Analiza en segundo plano (`Dispatchers.IO`) el estado de carátulas de toda la biblioteca, cruzando memoria RAM, caché en disco y lectura física (`MediaMetadataRetriever` / carpetas).
+- **Vistas Segmentadas:** Pestañas para **Álbumes sin portada** y **Canciones individuales sin portada**, con buscador / filtro en tiempo real.
+- **Auto-Descarga en Lote:** Función de 1 toque para buscar y descargar automáticamente portadas oficiales de alta resolución vía iTunes API para todos los álbumes faltantes con indicador de progreso en vivo.
+- **Acciones Rápidas Individuales:** Búsqueda en línea interactiva con vista previa de resultados y selector directo de galería local (`GetContent`).
 
 ### H. Telemetría y Registro de Errores ([TelemetryLogger.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/TelemetryLogger.kt))
 - Captura errores de inicialización, excepciones de ExoPlayer (`onPlayerError`), fallos de red en LRCLIB/Deezer, errores de jaudiotagger/TagLib y excepciones no controladas de Corrutinas via `CoroutineExceptionHandler`.
@@ -158,6 +168,19 @@ graph TD
 - **Distribución de Actividad:** Días de la semana más activos (gráfico de 7 barras verticales identificando el día pico) y distribución horaria (Madrugada, Mañana, Tarde, Noche).
 - **Acciones Rápidas con 1 Toque:** Botones *"Reproducir Top"* para iniciar la cola de las canciones del ranking y *"Crear Playlist"* para guardarlas automáticamente en una lista de reproducción.
 - **Generador de Póster "Wrapped Story":** Ventana modal que renderiza un póster visual en formato vertical 9:16 con la carátula del Top 1, estadísticas y logo de KevMusicPlayer, exportable y compartible como imagen PNG con 1 toque.
+
+### Q. Modo de Visualización de Biblioteca y Optimización de Ajustes ([LibraryScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/LibraryScreen.kt), [SettingsScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/SettingsScreen.kt) & [LibrarySettingsSection.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/settings/LibrarySettingsSection.kt))
+- **Preferencia `library_layout_mode`:** Configurable en **Ajustes > Biblioteca > Diseño de Biblioteca** (`"normal"` por defecto, `"compact"`).
+- **Modo Normal:** Cabecera amplia "Kev Music" con subtítulo descriptivo (padding vertical 20.dp, botones de 48.dp), barra de búsqueda completa (52.dp de altura), chips de categoría con padding holgado (12.dp vertical) y tarjetas de canciones con carátula de 48.dp y padding de 12.dp.
+- **Modo Compacto:**
+  - *Consistencia de Botones Superiores:* Mantiene los botones de acción principales (`Recargar`, `Insights`, `Ajustes`) a 48.dp consistentes con `HomeScreen.kt` para evitar discordancias visuales al cambiar de pestaña.
+  - *Buscador Integrado Anti-Recorte:* Barra de búsqueda `OutlinedTextField` optimizada con `heightIn(min = 48.dp)` y colores explícitos de texto para garantizar visualización clara de las letras al tipear.
+  - *Barra de Filtros Compacta:* Chips de pestañas comprimidos a 32.dp de altura (padding vertical 4.dp).
+  - *Lista de Canciones de Alta Densidad (`SongListItem` / `SongListView`):* Espaciado vertical reducido a 4.dp, padding de ítem reducido a 6.dp, carátula de 40.dp y tipografía adaptada, permitiendo visualizar significativamente más canciones simultáneamente en pantalla sin scroll innecesario.
+- **Optimización de Densidad y Botones de Información en Ajustes (`SettingsInfoButton`):**
+  - *Reducción de Scroll:* Se redujo el padding vertical y entre tarjetas en `SettingsScreen.kt` (horizontal 16.dp, vertical 12.dp, espaciado 14.dp) y el padding interno de tarjetas de 20.dp a 14.dp en `LibrarySettingsSection.kt`.
+  - *Botón Informativo `SettingsInfoButton` (`?`):* Sustituye los largos párrafos explicativos debajo de cada botón de mantenimiento por un botón de ayuda limpio `?` que despliega un `Toast` descriptivo al tocarlo.
+  - *Botones de Acción Compactos:* Altura de botones estandarizada a 46.dp con esquinas de 16.dp, logrando una reducción del 60% en la longitud de desplazamiento vertical de Ajustes sin perder identidad visual ni información.
 
 ---
 

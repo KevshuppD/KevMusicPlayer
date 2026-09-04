@@ -65,6 +65,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     val downloadAllLyricsSuccessCount = mutableStateOf(0)
     val downloadAllLyricsCurrentName = mutableStateOf("")
     val isScanning = mutableStateOf(false)
+    val isShuffleActive = mutableStateOf(false)
     var ignoreSavePlaybackState = false
 
     private val audioScanner = AudioScanner(application)
@@ -200,6 +201,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         preloadUpcomingArtwork()
                     }
                     override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                        isShuffleActive.value = shuffleModeEnabled
                         savePlaybackState()
                         preloadUpcomingArtwork()
                     }
@@ -243,7 +245,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         val id = currentItem?.mediaId?.toLongOrNull() ?: -1L
         val position = b.currentPosition
         val activeIndex = b.currentMediaItemIndex
-        val shuffleModeEnabled = b.shuffleModeEnabled
+        val shuffleModeEnabled = isShuffleActive.value || b.shuffleModeEnabled
         
         // Fetch media item IDs on the main thread
         val mediaIds = ArrayList<String>(b.mediaItemCount)
@@ -273,7 +275,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
         val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
         val lastShuffleEnabled = prefs.getBoolean("last_shuffle_enabled", false)
-        b.shuffleModeEnabled = lastShuffleEnabled
+        isShuffleActive.value = lastShuffleEnabled
+        b.shuffleModeEnabled = false
 
         val lastSongId = prefs.getLong("last_song_id", -1L)
         val lastPosition = prefs.getLong("last_position", 0L)
@@ -757,6 +760,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }
         
         val fullQueue = customQueue ?: localAudioFiles
+        queueManager.setOriginalQueue(fullQueue.toList())
         val fullIndex = fullQueue.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
         
         // Limit queue size to 1500 items to avoid IPC TransactionTooLargeException
@@ -793,10 +797,84 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 .build()
         }
 
+        isShuffleActive.value = false
+        b.shuffleModeEnabled = false
         b.setMediaItems(mediaItems, index, 0L)
         b.prepare()
         b.play()
         preloadUpcomingArtwork()
+    }
+
+    fun shuffleAll(customQueue: List<AudioFile>? = null, startSong: AudioFile? = null): AudioFile? {
+        val b = browser.value ?: return null
+
+        try {
+            val startIntent = android.content.Intent(getApplication(), PlaybackService::class.java)
+            getApplication<android.app.Application>().startService(startIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        val fullQueue = (customQueue ?: localAudioFiles).toList()
+        if (fullQueue.isEmpty()) return null
+        queueManager.setOriginalQueue(fullQueue)
+
+        val random = kotlin.random.Random(System.nanoTime())
+        val shuffledList = if (startSong != null) {
+            val remaining = fullQueue.filter { it.id != startSong.id }.shuffled(random)
+            listOf(startSong) + remaining
+        } else {
+            fullQueue.shuffled(random)
+        }
+
+        val queueLimit = 1500
+        val queue = if (shuffledList.size > queueLimit) {
+            shuffledList.take(queueLimit)
+        } else {
+            shuffledList
+        }
+
+        val mediaItems = queue.map { audioFile ->
+            val trackUri = Uri.parse(audioFile.uriString)
+            MediaItem.Builder()
+                .setMediaId(audioFile.id.toString())
+                .setUri(trackUri)
+                .setRequestMetadata(
+                    MediaItem.RequestMetadata.Builder()
+                        .setMediaUri(trackUri)
+                        .build()
+                )
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(audioFile.title)
+                        .setArtist(audioFile.artist)
+                        .setAlbumTitle(audioFile.album)
+                        .setIsPlayable(true)
+                        .setIsBrowsable(false)
+                        .build()
+                )
+                .build()
+        }
+
+        isShuffleActive.value = true
+        b.shuffleModeEnabled = false
+        b.setMediaItems(mediaItems, 0, 0L)
+        b.prepare()
+        b.play()
+        preloadUpcomingArtwork()
+        return queue.firstOrNull()
+    }
+
+    fun toggleShuffle() {
+        val b = browser.value ?: return
+        val newShuffle = !isShuffleActive.value
+        isShuffleActive.value = newShuffle
+        if (newShuffle) {
+            queueManager.shuffleUpcomingQueue()
+        } else {
+            queueManager.restoreUnshuffledQueue()
+        }
+        savePlaybackState()
     }
 
     fun updateSongLyrics(id: Long, newLyrics: String?) {
@@ -1843,6 +1921,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun getPlayerQueue(): List<AudioFile> = queueManager.getPlayerQueue()
     fun removeFromQueue(index: Int) = queueManager.removeFromQueue(index)
     fun clearQueue() = queueManager.clearQueue()
+    fun shuffleUpcomingQueue() = queueManager.shuffleUpcomingQueue()
+    fun restoreUnshuffledQueue() = queueManager.restoreUnshuffledQueue()
 
     fun deleteSong(context: android.content.Context, songId: Long) {
         viewModelScope.launch {

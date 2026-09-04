@@ -119,6 +119,7 @@ fun SettingsScreen(
     var showDuplicateFinder by remember { mutableStateOf(false) }
     var showIntegrityChecker by remember { mutableStateOf(false) }
     var showShortSongsFinder by remember { mutableStateOf(false) }
+    var showMissingCoverFinder by remember { mutableStateOf(false) }
     val deviceFolders = remember { viewModel.getAllDeviceFolders(context) }
     var excludedFolders by remember { mutableStateOf(viewModel.getExcludedFolders()) }
 
@@ -448,8 +449,8 @@ fun SettingsScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(scrollState)
-                        .padding(horizontal = 20.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     when (activeCategory) {
                         "general" -> {
@@ -526,7 +527,8 @@ fun SettingsScreen(
                                 setExcludedFolders = { excludedFolders = it },
                                 onFindDuplicates = { showDuplicateFinder = true },
                                 onCheckIntegrity = { showIntegrityChecker = true },
-                                onFindShortSongs = { showShortSongsFinder = true }
+                                onFindShortSongs = { showShortSongsFinder = true },
+                                onFindMissingCovers = { showMissingCoverFinder = true }
                             )
                         }
                         "about" -> {
@@ -560,6 +562,13 @@ fun SettingsScreen(
         ShortSongsDialog(
             viewModel = viewModel,
             onDismiss = { showShortSongsFinder = false }
+        )
+    }
+
+    if (showMissingCoverFinder) {
+        MissingCoverFinderDialog(
+            viewModel = viewModel,
+            onDismiss = { showMissingCoverFinder = false }
         )
     }
 }

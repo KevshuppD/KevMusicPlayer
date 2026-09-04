@@ -95,19 +95,25 @@ fun SongListItem(
     onSongLongClick: (AudioFile) -> Unit,
     onSongSelectToggle: ((AudioFile) -> Unit)?,
     onPlayDirectly: ((AudioFile) -> Unit)?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isCompact: Boolean = false
 ) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val itemPaddingVertical = if (isCompact) 6.dp else 12.dp
+    val itemPaddingHorizontal = if (isCompact) 10.dp else 12.dp
+    val artSize = if (isCompact) 40.dp else 48.dp
+    val cornerRadius = if (isCompact) 12.dp else 16.dp
+
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(cornerRadius))
             .background(
                 if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
             )
             .then(
-                if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
+                if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(cornerRadius))
                 else Modifier
             )
             .combinedClickable(
@@ -123,7 +129,7 @@ fun SongListItem(
                     onSongLongClick(song)
                 }
             )
-            .padding(12.dp),
+            .padding(horizontal = itemPaddingHorizontal, vertical = itemPaddingVertical),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (isMultiSelectMode) {
@@ -131,12 +137,12 @@ fun SongListItem(
                 imageVector = if (isSelected) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
                 contentDescription = "Selection",
                 tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                modifier = Modifier.padding(end = 12.dp).size(24.dp)
+                modifier = Modifier.padding(end = if (isCompact) 8.dp else 12.dp).size(if (isCompact) 20.dp else 24.dp)
             )
         }
         if (showTrackNumbers) {
             Box(
-                modifier = Modifier.size(48.dp),
+                modifier = Modifier.size(artSize),
                 contentAlignment = Alignment.Center
             ) {
                 val trackNum = if (song.track > 0) (song.track % 1000) else (index + 1)
@@ -144,15 +150,15 @@ fun SongListItem(
                     text = trackNum.toString(),
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    fontSize = 15.sp
+                    fontSize = if (isCompact) 13.sp else 15.sp
                 )
             }
         } else {
             // Sleek Gradient Song Icon
             Box(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape)
+                    .size(artSize)
+                    .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(if (isCompact) 10.dp else 12.dp) else androidx.compose.ui.graphics.RectangleShape)
                     .background(getGradientForString(song.title)),
                 contentAlignment = Alignment.Center
             ) {
@@ -169,28 +175,28 @@ fun SongListItem(
                         imageVector = Icons.Rounded.MusicNote,
                         contentDescription = null,
                         tint = Color.White.copy(alpha = 0.8f),
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(if (isCompact) 18.dp else 22.dp)
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(modifier = Modifier.width(if (isCompact) 12.dp else 16.dp))
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = song.title,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 15.sp,
+                fontSize = if (isCompact) 14.sp else 15.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(if (isCompact) 2.dp else 4.dp))
             Text(
                 text = "${song.artist} • ${song.album}",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                fontSize = 12.sp,
+                fontSize = if (isCompact) 11.sp else 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -198,12 +204,14 @@ fun SongListItem(
         
         if (!isMultiSelectMode) {
             IconButton(
-                onClick = { onSongClick(song) }
+                onClick = { onSongClick(song) },
+                modifier = if (isCompact) Modifier.size(36.dp) else Modifier.size(48.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.MoreVert,
                     contentDescription = "Options",
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.size(if (isCompact) 18.dp else 24.dp)
                 )
             }
         }
@@ -229,6 +237,7 @@ fun SongListView(
     onPlayDirectly: ((AudioFile) -> Unit)? = null,
     listState: LazyListState = rememberLazyListState(),
     showTrackNumbers: Boolean = false,
+    isCompact: Boolean = false,
     headerContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)) {
@@ -236,12 +245,12 @@ fun SongListView(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                start = 16.dp, 
-                end = 24.dp, // Extra space for the sidebar
-                top = 8.dp, 
-                bottom = 8.dp
+                start = if (isCompact) 12.dp else 16.dp, 
+                end = if (isCompact) 20.dp else 24.dp, // Extra space for the sidebar
+                top = if (isCompact) 4.dp else 8.dp, 
+                bottom = if (isCompact) 4.dp else 8.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(if (isCompact) 4.dp else 8.dp)
         ) {
             if (headerContent != null) {
                 headerContent()
@@ -258,6 +267,7 @@ fun SongListView(
                     isSelected = isSelected,
                     isMultiSelectMode = isMultiSelectMode,
                     showTrackNumbers = showTrackNumbers,
+                    isCompact = isCompact,
                     onSongClick = onSongClick,
                     onSongLongClick = onSongLongClick,
                     onSongSelectToggle = onSongSelectToggle,
