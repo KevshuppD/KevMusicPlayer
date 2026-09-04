@@ -154,6 +154,7 @@ graph TD
 - **Navegación Retorno a Inicio:** `returnToHomeScreenOnDetailBack` asegura que al abrir Favoritos o listas desde Inicio, al presionar atrás en la UI o gesto del sistema se regrese fluidamente a la pantalla de Inicio.
 - **Actualización Reactiva Instantánea de Favoritos (`isFavorite`):** Claves de memorización en Compose vinculadas a `viewModel?.playlists?.get("Favoritos")` para cambiar el corazón a rojo inmediatamente al presionar me gusta.
 - **Carrusel y Transiciones Suaves:** `scrollToPage` directo en `HorizontalPager` para evitar saltos tipo ruleta y `Crossfade` en carátulas para eliminar parpadeos.
+- **Renderizado Limpio de Portadas (Anti Cuadro Fantasma):** Las carátulas utilizan `Box` con `.shadow(clip = true)` y `.clip(artShape)` con sombra suave negra en lugar de `Card` con elevación desmedida o halos de color primario, eliminando el artefacto visual de caja/marco descolorido alrededor de las esquinas redondeadas sobre fondos oscuros.
 
 ### O. Sincronización de Portadas y Letras al Organizar Carpetas ([MediaBrowserViewModel.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/playback/MediaBrowserViewModel.kt#L4157-L4250))
 - **`syncLyricsAndCoverArtForMovedFile`:** Al reorganizar por artista y álbum en Ajustes:
@@ -179,7 +180,7 @@ graph TD
   - *Lista de Canciones de Alta Densidad (`SongListItem` / `SongListView`):* Espaciado vertical reducido a 4.dp, padding de ítem reducido a 6.dp, carátula de 40.dp y tipografía adaptada, permitiendo visualizar significativamente más canciones simultáneamente en pantalla sin scroll innecesario.
 - **Optimización de Densidad y Botones de Información en Ajustes (`SettingsInfoButton`):**
   - *Reducción de Scroll:* Se redujo el padding vertical y entre tarjetas en `SettingsScreen.kt` (horizontal 16.dp, vertical 12.dp, espaciado 14.dp) y el padding interno de tarjetas de 20.dp a 14.dp en `LibrarySettingsSection.kt`.
-  - *Botón Informativo `SettingsInfoButton` (`?`):* Sustituye los largos párrafos explicativos debajo de cada botón de mantenimiento por un botón de ayuda limpio `?` que despliega un `Toast` descriptivo al tocarlo.
+  - *Botón Informativo `SettingsInfoButton` (`?`):* Sustituye los largos párrafos explicativos debajo de cada botón de mantenimiento por un botón de ayuda limpio `?` que despliega un `AlertDialog` estilizado con esquinas redondeadas (24.dp), título claro de la sección y texto completo sin recortes temporales ni truncamiento, con botón "Entendido" para cerrarlo cómodamente.
   - *Botones de Acción Compactos:* Altura de botones estandarizada a 46.dp con esquinas de 16.dp, logrando una reducción del 60% en la longitud de desplazamiento vertical de Ajustes sin perder identidad visual ni información.
 
 ---
