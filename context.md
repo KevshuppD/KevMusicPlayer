@@ -115,8 +115,10 @@ graph TD
 ### G.3. Buscador y Gestor de Portadas Faltantes ([MissingCoverFinderDialog.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/dialogs/MissingCoverFinderDialog.kt))
 - **Detección Asíncrona en Lote:** Analiza en segundo plano (`Dispatchers.IO`) el estado de carátulas de toda la biblioteca, cruzando memoria RAM, caché en disco y lectura física (`MediaMetadataRetriever` / carpetas).
 - **Vistas Segmentadas:** Pestañas para **Álbumes sin portada** y **Canciones individuales sin portada**, con buscador / filtro en tiempo real.
-- **Auto-Descarga en Lote:** Función de 1 toque para buscar y descargar automáticamente portadas oficiales de alta resolución vía iTunes API para todos los álbumes faltantes con indicador de progreso en vivo.
-- **Acciones Rápidas Individuales:** Búsqueda en línea interactiva con vista previa de resultados y selector directo de galería local (`GetContent`).
+- **Auto-Descarga Inteligente por Pestaña:** Función de 1 toque sensible a la pestaña seleccionada:
+  - *Pestaña Álbumes:* Busca y descarga automáticamente portadas para álbumes faltantes (`${album} ${artist}`) vía iTunes API.
+  - *Pestaña Canciones:* Descarga individualmente portadas para cada canción faltante buscando por título y artista exactos (`${title} ${artist}`), asociando la carátula a cada pista.
+- **Acciones Rápidas Individuales:** Búsqueda en línea interactiva con auto-búsqueda inmediata, vista previa de resultados de iTunes y selector directo de galería local (`GetContent`), con retroalimentación Toast y persistencia simultánea en disco/RAM.
 
 ### H. Telemetría y Registro de Errores ([TelemetryLogger.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/TelemetryLogger.kt))
 - Captura errores de inicialización, excepciones de ExoPlayer (`onPlayerError`), fallos de red en LRCLIB/Deezer, errores de jaudiotagger/TagLib y excepciones no controladas de Corrutinas via `CoroutineExceptionHandler`.

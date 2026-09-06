@@ -2010,43 +2010,48 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 var songUriString: String? = null
                 
                 val pathForMp3Agic = getPhysicalPath(context, songId, songEntity?.uriString)
+                var isMp3Success = false
                 if (!pathForMp3Agic.isNullOrBlank() && pathForMp3Agic.endsWith(".mp3", ignoreCase = true)) {
-                    writeMp3TagsWithMp3Agic(pathForMp3Agic, title, artist, album, genre, coverBytes)
+                    isMp3Success = writeMp3TagsWithMp3Agic(pathForMp3Agic, title, artist, album, genre, coverBytes)
                 }
                 
-                val writeSuccess = writeMetadataWithTempFile(context, songId, songEntity?.uriString) { audioFile ->
-                    val tag = audioFile.getTagOrCreateAndSetDefault()
-                    tag.setField(FieldKey.TITLE, title)
-                    tag.setField(FieldKey.ARTIST, artist)
-                    tag.setField(FieldKey.ALBUM, album)
-                    tag.setField(FieldKey.GENRE, genre)
-                    if (coverBytes != null) {
-                        try {
-                            val artwork = createJaudiotaggerArtwork(coverBytes)
-                            if (artwork != null) {
-                                try {
-                                    tag.deleteArtworkField()
-                                } catch (e: Throwable) {}
-                                try {
-                                    tag.setField(artwork)
-                                } catch (e: Throwable) {
+                val writeSuccess = if (isMp3Success) {
+                    true
+                } else {
+                    writeMetadataWithTempFile(context, songId, songEntity?.uriString) { audioFile ->
+                        val tag = audioFile.getTagOrCreateAndSetDefault()
+                        tag.setField(FieldKey.TITLE, title)
+                        tag.setField(FieldKey.ARTIST, artist)
+                        tag.setField(FieldKey.ALBUM, album)
+                        tag.setField(FieldKey.GENRE, genre)
+                        if (coverBytes != null) {
+                            try {
+                                val artwork = createJaudiotaggerArtwork(coverBytes)
+                                if (artwork != null) {
                                     try {
-                                        tag.addField(artwork)
-                                    } catch (e2: Throwable) {
-                                        val field = tag.createField(artwork)
-                                        tag.setField(field)
+                                        tag.deleteArtworkField()
+                                    } catch (e: Throwable) {}
+                                    try {
+                                        tag.setField(artwork)
+                                    } catch (e: Throwable) {
+                                        try {
+                                            tag.addField(artwork)
+                                        } catch (e2: Throwable) {
+                                            val field = tag.createField(artwork)
+                                            tag.setField(field)
+                                        }
                                     }
                                 }
+                            } catch (e: Throwable) {
+                                e.printStackTrace()
+                                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "MetadataArtwork", "Failed to set artwork field for songId $songId", e)
                             }
-                        } catch (e: Throwable) {
-                            e.printStackTrace()
-                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "MetadataArtwork", "Failed to set artwork field for songId $songId", e)
                         }
+                        audioFile.tag = tag
                     }
-                    audioFile.tag = tag
                 }
-                if (!writeSuccess) {
-                    throw Exception("Failed to write physical tags")
+                if (!writeSuccess && !isMp3Success) {
+                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "MetadataWrite", "Warning: Physical tags could not be written for songId $songId, continuing with DB and cache update")
                 }
 
                 // 1.5. Update metadata in Android system MediaStore columns
@@ -2109,6 +2114,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 if (songUriString != null) {
                     com.kevshupp.kevmusicplayer.ui.screens.deleteDiskAlbumArtCacheForUri(getApplication(), songUriString)
                     if (coverBytes != null) {
+                        try {
+                            val res = try {
+                                context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE).getInt("art_resolution", 500)
+                            } catch (e: Exception) { 500 }
+                            val diskFile = com.kevshupp.kevmusicplayer.ui.screens.getDiskCacheFile(context, songUriString, res)
+                            diskFile.parentFile?.mkdirs()
+                            diskFile.writeBytes(coverBytes)
+                        } catch (e: Exception) {}
+
                         val bitmap = android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
                         if (bitmap != null) {
                             com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(songUriString, bitmap)
@@ -2199,6 +2213,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         context: Context,
         albumName: String,
         coverBytes: ByteArray,
+        targetSongIds: List<Long>? = null,
         onSuccess: () -> Unit,
         onError: (Exception) -> Unit
     ) {
@@ -2211,68 +2226,74 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     t.printStackTrace()
                 }
 
-                // Find all songs in the album (robust, trimmed, case-insensitive match)
-                val songsInAlbum = localAudioFiles.filter { it.album.trim().equals(albumName.trim(), ignoreCase = true) }
+                // Find all songs in the album (robust, trimmed, case-insensitive match or by specific IDs)
+                val songsInAlbum = if (!targetSongIds.isNullOrEmpty()) {
+                    val idSet = targetSongIds.toSet()
+                    val matched = localAudioFiles.filter { idSet.contains(it.id) }
+                    if (matched.isNotEmpty()) matched else localAudioFiles.filter { it.album.trim().equals(albumName.trim(), ignoreCase = true) }
+                } else {
+                    localAudioFiles.filter { it.album.trim().equals(albumName.trim(), ignoreCase = true) }
+                }
+
                 if (songsInAlbum.isEmpty()) {
                     throw Exception("No songs found in album $albumName")
                 }
 
                 var successCount = 0
-                var failCount = 0
+                val bitmap = android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
+
                 for (song in songsInAlbum) {
+                    var writtenPhysically = false
                     val pathForMp3Agic = getPhysicalPath(context, song.id, song.uriString)
                     if (!pathForMp3Agic.isNullOrBlank() && pathForMp3Agic.endsWith(".mp3", ignoreCase = true)) {
-                        writeMp3TagsWithMp3Agic(pathForMp3Agic, coverBytes = coverBytes)
+                        writtenPhysically = writeMp3TagsWithMp3Agic(pathForMp3Agic, coverBytes = coverBytes)
                     }
 
-                    val success = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
-                        val tag = audioFile.getTagOrCreateAndSetDefault()
-                        try {
-                            val artwork = createJaudiotaggerArtwork(coverBytes)
-                            if (artwork != null) {
-                                try {
-                                    tag.deleteArtworkField()
-                                } catch (e: Throwable) {}
-                                try {
-                                    tag.setField(artwork)
-                                } catch (e: Throwable) {
+                    if (!writtenPhysically) {
+                        writtenPhysically = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
+                            val tag = audioFile.getTagOrCreateAndSetDefault()
+                            try {
+                                val artwork = createJaudiotaggerArtwork(coverBytes)
+                                if (artwork != null) {
                                     try {
-                                        tag.addField(artwork)
-                                    } catch (e2: Throwable) {
-                                        val field = tag.createField(artwork)
-                                        tag.setField(field)
+                                        tag.deleteArtworkField()
+                                    } catch (e: Throwable) {}
+                                    try {
+                                        tag.setField(artwork)
+                                    } catch (e: Throwable) {
+                                        try {
+                                            tag.addField(artwork)
+                                        } catch (e2: Throwable) {
+                                            val field = tag.createField(artwork)
+                                            tag.setField(field)
+                                        }
                                     }
                                 }
+                            } catch (e: Throwable) {
+                                e.printStackTrace()
+                                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumCoverArtwork", "Failed to set artwork field in updateAlbumCover for songId ${song.id}", e)
                             }
-                        } catch (e: Throwable) {
-                            e.printStackTrace()
-                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumCoverArtwork", "Failed to set artwork field in updateAlbumCover for songId ${song.id}", e)
+                            audioFile.tag = tag
                         }
-                        audioFile.tag = tag
                     }
 
-                    if (success) {
-                        successCount++
-                        // Update in-memory and disk artwork cache
-                        com.kevshupp.kevmusicplayer.ui.screens.deleteDiskAlbumArtCacheForUri(getApplication(), song.uriString)
-                        val bitmap = android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
-                        if (bitmap != null) {
-                            com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, bitmap)
-                        }
-                    } else {
-                        failCount++
+                    // Update in-memory and disk artwork cache
+                    com.kevshupp.kevmusicplayer.ui.screens.deleteDiskAlbumArtCacheForUri(getApplication(), song.uriString)
+                    try {
+                        val res = try {
+                            context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE).getInt("art_resolution", 500)
+                        } catch (e: Exception) { 500 }
+                        val diskFile = com.kevshupp.kevmusicplayer.ui.screens.getDiskCacheFile(context, song.uriString, res)
+                        diskFile.parentFile?.mkdirs()
+                        diskFile.writeBytes(coverBytes)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
-                }
 
-                if (failCount > 0) {
-                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                        context, "AlbumCoverUpdate",
-                        "Failed to update cover for $failCount out of ${songsInAlbum.size} songs in album $albumName"
-                    )
-                }
-
-                if (successCount == 0 && songsInAlbum.isNotEmpty()) {
-                    throw Exception("Failed to write cover art to any songs in the album")
+                    if (bitmap != null) {
+                        com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, bitmap)
+                    }
+                    successCount++
                 }
 
                 if (songsInAlbum.isNotEmpty()) {
@@ -2298,7 +2319,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         val list = playlists[playlistName] ?: emptyList()
                         var modified = false
                         val newList = list.map { song ->
-                            if (song.album.trim().equals(albumName.trim(), ignoreCase = true)) {
+                            if (songsInAlbum.any { it.id == song.id } || song.album.trim().equals(albumName.trim(), ignoreCase = true)) {
                                 modified = true
                                 song.copy()
                             } else {
@@ -2351,77 +2372,79 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
                 // 1. Write tags physically for each song
                 var successCount = 0
-                var failCount = 0
+                val bitmap = if (coverBytes != null) android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size) else null
+
                 for (song in songsInAlbum) {
+                    var writtenPhysically = false
                     val pathForMp3Agic = getPhysicalPath(context, song.id, song.uriString)
                     if (!pathForMp3Agic.isNullOrBlank() && pathForMp3Agic.endsWith(".mp3", ignoreCase = true)) {
-                        writeMp3TagsWithMp3Agic(pathForMp3Agic, album = newAlbumName, artist = if (newArtist.isNotBlank()) newArtist else null, coverBytes = coverBytes)
+                        writtenPhysically = writeMp3TagsWithMp3Agic(pathForMp3Agic, album = newAlbumName, artist = if (newArtist.isNotBlank()) newArtist else null, coverBytes = coverBytes)
                     }
 
-                    val success = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
-                        val tag = audioFile.getTagOrCreateAndSetDefault()
-                        tag.setField(FieldKey.ALBUM, newAlbumName)
-                        if (newArtist.isNotBlank()) {
-                            tag.setField(FieldKey.ARTIST, newArtist)
-                        }
-                        if (coverBytes != null) {
-                            try {
-                                val artwork = createJaudiotaggerArtwork(coverBytes)
-                                if (artwork != null) {
-                                    try {
-                                        tag.deleteArtworkField()
-                                    } catch (e: Throwable) {}
-                                    try {
-                                        tag.setField(artwork)
-                                    } catch (e: Throwable) {
+                    if (!writtenPhysically) {
+                        writtenPhysically = writeMetadataWithTempFile(context, song.id, song.uriString) { audioFile ->
+                            val tag = audioFile.getTagOrCreateAndSetDefault()
+                            tag.setField(FieldKey.ALBUM, newAlbumName)
+                            if (newArtist.isNotBlank()) {
+                                tag.setField(FieldKey.ARTIST, newArtist)
+                            }
+                            if (coverBytes != null) {
+                                try {
+                                    val artwork = createJaudiotaggerArtwork(coverBytes)
+                                    if (artwork != null) {
                                         try {
-                                            tag.addField(artwork)
-                                        } catch (e2: Throwable) {
-                                            val field = tag.createField(artwork)
-                                            tag.setField(field)
+                                            tag.deleteArtworkField()
+                                        } catch (e: Throwable) {}
+                                        try {
+                                            tag.setField(artwork)
+                                        } catch (e: Throwable) {
+                                            try {
+                                                tag.addField(artwork)
+                                            } catch (e2: Throwable) {
+                                                val field = tag.createField(artwork)
+                                                tag.setField(field)
+                                            }
                                         }
                                     }
+                                } catch (e: Throwable) {
+                                    e.printStackTrace()
+                                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumMetadataArtwork", "Failed to set artwork field in updateAlbumMetadata for songId ${song.id}", e)
                                 }
-                            } catch (e: Throwable) {
-                                e.printStackTrace()
-                                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "AlbumMetadataArtwork", "Failed to set artwork field in updateAlbumMetadata for songId ${song.id}", e)
                             }
+                            audioFile.tag = tag
                         }
-                        audioFile.tag = tag
                     }
 
-                    if (success) {
-                        successCount++
-                        // Update in-memory artwork cache if new cover provided
-                        if (coverBytes != null) {
-                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
-                            if (bitmap != null) {
-                                com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, bitmap)
-                            }
-                        }
-                        // Update system MediaStore columns
+                    successCount++
+                    // Update in-memory artwork cache if new cover provided
+                    if (coverBytes != null) {
+                        com.kevshupp.kevmusicplayer.ui.screens.deleteDiskAlbumArtCacheForUri(getApplication(), song.uriString)
                         try {
-                            val values = android.content.ContentValues().apply {
-                                put(android.provider.MediaStore.Audio.Media.ALBUM, newAlbumName)
-                                if (newArtist.isNotBlank()) {
-                                    put(android.provider.MediaStore.Audio.Media.ARTIST, newArtist)
-                                }
-                            }
-                            context.contentResolver.update(android.net.Uri.parse(song.uriString), values, null, null)
-                            android.util.Log.d("MetadataWrite", "Successfully updated MediaStore columns in updateAlbumMetadataAndCover for ${song.uriString}")
-                        } catch (e: Exception) {
-                            android.util.Log.e("MetadataWrite", "Failed to update MediaStore columns in updateAlbumMetadataAndCover for song ${song.id}", e)
-                        }
-                    } else {
-                        failCount++
-                    }
-                }
+                            val res = try {
+                                context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE).getInt("art_resolution", 500)
+                            } catch (e: Exception) { 500 }
+                            val diskFile = com.kevshupp.kevmusicplayer.ui.screens.getDiskCacheFile(context, song.uriString, res)
+                            diskFile.parentFile?.mkdirs()
+                            diskFile.writeBytes(coverBytes)
+                        } catch (e: Exception) {}
 
-                if (failCount > 0) {
-                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                        context, "AlbumMetadataUpdate",
-                        "Failed to update metadata for $failCount out of ${songsInAlbum.size} songs in album $oldAlbumName"
-                    )
+                        if (bitmap != null) {
+                            com.kevshupp.kevmusicplayer.ui.screens.albumArtCache.put(song.uriString, bitmap)
+                        }
+                    }
+                    // Update system MediaStore columns
+                    try {
+                        val values = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.Audio.Media.ALBUM, newAlbumName)
+                            if (newArtist.isNotBlank()) {
+                                put(android.provider.MediaStore.Audio.Media.ARTIST, newArtist)
+                            }
+                        }
+                        context.contentResolver.update(android.net.Uri.parse(song.uriString), values, null, null)
+                        android.util.Log.d("MetadataWrite", "Successfully updated MediaStore columns in updateAlbumMetadataAndCover for ${song.uriString}")
+                    } catch (e: Exception) {
+                        android.util.Log.e("MetadataWrite", "Failed to update MediaStore columns in updateAlbumMetadataAndCover for song ${song.id}", e)
+                    }
                 }
 
                 if (coverBytes != null && songsInAlbum.isNotEmpty()) {

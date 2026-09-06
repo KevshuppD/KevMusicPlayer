@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -39,6 +40,7 @@ import com.kevshupp.kevmusicplayer.playback.getPhysicalPath
 import com.kevshupp.kevmusicplayer.ui.screens.*
 import kotlinx.coroutines.*
 import java.io.File
+import kotlin.coroutines.resume
 
 data class MissingAlbumItem(
     val albumName: String,
@@ -101,14 +103,20 @@ fun MissingCoverFinderDialog(
                                 context = context,
                                 albumName = albumTarget.albumName,
                                 coverBytes = bytes,
+                                targetSongIds = albumTarget.songs.map { it.id },
                                 onSuccess = {
                                     scope.launch(Dispatchers.Main) {
                                         missingAlbums.removeAll { it.albumName.equals(albumTarget.albumName, ignoreCase = true) }
                                         val songIdsToRemove = albumTarget.songs.map { it.id }.toSet()
                                         missingSongs.removeAll { songIdsToRemove.contains(it.id) }
+                                        Toast.makeText(context, getLocalized("Portada de álbum actualizada", "Album cover updated"), Toast.LENGTH_SHORT).show()
                                     }
                                 },
-                                onError = {}
+                                onError = { err ->
+                                    scope.launch(Dispatchers.Main) {
+                                        Toast.makeText(context, getLocalized("Error: ${err.message}", "Error: ${err.message}"), Toast.LENGTH_LONG).show()
+                                    }
+                                }
                             )
                         } else if (songTarget != null) {
                             viewModel.updateSongMetadata(
@@ -122,9 +130,21 @@ fun MissingCoverFinderDialog(
                                 onSuccess = {
                                     scope.launch(Dispatchers.Main) {
                                         missingSongs.removeAll { it.id == songTarget.id }
+                                        val albumName = songTarget.album.trim()
+                                        if (albumName.isNotBlank()) {
+                                            val remaining = missingSongs.filter { it.album.trim().equals(albumName, ignoreCase = true) }
+                                            if (remaining.isEmpty()) {
+                                                missingAlbums.removeAll { it.albumName.equals(albumName, ignoreCase = true) }
+                                            }
+                                        }
+                                        Toast.makeText(context, getLocalized("Portada de canción actualizada", "Song cover updated"), Toast.LENGTH_SHORT).show()
                                     }
                                 },
-                                onError = {}
+                                onError = { err ->
+                                    scope.launch(Dispatchers.Main) {
+                                        Toast.makeText(context, getLocalized("Error: ${err.message}", "Error: ${err.message}"), Toast.LENGTH_LONG).show()
+                                    }
+                                }
                             )
                         }
                     }
@@ -202,7 +222,7 @@ fun MissingCoverFinderDialog(
         runScan()
     }
 
-    // Batch Auto-Download function
+    // Batch Auto-Download function (tab-aware: downloads albums on Tab 0, individual songs on Tab 1)
     val startBatchAutoDownload = {
         scope.launch {
             isAutoDownloading = true
@@ -210,49 +230,116 @@ fun MissingCoverFinderDialog(
             autoDownloadSuccessCount = 0
 
             withContext(Dispatchers.IO) {
-                val albumsToProcess = missingAlbums.toList()
-                val total = albumsToProcess.size
-                var processed = 0
+                if (selectedTab == 0) {
+                    // Download for ALBUMS
+                    val albumsToProcess = missingAlbums.toList()
+                    val total = albumsToProcess.size
+                    var processed = 0
 
-                for (item in albumsToProcess) {
-                    processed++
-                    autoDownloadProgress = processed.toFloat() / total.coerceAtLeast(1)
-                    autoDownloadStatusText = getLocalized(
-                        "Buscando ($processed/$total): ${item.albumName}",
-                        "Searching ($processed/$total): ${item.albumName}"
-                    )
+                    for (item in albumsToProcess) {
+                        processed++
+                        autoDownloadProgress = processed.toFloat() / total.coerceAtLeast(1)
+                        autoDownloadStatusText = getLocalized(
+                            "Buscando ($processed/$total): ${item.albumName}",
+                            "Searching ($processed/$total): ${item.albumName}"
+                        )
 
-                    try {
-                        val searchQuery = "${item.albumName} ${item.artistName}".trim()
-                        val searchResults = LyricsRepository.searchCoversFromITunes(searchQuery)
-                        val topMatch = searchResults.firstOrNull()
+                        try {
+                            val searchQuery1 = "${item.albumName} ${item.artistName}".trim()
+                            var searchResults = LyricsRepository.searchCoversFromITunes(searchQuery1)
+                            if (searchResults.isEmpty()) {
+                                searchResults = LyricsRepository.searchCoversFromITunes(item.albumName.trim())
+                            }
+                            val topMatch = searchResults.firstOrNull()
 
-                        if (topMatch != null && topMatch.coverUrl.isNotBlank()) {
-                            val bytes = LyricsRepository.downloadCoverBytes(topMatch.coverUrl)
-                            if (bytes != null && bytes.isNotEmpty()) {
-                                var albumUpdated = false
-                                viewModel.updateAlbumCover(
-                                    context = context,
-                                    albumName = item.albumName,
-                                    coverBytes = bytes,
-                                    onSuccess = { albumUpdated = true },
-                                    onError = {}
-                                )
-                                delay(300)
-                                if (albumUpdated) {
-                                    autoDownloadSuccessCount++
-                                    withContext(Dispatchers.Main) {
-                                        missingAlbums.removeAll { it.albumName.equals(item.albumName, ignoreCase = true) }
-                                        val songIdsToRemove = item.songs.map { it.id }.toSet()
-                                        missingSongs.removeAll { songIdsToRemove.contains(it.id) }
+                            if (topMatch != null && topMatch.coverUrl.isNotBlank()) {
+                                val bytes = LyricsRepository.downloadCoverBytes(topMatch.coverUrl)
+                                if (bytes != null && bytes.isNotEmpty()) {
+                                    val success = suspendCancellableCoroutine<Boolean> { cont ->
+                                        viewModel.updateAlbumCover(
+                                            context = context,
+                                            albumName = item.albumName,
+                                            coverBytes = bytes,
+                                            targetSongIds = item.songs.map { it.id },
+                                            onSuccess = { if (cont.isActive) cont.resume(true) },
+                                            onError = { if (cont.isActive) cont.resume(false) }
+                                        )
+                                    }
+                                    if (success) {
+                                        autoDownloadSuccessCount++
+                                        withContext(Dispatchers.Main) {
+                                            missingAlbums.removeAll { it.albumName.equals(item.albumName, ignoreCase = true) }
+                                            val songIdsToRemove = item.songs.map { it.id }.toSet()
+                                            missingSongs.removeAll { songIdsToRemove.contains(it.id) }
+                                        }
                                     }
                                 }
                             }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
                         }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
+                        delay(200) // Rate limit prevention
                     }
-                    delay(250) // Rate limit prevention
+                } else {
+                    // Download for INDIVIDUAL SONGS (Tab 1)
+                    val songsToProcess = missingSongs.toList()
+                    val total = songsToProcess.size
+                    var processed = 0
+
+                    for (song in songsToProcess) {
+                        processed++
+                        autoDownloadProgress = processed.toFloat() / total.coerceAtLeast(1)
+                        autoDownloadStatusText = getLocalized(
+                            "Buscando ($processed/$total): ${song.title}",
+                            "Searching ($processed/$total): ${song.title}"
+                        )
+
+                        try {
+                            var searchResults = LyricsRepository.searchCoversFromITunes("${song.title} ${song.artist}".trim())
+                            if (searchResults.isEmpty()) {
+                                searchResults = LyricsRepository.searchCoversFromITunes(song.title.trim())
+                            }
+                            if (searchResults.isEmpty() && song.album.isNotBlank() && !song.album.equals("Unknown", ignoreCase = true)) {
+                                searchResults = LyricsRepository.searchCoversFromITunes("${song.album} ${song.artist}".trim())
+                            }
+
+                            val topMatch = searchResults.firstOrNull()
+                            if (topMatch != null && topMatch.coverUrl.isNotBlank()) {
+                                val bytes = LyricsRepository.downloadCoverBytes(topMatch.coverUrl)
+                                if (bytes != null && bytes.isNotEmpty()) {
+                                    val success = suspendCancellableCoroutine<Boolean> { cont ->
+                                        viewModel.updateSongMetadata(
+                                            context = context,
+                                            songId = song.id,
+                                            title = song.title,
+                                            artist = song.artist,
+                                            album = song.album,
+                                            genre = song.genre,
+                                            coverBytes = bytes,
+                                            onSuccess = { if (cont.isActive) cont.resume(true) },
+                                            onError = { if (cont.isActive) cont.resume(false) }
+                                        )
+                                    }
+                                    if (success) {
+                                        autoDownloadSuccessCount++
+                                        withContext(Dispatchers.Main) {
+                                            missingSongs.removeAll { it.id == song.id }
+                                            val albumName = song.album.trim()
+                                            if (albumName.isNotBlank()) {
+                                                val remaining = missingSongs.filter { it.album.trim().equals(albumName, ignoreCase = true) }
+                                                if (remaining.isEmpty()) {
+                                                    missingAlbums.removeAll { it.albumName.equals(albumName, ignoreCase = true) }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                        delay(200)
+                    }
                 }
 
                 withContext(Dispatchers.Main) {
@@ -425,7 +512,8 @@ fun MissingCoverFinderDialog(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     // Batch Auto-Download Card / Action
-                    if (missingAlbums.isNotEmpty() || missingSongs.isNotEmpty()) {
+                    val hasItemsInCurrentTab = if (selectedTab == 0) missingAlbums.isNotEmpty() else missingSongs.isNotEmpty()
+                    if (hasItemsInCurrentTab || isAutoDownloading) {
                         Surface(
                             shape = RoundedCornerShape(14.dp),
                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
@@ -452,6 +540,18 @@ fun MissingCoverFinderDialog(
                                         )
                                     }
                                 } else {
+                                    val count = if (selectedTab == 0) missingAlbums.size else missingSongs.size
+                                    val titleText = if (selectedTab == 0) {
+                                        getLocalized("Auto-descarga de Álbumes", "Batch Download Albums")
+                                    } else {
+                                        getLocalized("Auto-descarga de Canciones", "Batch Download Songs")
+                                    }
+                                    val subText = if (selectedTab == 0) {
+                                        getLocalized("Descarga portadas para $count álbumes desde iTunes", "Download covers for $count albums from iTunes")
+                                    } else {
+                                        getLocalized("Descarga portadas para $count canciones desde iTunes", "Download covers for $count tracks from iTunes")
+                                    }
+
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -459,16 +559,13 @@ fun MissingCoverFinderDialog(
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = getLocalized("Auto-descarga en Lote", "Batch Auto-Download"),
+                                                text = titleText,
                                                 color = Color.White,
                                                 fontSize = 13.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
                                             Text(
-                                                text = getLocalized(
-                                                    "Descarga portadas oficiales automáticamente de iTunes",
-                                                    "Automatically fetch official artwork from iTunes"
-                                                ),
+                                                text = subText,
                                                 color = Color.White.copy(alpha = 0.6f),
                                                 fontSize = 11.sp
                                             )
@@ -488,7 +585,7 @@ fun MissingCoverFinderDialog(
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = getLocalized("Descargar", "Download"),
+                                                text = getLocalized("Descargar ($count)", "Download ($count)"),
                                                 color = Color.Black,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold
@@ -823,6 +920,33 @@ fun MissingCoverFinderDialog(
         val targetName = activeSearchTargetAlbum?.albumName ?: activeSearchTargetSong?.title ?: ""
         val targetArtist = activeSearchTargetAlbum?.artistName ?: activeSearchTargetSong?.artist ?: ""
 
+        val executeOnlineSearch: (String) -> Unit = { query ->
+            if (query.isNotBlank() && !isSearchingOnline) {
+                scope.launch {
+                    isSearchingOnline = true
+                    onlineSearchStatus = getLocalized("Buscando en iTunes...", "Searching iTunes...")
+                    var results = LyricsRepository.searchCoversFromITunes(query.trim())
+                    if (results.isEmpty() && query.contains(" ")) {
+                        // Fallback: search just first part or targetName
+                        results = LyricsRepository.searchCoversFromITunes(targetName.trim())
+                    }
+                    onlineSearchResults = results
+                    isSearchingOnline = false
+                    onlineSearchStatus = if (results.isEmpty()) {
+                        getLocalized("No se encontraron resultados en iTunes.", "No results found on iTunes.")
+                    } else {
+                        getLocalized("${results.size} portadas encontradas. Toca una para aplicar.", "Found ${results.size} covers. Tap one to apply.")
+                    }
+                }
+            }
+        }
+
+        LaunchedEffect(activeSearchTargetAlbum, activeSearchTargetSong) {
+            if (onlineSearchResults.isEmpty() && onlineSearchQuery.isNotBlank()) {
+                executeOnlineSearch(onlineSearchQuery)
+            }
+        }
+
         AlertDialog(
             onDismissRequest = {
                 activeSearchTargetAlbum = null
@@ -863,20 +987,7 @@ fun MissingCoverFinderDialog(
                         placeholder = { Text(getLocalized("Término de búsqueda...", "Search query..."), color = Color.White.copy(alpha = 0.4f)) },
                         trailingIcon = {
                             IconButton(
-                                onClick = {
-                                    scope.launch {
-                                        isSearchingOnline = true
-                                        onlineSearchStatus = getLocalized("Buscando en iTunes...", "Searching iTunes...")
-                                        val results = LyricsRepository.searchCoversFromITunes(onlineSearchQuery)
-                                        onlineSearchResults = results
-                                        isSearchingOnline = false
-                                        onlineSearchStatus = if (results.isEmpty()) {
-                                            getLocalized("No se encontraron resultados.", "No results found.")
-                                        } else {
-                                            getLocalized("${results.size} portadas encontradas. Toca una para aplicar.", "Found ${results.size} covers. Tap one to apply.")
-                                        }
-                                    }
-                                },
+                                onClick = { executeOnlineSearch(onlineSearchQuery) },
                                 enabled = onlineSearchQuery.isNotBlank() && !isSearchingOnline
                             ) {
                                 if (isSearchingOnline) {
@@ -930,15 +1041,21 @@ fun MissingCoverFinderDialog(
                                                             context = context,
                                                             albumName = albumTarget.albumName,
                                                             coverBytes = bytes,
+                                                            targetSongIds = albumTarget.songs.map { it.id },
                                                             onSuccess = {
                                                                 scope.launch(Dispatchers.Main) {
                                                                     missingAlbums.removeAll { it.albumName.equals(albumTarget.albumName, ignoreCase = true) }
                                                                     val songIdsToRemove = albumTarget.songs.map { it.id }.toSet()
                                                                     missingSongs.removeAll { songIdsToRemove.contains(it.id) }
                                                                     activeSearchTargetAlbum = null
+                                                                    Toast.makeText(context, getLocalized("Portada de álbum actualizada", "Album cover updated"), Toast.LENGTH_SHORT).show()
                                                                 }
                                                             },
-                                                            onError = {}
+                                                            onError = { err ->
+                                                                scope.launch(Dispatchers.Main) {
+                                                                    Toast.makeText(context, getLocalized("Error: ${err.message}", "Error: ${err.message}"), Toast.LENGTH_LONG).show()
+                                                                }
+                                                            }
                                                         )
                                                     } else if (songTarget != null) {
                                                         viewModel.updateSongMetadata(
@@ -952,10 +1069,22 @@ fun MissingCoverFinderDialog(
                                                             onSuccess = {
                                                                 scope.launch(Dispatchers.Main) {
                                                                     missingSongs.removeAll { it.id == songTarget.id }
+                                                                    val albumName = songTarget.album.trim()
+                                                                    if (albumName.isNotBlank()) {
+                                                                        val remaining = missingSongs.filter { it.album.trim().equals(albumName, ignoreCase = true) }
+                                                                        if (remaining.isEmpty()) {
+                                                                            missingAlbums.removeAll { it.albumName.equals(albumName, ignoreCase = true) }
+                                                                        }
+                                                                    }
                                                                     activeSearchTargetSong = null
+                                                                    Toast.makeText(context, getLocalized("Portada de canción actualizada", "Song cover updated"), Toast.LENGTH_SHORT).show()
                                                                 }
                                                             },
-                                                            onError = {}
+                                                            onError = { err ->
+                                                                scope.launch(Dispatchers.Main) {
+                                                                    Toast.makeText(context, getLocalized("Error: ${err.message}", "Error: ${err.message}"), Toast.LENGTH_LONG).show()
+                                                                }
+                                                            }
                                                         )
                                                     }
                                                 }
