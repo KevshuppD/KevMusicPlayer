@@ -112,13 +112,16 @@ graph TD
   - Botón individual para copiar el nombre de la canción y artista al portapapeles con 1 toque para buscarla y descargarla de nuevo.
   - Botón *"Copiar lista"* para exportar el listado completo de nombres/artistas de canciones cortas al portapapeles.
 
-### G.3. Buscador y Gestor de Portadas Faltantes ([MissingCoverFinderDialog.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/dialogs/MissingCoverFinderDialog.kt))
-- **Detección Asíncrona en Lote:** Analiza en segundo plano (`Dispatchers.IO`) el estado de carátulas de toda la biblioteca, cruzando memoria RAM, caché en disco y lectura física (`MediaMetadataRetriever` / carpetas).
-- **Vistas Segmentadas:** Pestañas para **Álbumes sin portada** y **Canciones individuales sin portada**, con buscador / filtro en tiempo real.
-- **Auto-Descarga Inteligente por Pestaña:** Función de 1 toque sensible a la pestaña seleccionada:
-  - *Pestaña Álbumes:* Busca y descarga automáticamente portadas para álbumes faltantes (`${album} ${artist}`) vía iTunes API.
-  - *Pestaña Canciones:* Descarga individualmente portadas para cada canción faltante buscando por título y artista exactos (`${title} ${artist}`), asociando la carátula a cada pista.
-- **Acciones Rápidas Individuales:** Búsqueda en línea interactiva con auto-búsqueda inmediata, vista previa de resultados de iTunes y selector directo de galería local (`GetContent`), con retroalimentación Toast y persistencia simultánea en disco/RAM.
+### G.3. Buscador y Gestor de Portadas Multi-Fuente ([CoverArtRepository.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/CoverArtRepository.kt) & [MissingCoverFinderDialog.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/dialogs/MissingCoverFinderDialog.kt))
+- **Motor de Búsqueda Concurrente con Prioridad a Deezer:** Consulta en paralelo la API de Deezer (`/search/album` y `/search/track` para portadas en ultra alta resolución `1000x1000` `cover_xl`) y la API de iTunes Search (`entity=album` y `entity=song` con reescalado a `1000x1000bb`). Los resultados de Deezer se ubican **por defecto en primer lugar** de la lista y se seleccionan con máxima prioridad en descargas automáticas por lote.
+- **Preferencia `preferred_cover_provider`:** Configurable en **Ajustes > Biblioteca > Proveedor preferido para descargas automáticas** (`"deezer"` [Predeterminado/Recomendado], `"itunes"`, `"both"`).
+- **Estrategias Diferenciadas de Álbum vs Canción (`CoverSearchType`):**
+  - *Búsqueda de Álbum:* Consulta colecciones oficiales de álbumes con `Álbum + Artista` (fallback a solo `Álbum`), eliminando singles o pistas erróneas.
+  - *Búsqueda de Canción:* Consulta pistas individuales y, si la canción pertenece a un álbum, ofrece automáticamente búsqueda del arte del álbum asociado.
+- **Limpieza de Términos (`cleanCoverSearchTerm`):** Elimina etiquetas de metadatos como `(Official Video)`, `[Remaster]`, `ft. ...`, prefijos numéricos (`01 - `), etc.
+- **Chips de Búsqueda Rápida e Identificador de Origen:** En los diálogos de edición ([AlbumCoverEditorDialog.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/dialogs/AlbumCoverEditorDialog.kt), [AlbumEditorDialog.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/dialogs/AlbumEditorDialog.kt), [TagEditorDialog.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/dialogs/TagEditorDialog.kt), [MissingCoverFinderDialog.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/dialogs/MissingCoverFinderDialog.kt)), se presentan chips interactivos de 1 toque (`[🎵 Canción]`, `[💿 Álbum]`, `[👤 Artista]`) y badges visuales indicando el origen (`Deezer` en violeta, `iTunes` en rojo).
+- **Auto-Descarga Inteligente por Lote:** Descarga en segundo plano (`Dispatchers.IO`) con reintentos y tolerancia a fallos.
+
 
 ### H. Telemetría y Registro de Errores ([TelemetryLogger.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/TelemetryLogger.kt))
 - Captura errores de inicialización, excepciones de ExoPlayer (`onPlayerError`), fallos de red en LRCLIB/Deezer, errores de jaudiotagger/TagLib y excepciones no controladas de Corrutinas via `CoroutineExceptionHandler`.
@@ -289,6 +292,7 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 │   ├── AudioDao.kt               # Consultas Room ligeras y bajo demanda
 │   ├── AppDatabase.kt            # Inicializador Room DB (Versión 10)
 │   ├── AudioScanner.kt           # Lógica de escaneo inteligente del dispositivo
+│   ├── CoverArtRepository.kt     # Búsqueda multi-fuente de portadas HD (Deezer + iTunes, álbum/canción)
 │   ├── LyricsRepository.kt       # API LRCLIB (anti 520, User-Agent, cleanSearchTerm), parser LRC
 │   ├── AppUpdater.kt             # Actualizador automático desde GitHub Releases
 │   ├── ArtistImageHelper.kt      # Retratos de artistas vía Deezer API y almacenamiento local
@@ -406,3 +410,29 @@ Ubicación: [conectar_adb.sh](file:///home/kevin/Escritorio/sh/conectar_adb.sh)
 - Escanea ADB USB y Wi-Fi (mDNS).
 - Exporta JDK 21 (`/home/kevin/.gradle/jdks/`) y Android SDK (`/home/kevin/android-sdk`).
 - Permite seleccionar dispositivos de destino e instalar la variante Debug o Release con `./gradlew installDebug` / `installRelease`.
+
+---
+
+## 8. Novedades y Optimizaciones v1.2.28
+
+1. **Diseño Visual de Biblioteca (Vista Moderna vs Vista Clásica):**
+   - Selector en **Configuración > Biblioteca > Estilo Visual de Canciones** para alternar libremente entre la nueva vista moderna y la clásica.
+   - **Vista Moderna:** Filas limpias y fluidas sin recuadros oscuros pesados (estilo Apple Music/Spotify), carátulas ampliadas a 52dp para mayor fidelidad visual, tipografía optimizada y margen derecho adaptativo (30dp) para evitar que el menú de 3 puntos colisione con la barra de letras.
+   - **Vista Clásica:** Conserva las tarjetas rectangulares oscuras independientes para quienes prefieran el diseño anterior.
+
+2. **Barra Lateral de Desplazamiento Rápido A-Z (`FastScrollSidebar`):**
+   - Abecedario completo garantizado (`#` y `A`–`Z`) distribuido equitativamente mediante `Modifier.weight(1f)`, asegurando visibilidad total en cualquier resolución sin recortes al final (`X, Y, Z`).
+   - Normalización inteligente de caracteres con tildes y caracteres especiales en español (`Á` $\to$ `A`, `Ñ` $\to$ `N`, números $\to$ `#`).
+   - Búsqueda predictiva por proximidad (`findTargetIndex`) al tocar o deslizar.
+
+3. **Carruseles de Inicio Edge-to-Edge ([HomeScreen.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/HomeScreen.kt)):**
+   - Migración de `LazyRow` a ancho completo con `contentPadding = PaddingValues(horizontal = 20.dp)`, eliminando los cortes abruptos de las tarjetas al hacer scroll horizontal.
+   - Carátulas en Inicio ampliadas a 136dp con previsualización asomada de la siguiente canción para guiar el gesto de desplazamiento.
+
+4. **Motor de Búsqueda de Carátulas Online ([CoverArtRepository.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/CoverArtRepository.kt)):**
+   - Búsqueda en cascada priorizando Deezer con fallback a iTunes.
+   - Búsquedas especializadas por nombre de álbum y términos de búsqueda limpios para máxima precisión en carátulas faltantes.
+
+5. **Perfiles de Rendimiento y Tasa de Refresco:**
+   - Modo intermedio de **90 Hz** y nuevo perfil **Máxima Optimización a 120 Hz**.
+   - Selector de transparencia de interfaz en Configuración (activar/desactivar efectos de cristal / glassmorphism).

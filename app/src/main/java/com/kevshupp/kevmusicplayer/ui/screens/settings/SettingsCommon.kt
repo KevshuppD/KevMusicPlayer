@@ -81,7 +81,12 @@ fun settingsDividerColor(): Color {
 @Composable
 fun settingsCardContainerColor(): Color {
     val isMonochrome = MaterialTheme.colorScheme.background == Color.White
-    return if (isMonochrome) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+    val enableTransparency = com.kevshupp.kevmusicplayer.ui.theme.LocalTransparencyEnabled.current
+    return if (isMonochrome) {
+        if (enableTransparency) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f) else MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        if (enableTransparency) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
+    }
 }
 
 @Composable

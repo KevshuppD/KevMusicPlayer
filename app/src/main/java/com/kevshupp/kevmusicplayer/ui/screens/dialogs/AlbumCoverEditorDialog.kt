@@ -40,12 +40,35 @@ fun AlbumCoverEditorDialog(
     var selectedCoverBytes by remember { mutableStateOf<ByteArray?>(null) }
     var selectedCoverUrl by remember { mutableStateOf<String?>(null) }
     
-    // iTunes search state
-    var showCoverSearchSection by remember { mutableStateOf(true) } // Open by default for album covers
-    var coverSearchQuery by remember { mutableStateOf(albumName) }
+    // Cover search state
+    var showCoverSearchSection by remember { mutableStateOf(true) }
+    var coverSearchType by remember { mutableStateOf(com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM) }
+    
+    val albumArtist = remember {
+        viewModel?.localAudioFiles?.find { it.album.trim().equals(albumName.trim(), ignoreCase = true) }?.artist ?: ""
+    }
+    
+    var coverSearchQuery by remember { 
+        mutableStateOf(if (albumArtist.isNotBlank() && !albumArtist.contains("Unknown", ignoreCase = true)) "$albumName $albumArtist" else albumName) 
+    }
     var isSearchingCover by remember { mutableStateOf(false) }
-    var coverResults by remember { mutableStateOf<List<com.kevshupp.kevmusicplayer.data.ITunesCoverSearchResult>>(emptyList()) }
+    var coverResults by remember { mutableStateOf<List<com.kevshupp.kevmusicplayer.data.CoverSearchResult>>(emptyList()) }
     var coverSearchStatus by remember { mutableStateOf("") }
+
+    val performSearch: (String, com.kevshupp.kevmusicplayer.data.CoverSearchType) -> Unit = { query, type ->
+        scope.launch {
+            isSearchingCover = true
+            coverSearchStatus = getLocalized("Buscando portadas en Deezer e iTunes...", "Searching covers on Deezer & iTunes...")
+            val results = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(query, type = type)
+            coverResults = results
+            isSearchingCover = false
+            if (results.isEmpty()) {
+                coverSearchStatus = getLocalized("No se encontraron portadas.", "No covers found.")
+            } else {
+                coverSearchStatus = getLocalized("Se encontraron ${results.size} portadas.", "Found ${results.size} covers.")
+            }
+        }
+    }
 
     val coverPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
@@ -178,29 +201,85 @@ fun AlbumCoverEditorDialog(
                     }
                 }
 
+                // Quick suggestions & type chips
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            FilterChip(
+                                selected = coverSearchType == com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM,
+                                onClick = {
+                                    coverSearchType = com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM
+                                    if (coverSearchQuery.isNotBlank()) {
+                                        performSearch(coverSearchQuery, com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM)
+                                    }
+                                },
+                                label = { Text(getLocalized("💿 Modo Álbum", "💿 Album Mode"), fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                                    selectedLabelColor = MaterialTheme.colorScheme.primary
+                                )
+                            )
+                            FilterChip(
+                                selected = coverSearchType == com.kevshupp.kevmusicplayer.data.CoverSearchType.AUTO,
+                                onClick = {
+                                    coverSearchType = com.kevshupp.kevmusicplayer.data.CoverSearchType.AUTO
+                                    if (coverSearchQuery.isNotBlank()) {
+                                        performSearch(coverSearchQuery, com.kevshupp.kevmusicplayer.data.CoverSearchType.AUTO)
+                                    }
+                                },
+                                label = { Text(getLocalized("🌐 Todo (Deezer+iTunes)", "🌐 All"), fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                                    selectedLabelColor = MaterialTheme.colorScheme.primary
+                                )
+                            )
+                        }
+
+                        // Suggestion buttons
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (albumArtist.isNotBlank() && !albumArtist.contains("Unknown", ignoreCase = true)) {
+                                item {
+                                    SuggestionChip(
+                                        onClick = {
+                                            val q = "$albumName $albumArtist"
+                                            coverSearchQuery = q
+                                            performSearch(q, coverSearchType)
+                                        },
+                                        label = { Text("$albumName + $albumArtist", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f)) },
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                                }
+                            }
+                            item {
+                                SuggestionChip(
+                                    onClick = {
+                                        coverSearchQuery = albumName
+                                        performSearch(albumName, coverSearchType)
+                                    },
+                                    label = { Text(getLocalized("Solo Álbum: $albumName", "Album only: $albumName"), fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f)) },
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 item {
                     OutlinedTextField(
                         value = coverSearchQuery,
                         onValueChange = { coverSearchQuery = it },
-                        label = { Text(getLocalized("Buscar portada en iTunes", "Search cover on iTunes"), color = Color.White.copy(alpha = 0.5f)) },
+                        label = { Text(getLocalized("Buscar en Deezer / iTunes", "Search on Deezer / iTunes"), color = Color.White.copy(alpha = 0.5f)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             IconButton(
-                                onClick = {
-                                    scope.launch {
-                                        isSearchingCover = true
-                                        coverSearchStatus = getLocalized("Buscando portadas...", "Searching covers...")
-                                        val results = com.kevshupp.kevmusicplayer.data.LyricsRepository.searchCoversFromITunes(coverSearchQuery)
-                                        coverResults = results
-                                        isSearchingCover = false
-                                        if (results.isEmpty()) {
-                                            coverSearchStatus = getLocalized("No se encontraron portadas.", "No covers found.")
-                                        } else {
-                                            coverSearchStatus = getLocalized("Se encontraron ${results.size} portadas.", "Found ${results.size} covers.")
-                                        }
-                                    }
-                                },
+                                onClick = { performSearch(coverSearchQuery, coverSearchType) },
                                 enabled = coverSearchQuery.isNotBlank() && !isSearchingCover
                             ) {
                                 if (isSearchingCover) {
@@ -245,8 +324,8 @@ fun AlbumCoverEditorDialog(
                                         .width(120.dp)
                                         .clickable {
                                             scope.launch {
-                                                coverSearchStatus = getLocalized("Descargando portada...", "Downloading cover...")
-                                                val bytes = com.kevshupp.kevmusicplayer.data.LyricsRepository.downloadCoverBytes(result.coverUrl)
+                                                coverSearchStatus = getLocalized("Descargando portada en alta resolución...", "Downloading HD cover...")
+                                                val bytes = com.kevshupp.kevmusicplayer.data.CoverArtRepository.downloadCoverBytes(result.coverUrl)
                                                 if (bytes != null) {
                                                     selectedCoverBytes = bytes
                                                     selectedCoverUrl = result.coverUrl
@@ -257,23 +336,42 @@ fun AlbumCoverEditorDialog(
                                                 }
                                             }
                                         }
-                                    ) {
+                                ) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(8.dp)) {
-                                        Card(
-                                            shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(8.dp) else androidx.compose.ui.graphics.RectangleShape,
-                                            modifier = Modifier.size(90.dp)
+                                        Box(
+                                            modifier = Modifier.size(90.dp),
+                                            contentAlignment = Alignment.BottomEnd
                                         ) {
-                                            coil.compose.SubcomposeAsyncImage(
-                                                model = result.coverUrl,
-                                                contentDescription = null,
-                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize(),
-                                                loading = {
-                                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                            Card(
+                                                shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(8.dp) else androidx.compose.ui.graphics.RectangleShape,
+                                                modifier = Modifier.fillMaxSize()
+                                            ) {
+                                                coil.compose.SubcomposeAsyncImage(
+                                                    model = result.coverUrl,
+                                                    contentDescription = null,
+                                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    loading = {
+                                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                                        }
                                                     }
-                                                }
-                                            )
+                                                )
+                                            }
+                                            // Source badge
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = if (result.source == "Deezer") Color(0xFF9B51E0) else Color(0xFFFF2D55),
+                                                modifier = Modifier.padding(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = result.source,
+                                                    fontSize = 8.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                )
+                                            }
                                         }
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(

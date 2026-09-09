@@ -246,14 +246,20 @@ fun MissingCoverFinderDialog(
 
                         try {
                             val searchQuery1 = "${item.albumName} ${item.artistName}".trim()
-                            var searchResults = LyricsRepository.searchCoversFromITunes(searchQuery1)
+                            var searchResults = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(
+                                query = searchQuery1,
+                                type = com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM
+                            )
                             if (searchResults.isEmpty()) {
-                                searchResults = LyricsRepository.searchCoversFromITunes(item.albumName.trim())
+                                searchResults = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(
+                                    query = item.albumName.trim(),
+                                    type = com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM
+                                )
                             }
                             val topMatch = searchResults.firstOrNull()
 
                             if (topMatch != null && topMatch.coverUrl.isNotBlank()) {
-                                val bytes = LyricsRepository.downloadCoverBytes(topMatch.coverUrl)
+                                val bytes = com.kevshupp.kevmusicplayer.data.CoverArtRepository.downloadCoverBytes(topMatch.coverUrl)
                                 if (bytes != null && bytes.isNotEmpty()) {
                                     val success = suspendCancellableCoroutine<Boolean> { cont ->
                                         viewModel.updateAlbumCover(
@@ -278,7 +284,7 @@ fun MissingCoverFinderDialog(
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
-                        delay(200) // Rate limit prevention
+                        delay(150) // Rate limit prevention
                     }
                 } else {
                     // Download for INDIVIDUAL SONGS (Tab 1)
@@ -295,17 +301,29 @@ fun MissingCoverFinderDialog(
                         )
 
                         try {
-                            var searchResults = LyricsRepository.searchCoversFromITunes("${song.title} ${song.artist}".trim())
-                            if (searchResults.isEmpty()) {
-                                searchResults = LyricsRepository.searchCoversFromITunes(song.title.trim())
+                            // 1. Try track search
+                            var searchResults = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(
+                                query = "${song.title} ${song.artist}".trim(),
+                                type = com.kevshupp.kevmusicplayer.data.CoverSearchType.SONG
+                            )
+                            // 2. Try album search if song belongs to an album
+                            if (searchResults.isEmpty() && song.album.isNotBlank() && !song.album.contains("Unknown", ignoreCase = true)) {
+                                searchResults = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(
+                                    query = "${song.album} ${song.artist}".trim(),
+                                    type = com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM
+                                )
                             }
-                            if (searchResults.isEmpty() && song.album.isNotBlank() && !song.album.equals("Unknown", ignoreCase = true)) {
-                                searchResults = LyricsRepository.searchCoversFromITunes("${song.album} ${song.artist}".trim())
+                            // 3. Try general query with song title
+                            if (searchResults.isEmpty()) {
+                                searchResults = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(
+                                    query = song.title.trim(),
+                                    type = com.kevshupp.kevmusicplayer.data.CoverSearchType.AUTO
+                                )
                             }
 
                             val topMatch = searchResults.firstOrNull()
                             if (topMatch != null && topMatch.coverUrl.isNotBlank()) {
-                                val bytes = LyricsRepository.downloadCoverBytes(topMatch.coverUrl)
+                                val bytes = com.kevshupp.kevmusicplayer.data.CoverArtRepository.downloadCoverBytes(topMatch.coverUrl)
                                 if (bytes != null && bytes.isNotEmpty()) {
                                     val success = suspendCancellableCoroutine<Boolean> { cont ->
                                         viewModel.updateSongMetadata(
@@ -338,7 +356,7 @@ fun MissingCoverFinderDialog(
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
-                        delay(200)
+                        delay(150)
                     }
                 }
 
@@ -917,23 +935,29 @@ fun MissingCoverFinderDialog(
 
     // Sub-modal: Online Cover Search Dialog
     if (activeSearchTargetAlbum != null || activeSearchTargetSong != null) {
+        val isAlbumSearch = activeSearchTargetAlbum != null
         val targetName = activeSearchTargetAlbum?.albumName ?: activeSearchTargetSong?.title ?: ""
         val targetArtist = activeSearchTargetAlbum?.artistName ?: activeSearchTargetSong?.artist ?: ""
+        val targetAlbumForSong = activeSearchTargetSong?.album?.trim() ?: ""
 
-        val executeOnlineSearch: (String) -> Unit = { query ->
+        var modalSearchType by remember {
+            mutableStateOf(if (isAlbumSearch) com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM else com.kevshupp.kevmusicplayer.data.CoverSearchType.AUTO)
+        }
+
+        val executeOnlineSearch: (String, com.kevshupp.kevmusicplayer.data.CoverSearchType) -> Unit = { query, type ->
             if (query.isNotBlank() && !isSearchingOnline) {
                 scope.launch {
                     isSearchingOnline = true
-                    onlineSearchStatus = getLocalized("Buscando en iTunes...", "Searching iTunes...")
-                    var results = LyricsRepository.searchCoversFromITunes(query.trim())
+                    onlineSearchStatus = getLocalized("Buscando en Deezer e iTunes...", "Searching Deezer & iTunes...")
+                    var results = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(query.trim(), type = type)
                     if (results.isEmpty() && query.contains(" ")) {
-                        // Fallback: search just first part or targetName
-                        results = LyricsRepository.searchCoversFromITunes(targetName.trim())
+                        // Fallback: search just targetName
+                        results = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(targetName.trim(), type = type)
                     }
                     onlineSearchResults = results
                     isSearchingOnline = false
                     onlineSearchStatus = if (results.isEmpty()) {
-                        getLocalized("No se encontraron resultados en iTunes.", "No results found on iTunes.")
+                        getLocalized("No se encontraron resultados en Deezer ni iTunes.", "No results found on Deezer or iTunes.")
                     } else {
                         getLocalized("${results.size} portadas encontradas. Toca una para aplicar.", "Found ${results.size} covers. Tap one to apply.")
                     }
@@ -943,7 +967,7 @@ fun MissingCoverFinderDialog(
 
         LaunchedEffect(activeSearchTargetAlbum, activeSearchTargetSong) {
             if (onlineSearchResults.isEmpty() && onlineSearchQuery.isNotBlank()) {
-                executeOnlineSearch(onlineSearchQuery)
+                executeOnlineSearch(onlineSearchQuery, modalSearchType)
             }
         }
 
@@ -981,13 +1005,85 @@ fun MissingCoverFinderDialog(
                         fontWeight = FontWeight.Medium
                     )
 
+                    // Suggestion chips
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isAlbumSearch) {
+                            item {
+                                SuggestionChip(
+                                    onClick = {
+                                        val q = "$targetName $targetArtist".trim()
+                                        onlineSearchQuery = q
+                                        modalSearchType = com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM
+                                        executeOnlineSearch(q, com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM)
+                                    },
+                                    label = { Text("💿 $targetName + $targetArtist", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f)) },
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                            item {
+                                SuggestionChip(
+                                    onClick = {
+                                        onlineSearchQuery = targetName
+                                        modalSearchType = com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM
+                                        executeOnlineSearch(targetName, com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM)
+                                    },
+                                    label = { Text(getLocalized("Solo Álbum: $targetName", "Album only: $targetName"), fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f)) },
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                        } else {
+                            item {
+                                SuggestionChip(
+                                    onClick = {
+                                        val q = "$targetName $targetArtist".trim()
+                                        onlineSearchQuery = q
+                                        modalSearchType = com.kevshupp.kevmusicplayer.data.CoverSearchType.SONG
+                                        executeOnlineSearch(q, com.kevshupp.kevmusicplayer.data.CoverSearchType.SONG)
+                                    },
+                                    label = { Text("🎵 $targetName + $targetArtist", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f)) },
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                            if (targetAlbumForSong.isNotBlank() && !targetAlbumForSong.contains("Unknown", ignoreCase = true)) {
+                                item {
+                                    SuggestionChip(
+                                        onClick = {
+                                            val q = "$targetAlbumForSong $targetArtist".trim()
+                                            onlineSearchQuery = q
+                                            modalSearchType = com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM
+                                            executeOnlineSearch(q, com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM)
+                                        },
+                                        label = { Text("💿 Álbum: $targetAlbumForSong", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f)) },
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                                }
+                            }
+                            if (targetArtist.isNotBlank() && !targetArtist.contains("Unknown", ignoreCase = true)) {
+                                item {
+                                    SuggestionChip(
+                                        onClick = {
+                                            onlineSearchQuery = targetArtist
+                                            modalSearchType = com.kevshupp.kevmusicplayer.data.CoverSearchType.AUTO
+                                            executeOnlineSearch(targetArtist, com.kevshupp.kevmusicplayer.data.CoverSearchType.AUTO)
+                                        },
+                                        label = { Text("👤 $targetArtist", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f)) },
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     OutlinedTextField(
                         value = onlineSearchQuery,
                         onValueChange = { onlineSearchQuery = it },
                         placeholder = { Text(getLocalized("Término de búsqueda...", "Search query..."), color = Color.White.copy(alpha = 0.4f)) },
                         trailingIcon = {
                             IconButton(
-                                onClick = { executeOnlineSearch(onlineSearchQuery) },
+                                onClick = { executeOnlineSearch(onlineSearchQuery, modalSearchType) },
                                 enabled = onlineSearchQuery.isNotBlank() && !isSearchingOnline
                             ) {
                                 if (isSearchingOnline) {
@@ -1031,7 +1127,7 @@ fun MissingCoverFinderDialog(
                                         .width(130.dp)
                                         .clickable {
                                             scope.launch(Dispatchers.IO) {
-                                                val bytes = LyricsRepository.downloadCoverBytes(res.coverUrl)
+                                                val bytes = com.kevshupp.kevmusicplayer.data.CoverArtRepository.downloadCoverBytes(res.coverUrl)
                                                 if (bytes != null && bytes.isNotEmpty()) {
                                                     val albumTarget = activeSearchTargetAlbum
                                                     val songTarget = activeSearchTargetSong
@@ -1092,23 +1188,42 @@ fun MissingCoverFinderDialog(
                                         }
                                 ) {
                                     Column(modifier = Modifier.padding(6.dp)) {
-                                        SubcomposeAsyncImage(
-                                            model = res.coverUrl,
-                                            contentDescription = null,
-                                            contentScale = ContentScale.Crop,
-                                            loading = {
-                                                Box(
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                                                }
-                                            },
+                                        Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(118.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                        )
+                                                .height(118.dp),
+                                            contentAlignment = Alignment.BottomEnd
+                                        ) {
+                                            SubcomposeAsyncImage(
+                                                model = res.coverUrl,
+                                                contentDescription = null,
+                                                contentScale = ContentScale.Crop,
+                                                loading = {
+                                                    Box(
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                                    }
+                                                },
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .clip(RoundedCornerShape(8.dp))
+                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = if (res.source == "Deezer") Color(0xFF9B51E0) else Color(0xFFFF2D55),
+                                                modifier = Modifier.padding(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = res.source,
+                                                    fontSize = 8.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = res.albumName.ifBlank { res.trackName },

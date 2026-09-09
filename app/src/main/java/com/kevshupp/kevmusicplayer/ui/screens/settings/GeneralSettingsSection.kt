@@ -156,6 +156,81 @@ fun GeneralSettingsSection(
         }
     }
 
+    var enableTransparency by remember { mutableStateOf(settingsPrefs.getBoolean("enable_transparency", true)) }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // 1.5. Transparencia y Glassmorphism
+    Column {
+        Text(
+            text = getLocalized("TRANSPARENCIA Y EFECTOS", "TRANSPARENCY & EFFECTS"),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
+        )
+
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = settingsCardContainerColor()
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.BlurOn,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(14.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Efecto de Transparencia", "Transparency Effect"),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Fondos translúcidos con estilo cristal (Glassmorphism) en la barra inferior y tarjetas. Desactívalo para colores sólidos.",
+                                "Translucent glassmorphism backgrounds on the bottom bar and cards. Disable for solid colors."
+                            ),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+
+                    Switch(
+                        checked = enableTransparency,
+                        onCheckedChange = { checked ->
+                            enableTransparency = checked
+                            settingsPrefs.edit().putBoolean("enable_transparency", checked).apply()
+                        }
+                    )
+                }
+            }
+        }
+    }
+
     Spacer(modifier = Modifier.height(16.dp))
 
     Column {

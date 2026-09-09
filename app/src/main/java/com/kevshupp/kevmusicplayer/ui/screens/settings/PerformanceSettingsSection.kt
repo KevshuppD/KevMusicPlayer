@@ -95,9 +95,32 @@ fun PerformanceSettingsSection(
                 autoCleanTemp = true
                 edit.putBoolean("auto_clean_temp", true)
             }
-            "balanced" -> {
+            "turbo" -> {
                 onRefreshRateSelected("120")
                 edit.putString("refresh_rate", "120")
+                onDisableAnimationsChanged(true)
+                edit.putBoolean("disable_animations", true)
+                hapticEnabled = false
+                edit.putBoolean("haptic_feedback_enabled", false)
+                preloadCount = 2
+                edit.putInt("preload_art_count", 2)
+                cacheCapacity = 150
+                edit.putInt("cover_cache_capacity", 150)
+                updateAlbumArtCacheSize(150)
+                artResolution = 400
+                edit.putInt("art_resolution", 400)
+                diskCacheQuality = 70
+                edit.putInt("disk_cache_quality", 70)
+                lazyReplayGain = true
+                edit.putBoolean("lazy_replay_gain", true)
+                ipcQueueLimit = 3000
+                edit.putInt("ipc_queue_limit", 3000)
+                autoCleanTemp = true
+                edit.putBoolean("auto_clean_temp", true)
+            }
+            "balanced" -> {
+                onRefreshRateSelected("90")
+                edit.putString("refresh_rate", "90")
                 onDisableAnimationsChanged(false)
                 edit.putBoolean("disable_animations", false)
                 hapticEnabled = true
@@ -109,8 +132,8 @@ fun PerformanceSettingsSection(
                 updateAlbumArtCacheSize(150)
                 artResolution = 500
                 edit.putInt("art_resolution", 500)
-                diskCacheQuality = 85
-                edit.putInt("disk_cache_quality", 85)
+                diskCacheQuality = 80
+                edit.putInt("disk_cache_quality", 80)
                 lazyReplayGain = true
                 edit.putBoolean("lazy_replay_gain", true)
                 ipcQueueLimit = 1500
@@ -127,11 +150,11 @@ fun PerformanceSettingsSection(
                 edit.putBoolean("haptic_feedback_enabled", false)
                 preloadCount = 0
                 edit.putInt("preload_art_count", 0)
-                cacheCapacity = 50
-                edit.putInt("cover_cache_capacity", 50)
-                updateAlbumArtCacheSize(50)
-                artResolution = 250
-                edit.putInt("art_resolution", 250)
+                cacheCapacity = 60
+                edit.putInt("cover_cache_capacity", 60)
+                updateAlbumArtCacheSize(60)
+                artResolution = 300
+                edit.putInt("art_resolution", 300)
                 diskCacheQuality = 70
                 edit.putInt("disk_cache_quality", 70)
                 lazyReplayGain = true
@@ -188,17 +211,65 @@ fun PerformanceSettingsSection(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
 
-                    val profiles = listOf(
-                        Triple("max", "⚡ " + getLocalized("Máximo Rendimiento", "Max Performance"), getLocalized("Ultra fluido a 120Hz, caché WebP rápida (70%) y respuesta inmediata sin lag.", "Ultra-smooth at 120Hz, fast WebP cache (70%) and zero lag.")),
-                        Triple("balanced", "⚖️ " + getLocalized("Equilibrado", "Balanced"), getLocalized("Balance óptimo entre tasa alta 120Hz, calidad visual (85%) y fluidez.", "Optimal balance between 120Hz refresh rate, 85% visual quality and battery.")),
-                        Triple("battery", "🔋 " + getLocalized("Ahorro de Batería", "Battery Saver"), getLocalized("Refresco a 60Hz, minimiza animaciones e I/O para mayor autonomía.", "60Hz refresh rate, disables animations & minimizes I/O for battery saving.")),
-                        Triple("custom", "⚙️ " + getLocalized("Personalizado", "Custom"), getLocalized("Ajusta cada parámetro individual de memoria, caché y pantalla manualmente.", "Manually tune all memory, cache and display settings to your preference."))
+                    data class ProfileItem(
+                        val key: String,
+                        val title: String,
+                        val badge: String,
+                        val desc: String
                     )
 
-                    profiles.forEach { (key, title, desc) ->
-                        val isSelected = performanceProfile == key
+                    val profiles = listOf(
+                        ProfileItem(
+                            key = "max",
+                            title = "⚡ " + getLocalized("Máxima Fidelidad", "Max Fidelity"),
+                            badge = "120 Hz • Full",
+                            desc = getLocalized(
+                                "Tasa a 120Hz con animaciones visuales completas, pre-carga agresiva (5 temas) y carátulas en máxima resolución.",
+                                "120Hz rate with full visual animations, aggressive preloading (5 tracks) and maximum resolution artwork."
+                            )
+                        ),
+                        ProfileItem(
+                            key = "turbo",
+                            title = "🚀 " + getLocalized("Ultra Rápido (Optimizado)", "Ultra Fast (Optimized)"),
+                            badge = "120 Hz • Turbo",
+                            desc = getLocalized(
+                                "Fluidez a 120Hz sin latencia: suprime animaciones y optimiza la decodificación (400px, WebP 70%) para una respuesta táctil instantánea.",
+                                "Fluid 120Hz with zero latency: disables animations and optimizes decoding (400px, 70% WebP) for instant touch response."
+                            )
+                        ),
+                        ProfileItem(
+                            key = "balanced",
+                            title = "⚖️ " + getLocalized("Equilibrado", "Balanced"),
+                            badge = "90 Hz",
+                            desc = getLocalized(
+                                "Punto óptimo a 90Hz: desplazamiento suave, pre-carga moderada (3 temas) y consumo energético equilibrado.",
+                                "Optimal balance at 90Hz: smooth scrolling, moderate preloading (3 tracks) and balanced power consumption."
+                            )
+                        ),
+                        ProfileItem(
+                            key = "battery",
+                            title = "🔋 " + getLocalized("Ahorro de Batería", "Battery Saver"),
+                            badge = "60 Hz",
+                            desc = getLocalized(
+                                "Refresco a 60Hz, animaciones mínimas y sin pre-carga para maximizar la autonomía durante horas de reproducción.",
+                                "60Hz refresh rate, disabled animations and no preloading to maximize battery during long listening sessions."
+                            )
+                        ),
+                        ProfileItem(
+                            key = "custom",
+                            title = "⚙️ " + getLocalized("Personalizado", "Custom"),
+                            badge = getLocalized("Manual", "Manual"),
+                            desc = getLocalized(
+                                "Ajusta individualmente la tasa de refresco (60/90/120Hz), caché, resolución de carátulas y animaciones.",
+                                "Manually configure refresh rate (60/90/120Hz), cache limits, artwork resolution and animation speeds."
+                            )
+                        )
+                    )
+
+                    profiles.forEach { item ->
+                        val isSelected = performanceProfile == item.key
                         Surface(
-                            onClick = { applyProfile(key) },
+                            onClick = { applyProfile(item.key) },
                             shape = RoundedCornerShape(16.dp),
                             color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
                             border = BorderStroke(1.5.dp, if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f)),
@@ -209,22 +280,44 @@ fun PerformanceSettingsSection(
                                 modifier = Modifier.padding(14.dp)
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = item.title,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(
+                                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                                )
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = item.badge,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(3.dp))
                                     Text(
-                                        text = title,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = desc,
+                                        text = item.desc,
                                         fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        lineHeight = 15.sp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
                                     )
                                 }
                                 RadioButton(
                                     selected = isSelected,
-                                    onClick = { applyProfile(key) },
+                                    onClick = { applyProfile(item.key) },
                                     colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                                 )
                             }
@@ -286,8 +379,8 @@ fun PerformanceSettingsSection(
                             )
                             Text(
                                 text = getLocalized(
-                                    "Forzar tasa alta (120Hz) para máxima fluidez o 60Hz para ahorrar batería",
-                                    "Enforce high rate (120Hz) for fluid scrolling or 60Hz to save battery"
+                                    "Forzar tasa de refresco (60Hz, 90Hz o 120Hz según soporte del dispositivo)",
+                                    "Enforce refresh rate (60Hz, 90Hz or 120Hz based on device support)"
                                 ),
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -297,7 +390,7 @@ fun PerformanceSettingsSection(
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            listOf("60", "120").forEach { rate ->
+                            listOf("60", "90", "120").forEach { rate ->
                                 val isSelected = selectedRefreshRate == rate
                                 Box(
                                     modifier = Modifier

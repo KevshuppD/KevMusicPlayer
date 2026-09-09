@@ -53,12 +53,32 @@ fun AlbumEditorDialog(
     var selectedCoverBytes by remember { mutableStateOf<ByteArray?>(null) }
     var selectedCoverUrl by remember { mutableStateOf<String?>(null) }
     
-    // iTunes search state
+    // Cover search state
     var showCoverSearchSection by remember { mutableStateOf(false) }
-    var coverSearchQuery by remember { mutableStateOf(albumName) }
+    var coverSearchQuery by remember { 
+        mutableStateOf(if (albumArtistInput.isNotBlank() && !albumArtistInput.contains("Unknown", ignoreCase = true)) "$albumName $albumArtistInput" else albumName) 
+    }
     var isSearchingCover by remember { mutableStateOf(false) }
-    var coverResults by remember { mutableStateOf<List<com.kevshupp.kevmusicplayer.data.ITunesCoverSearchResult>>(emptyList()) }
+    var coverResults by remember { mutableStateOf<List<com.kevshupp.kevmusicplayer.data.CoverSearchResult>>(emptyList()) }
     var coverSearchStatus by remember { mutableStateOf("") }
+
+    val performSearch: (String) -> Unit = { query ->
+        scope.launch {
+            isSearchingCover = true
+            coverSearchStatus = getLocalized("Buscando portadas de álbum en Deezer e iTunes...", "Searching album covers on Deezer & iTunes...")
+            val results = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(
+                query = query,
+                type = com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM
+            )
+            coverResults = results
+            isSearchingCover = false
+            if (results.isEmpty()) {
+                coverSearchStatus = getLocalized("No se encontraron portadas.", "No covers found.")
+            } else {
+                coverSearchStatus = getLocalized("Se encontraron ${results.size} portadas.", "Found ${results.size} covers.")
+            }
+        }
+    }
 
     val coverPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
@@ -205,28 +225,46 @@ fun AlbumEditorDialog(
 
                 if (showCoverSearchSection) {
                     item {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+                        ) {
+                            if (albumArtistInput.isNotBlank() && !albumArtistInput.contains("Unknown", ignoreCase = true)) {
+                                item {
+                                    SuggestionChip(
+                                        onClick = {
+                                            val q = "$albumTitleInput $albumArtistInput".trim()
+                                            coverSearchQuery = q
+                                            performSearch(q)
+                                        },
+                                        label = { Text("$albumTitleInput + $albumArtistInput", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f)) },
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                                }
+                            }
+                            item {
+                                SuggestionChip(
+                                    onClick = {
+                                        coverSearchQuery = albumTitleInput
+                                        performSearch(albumTitleInput)
+                                    },
+                                    label = { Text(getLocalized("Solo Álbum: $albumTitleInput", "Album only: $albumTitleInput"), fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f)) },
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    item {
                         OutlinedTextField(
                             value = coverSearchQuery,
                             onValueChange = { coverSearchQuery = it },
-                            label = { Text(getLocalized("Buscar portada en iTunes", "Search cover on iTunes"), color = Color.White.copy(alpha = 0.5f)) },
+                            label = { Text(getLocalized("Buscar en Deezer / iTunes", "Search on Deezer / iTunes"), color = Color.White.copy(alpha = 0.5f)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             trailingIcon = {
                                 IconButton(
-                                    onClick = {
-                                        scope.launch {
-                                            isSearchingCover = true
-                                            coverSearchStatus = getLocalized("Buscando portadas...", "Searching covers...")
-                                            val results = com.kevshupp.kevmusicplayer.data.LyricsRepository.searchCoversFromITunes(coverSearchQuery)
-                                            coverResults = results
-                                            isSearchingCover = false
-                                            if (results.isEmpty()) {
-                                                coverSearchStatus = getLocalized("No se encontraron portadas.", "No covers found.")
-                                            } else {
-                                                coverSearchStatus = getLocalized("Se encontraron ${results.size} portadas.", "Found ${results.size} covers.")
-                                            }
-                                        }
-                                    },
+                                    onClick = { performSearch(coverSearchQuery) },
                                     enabled = coverSearchQuery.isNotBlank() && !isSearchingCover
                                 ) {
                                     if (isSearchingCover) {
@@ -279,7 +317,7 @@ fun AlbumEditorDialog(
                                                 scope.launch {
                                                     isSaving = true
                                                     coverSearchStatus = getLocalized("Descargando imagen...", "Downloading image...")
-                                                    val bytes = com.kevshupp.kevmusicplayer.data.LyricsRepository.downloadCoverBytes(result.coverUrl)
+                                                    val bytes = com.kevshupp.kevmusicplayer.data.CoverArtRepository.downloadCoverBytes(result.coverUrl)
                                                     selectedCoverBytes = bytes
                                                     isSaving = false
                                                     if (bytes != null) {
@@ -294,21 +332,39 @@ fun AlbumEditorDialog(
                                             horizontalAlignment = Alignment.CenterHorizontally,
                                             modifier = Modifier.padding(4.dp)
                                         ) {
-                                            coil.compose.SubcomposeAsyncImage(
-                                                model = result.coverUrl,
-                                                contentDescription = null,
-                                                modifier = Modifier
-                                                    .size(60.dp)
-                                                    .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(4.dp) else androidx.compose.ui.graphics.RectangleShape),
-                                                loading = {
-                                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                            Box(
+                                                modifier = Modifier.size(60.dp),
+                                                contentAlignment = Alignment.BottomEnd
+                                            ) {
+                                                coil.compose.SubcomposeAsyncImage(
+                                                    model = result.coverUrl,
+                                                    contentDescription = null,
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(4.dp) else androidx.compose.ui.graphics.RectangleShape),
+                                                    loading = {
+                                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                                        }
+                                                    },
+                                                    error = {
+                                                        Icon(Icons.Rounded.Image, contentDescription = null, tint = Color.White.copy(alpha = 0.5f))
                                                     }
-                                                },
-                                                error = {
-                                                    Icon(Icons.Rounded.Image, contentDescription = null, tint = Color.White.copy(alpha = 0.5f))
+                                                )
+                                                Surface(
+                                                    shape = RoundedCornerShape(3.dp),
+                                                    color = if (result.source == "Deezer") Color(0xFF9B51E0) else Color(0xFFFF2D55),
+                                                    modifier = Modifier.padding(2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = result.source,
+                                                        fontSize = 7.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.White,
+                                                        modifier = Modifier.padding(horizontal = 2.dp, vertical = 1.dp)
+                                                    )
                                                 }
-                                            )
+                                            }
                                             Spacer(modifier = Modifier.height(4.dp))
                                             Text(
                                                 text = result.albumName.takeIf { it.isNotEmpty() } ?: result.trackName,

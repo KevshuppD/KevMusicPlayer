@@ -129,6 +129,7 @@ private val DarkColorScheme = darkColorScheme(
 
 val LocalDisableAnimations = androidx.compose.runtime.staticCompositionLocalOf { false }
 val LocalSongImageRounded = androidx.compose.runtime.staticCompositionLocalOf { true }
+val LocalTransparencyEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }
 
 @Composable
 fun KevMusicPlayerTheme(
@@ -140,6 +141,7 @@ fun KevMusicPlayerTheme(
     var currentTheme by remember { mutableStateOf(prefs.getString("app_theme", "cyberpunk") ?: "cyberpunk") }
     var currentDisableAnimations by remember { mutableStateOf(prefs.getBoolean("disable_animations", false)) }
     var currentSongImageRounded by remember { mutableStateOf(prefs.getBoolean("song_image_rounded", true)) }
+    var currentTransparencyEnabled by remember { mutableStateOf(prefs.getBoolean("enable_transparency", true)) }
     
     // Store strong references to the change listeners so they are not garbage collected
     val listener = remember {
@@ -150,6 +152,8 @@ fun KevMusicPlayerTheme(
                 currentDisableAnimations = p.getBoolean("disable_animations", false)
             } else if (key == "song_image_rounded") {
                 currentSongImageRounded = p.getBoolean("song_image_rounded", true)
+            } else if (key == "enable_transparency") {
+                currentTransparencyEnabled = p.getBoolean("enable_transparency", true)
             }
         }
     }
@@ -181,7 +185,8 @@ fun KevMusicPlayerTheme(
     }
     CompositionLocalProvider(
         LocalDisableAnimations provides currentDisableAnimations,
-        LocalSongImageRounded provides currentSongImageRounded
+        LocalSongImageRounded provides currentSongImageRounded,
+        LocalTransparencyEnabled provides currentTransparencyEnabled
     ) {
         MaterialTheme(
             colorScheme = colorScheme,

@@ -298,139 +298,14 @@ object LyricsRepository {
         }
     }
 
-    suspend fun searchCoversFromITunes(query: String): List<ITunesCoverSearchResult> {
-        return withContext(Dispatchers.IO) {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val request = Request.Builder()
-                .url("https://itunes.apple.com/search?term=$encodedQuery&entity=song&limit=10")
-                .build()
-            val list = mutableListOf<ITunesCoverSearchResult>()
-            var attempt = 0
-            val maxAttempts = 3
-            var lastException: Exception? = null
-
-            while (attempt < maxAttempts) {
-                try {
-                    client.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val body = response.body?.string() ?: return@withContext emptyList()
-                            val jsonObject = JSONObject(body)
-                            val results = jsonObject.optJSONArray("results") ?: return@withContext emptyList()
-                            for (i in 0 until results.length()) {
-                                val obj = results.getJSONObject(i)
-                                val trackName = obj.optString("trackName", "")
-                                val artistName = obj.optString("artistName", "")
-                                val albumName = obj.optString("collectionName", "")
-                                var coverUrl = obj.optString("artworkUrl100", "")
-                                if (coverUrl.isNotEmpty()) {
-                                    coverUrl = coverUrl.replace("100x100bb.jpg", "600x600bb.jpg")
-                                }
-                                if (coverUrl.isNotEmpty()) {
-                                    list.add(ITunesCoverSearchResult(trackName, artistName, albumName, coverUrl))
-                                }
-                            }
-                            lastException = null
-                            break // Success!
-                        } else {
-                            if (response.code == 429 || response.code >= 500) {
-                                throw java.io.IOException("HTTP error code: ${response.code}")
-                            } else {
-                                break // Non-retryable error
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    lastException = e
-                    val isNetworkError = e is java.net.SocketTimeoutException || 
-                                         e is java.net.ConnectException || 
-                                         e is java.net.UnknownHostException || 
-                                         e is java.net.SocketException ||
-                                         e is java.io.IOException
-                    if (!isNetworkError) {
-                        break
-                    }
-                    kotlinx.coroutines.delay(1000L * (attempt + 1))
-                }
-                attempt++
-            }
-
-            val exceptionToLog = lastException
-            if (exceptionToLog != null) {
-                val isNetworkError = exceptionToLog is java.net.SocketTimeoutException || 
-                                     exceptionToLog is java.net.ConnectException || 
-                                     exceptionToLog is java.net.UnknownHostException || 
-                                     exceptionToLog is java.net.SocketException
-                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                    KevMusicPlayerApplication.instance,
-                    "CoverSearch",
-                    "Failed search from iTunes for $query: ${exceptionToLog.localizedMessage ?: exceptionToLog.message}",
-                    if (isNetworkError) null else exceptionToLog
-                )
-            }
-            list
-        }
+    suspend fun searchCoversFromITunes(query: String): List<CoverSearchResult> {
+        return CoverArtRepository.searchCovers(query)
     }
 
     suspend fun downloadCoverBytes(url: String): ByteArray? {
-        return withContext(Dispatchers.IO) {
-            val request = Request.Builder().url(url).build()
-            var attempt = 0
-            val maxAttempts = 3
-            var lastException: Exception? = null
-
-            while (attempt < maxAttempts) {
-                try {
-                    client.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            lastException = null
-                            return@withContext response.body?.bytes()
-                        } else {
-                            if (response.code == 429 || response.code >= 500) {
-                                throw java.io.IOException("HTTP error code: ${response.code}")
-                            } else {
-                                break // Non-retryable error
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    lastException = e
-                    val isNetworkError = e is java.net.SocketTimeoutException || 
-                                         e is java.net.ConnectException || 
-                                         e is java.net.UnknownHostException || 
-                                         e is java.net.SocketException ||
-                                         e is java.io.IOException
-                    if (!isNetworkError) {
-                        break
-                    }
-                    kotlinx.coroutines.delay(1000L * (attempt + 1))
-                }
-                attempt++
-            }
-
-            val exceptionToLog = lastException
-            if (exceptionToLog != null) {
-                val isNetworkError = exceptionToLog is java.net.SocketTimeoutException || 
-                                     exceptionToLog is java.net.ConnectException || 
-                                     exceptionToLog is java.net.UnknownHostException || 
-                                     exceptionToLog is java.net.SocketException
-                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                    KevMusicPlayerApplication.instance,
-                    "CoverDownload",
-                    "Failed download from $url: ${exceptionToLog.localizedMessage ?: exceptionToLog.message}",
-                    if (isNetworkError) null else exceptionToLog
-                )
-            }
-            null
-        }
+        return CoverArtRepository.downloadCoverBytes(url)
     }
 }
 
-@kotlinx.serialization.Serializable
-data class ITunesCoverSearchResult(
-    val trackName: String,
-    val artistName: String,
-    val albumName: String,
-    val coverUrl: String
-)
+typealias ITunesCoverSearchResult = CoverSearchResult
+

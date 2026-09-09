@@ -138,10 +138,10 @@ class MainActivity : ComponentActivity() {
                 val display = this.display
                 if (display != null) {
                     val supportedModes = display.supportedModes
-                    val targetMode = if (rate == "60") {
-                        supportedModes.minByOrNull { Math.abs(it.refreshRate - 60f) }
-                    } else {
-                        supportedModes.maxByOrNull { it.refreshRate }
+                    val targetMode = when (rate) {
+                        "60" -> supportedModes.minByOrNull { Math.abs(it.refreshRate - 60f) }
+                        "90" -> supportedModes.minByOrNull { Math.abs(it.refreshRate - 90f) }
+                        else -> supportedModes.maxByOrNull { it.refreshRate }
                     }
                     if (targetMode != null) {
                         params.preferredDisplayModeId = targetMode.modeId

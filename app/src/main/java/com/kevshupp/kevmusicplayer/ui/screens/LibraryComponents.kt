@@ -96,21 +96,38 @@ fun SongListItem(
     onSongSelectToggle: ((AudioFile) -> Unit)?,
     onPlayDirectly: ((AudioFile) -> Unit)?,
     modifier: Modifier = Modifier,
-    isCompact: Boolean = false
+    isCompact: Boolean = false,
+    songStyle: String = "modern"
 ) {
+    val isModern = songStyle == "modern"
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    val itemPaddingVertical = if (isCompact) 6.dp else 12.dp
-    val itemPaddingHorizontal = if (isCompact) 10.dp else 12.dp
-    val artSize = if (isCompact) 40.dp else 48.dp
-    val cornerRadius = if (isCompact) 12.dp else 16.dp
+    val itemPaddingVertical = if (isModern) {
+        if (isCompact) 4.dp else 7.dp
+    } else {
+        if (isCompact) 6.dp else 12.dp
+    }
+    val itemPaddingHorizontal = if (isModern) {
+        if (isCompact) 8.dp else 10.dp
+    } else {
+        if (isCompact) 10.dp else 12.dp
+    }
+    val artSize = if (isModern) {
+        if (isCompact) 44.dp else 52.dp
+    } else {
+        if (isCompact) 40.dp else 48.dp
+    }
+    val cornerRadius = if (isModern) 12.dp else (if (isCompact) 12.dp else 16.dp)
 
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(cornerRadius))
             .background(
-                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                when {
+                    isSelected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                    isModern -> Color.Transparent
+                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                }
             )
             .then(
                 if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(cornerRadius))
@@ -154,11 +171,16 @@ fun SongListItem(
                 )
             }
         } else {
-            // Sleek Gradient Song Icon
+            // Sleek Song Artwork
+            val artCorner = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) {
+                RoundedCornerShape(if (isCompact) 10.dp else 12.dp)
+            } else {
+                androidx.compose.ui.graphics.RectangleShape
+            }
             Box(
                 modifier = Modifier
                     .size(artSize)
-                    .clip(if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(if (isCompact) 10.dp else 12.dp) else androidx.compose.ui.graphics.RectangleShape)
+                    .clip(artCorner)
                     .background(getGradientForString(song.title)),
                 contentAlignment = Alignment.Center
             ) {
@@ -175,24 +197,24 @@ fun SongListItem(
                         imageVector = Icons.Rounded.MusicNote,
                         contentDescription = null,
                         tint = Color.White.copy(alpha = 0.8f),
-                        modifier = Modifier.size(if (isCompact) 18.dp else 22.dp)
+                        modifier = Modifier.size(if (isCompact) 20.dp else 24.dp)
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.width(if (isCompact) 12.dp else 16.dp))
+        Spacer(modifier = Modifier.width(if (isCompact) 12.dp else 14.dp))
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = song.title,
-                fontWeight = FontWeight.Bold,
+                fontWeight = if (isModern) FontWeight.SemiBold else FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontSize = if (isCompact) 14.sp else 15.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(if (isCompact) 2.dp else 4.dp))
+            Spacer(modifier = Modifier.height(if (isCompact) 2.dp else 3.dp))
             Text(
                 text = "${song.artist} • ${song.album}",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
@@ -205,13 +227,13 @@ fun SongListItem(
         if (!isMultiSelectMode) {
             IconButton(
                 onClick = { onSongClick(song) },
-                modifier = if (isCompact) Modifier.size(36.dp) else Modifier.size(48.dp)
+                modifier = if (isCompact) Modifier.size(36.dp) else Modifier.size(40.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.MoreVert,
                     contentDescription = "Options",
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.size(if (isCompact) 18.dp else 24.dp)
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.size(if (isCompact) 18.dp else 20.dp)
                 )
             }
         }
@@ -238,19 +260,26 @@ fun SongListView(
     listState: LazyListState = rememberLazyListState(),
     showTrackNumbers: Boolean = false,
     isCompact: Boolean = false,
+    songStyle: String = "modern",
+    bottomPadding: androidx.compose.ui.unit.Dp = 160.dp,
     headerContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)) {
+    val isModern = songStyle == "modern"
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = if (isCompact) 12.dp else 16.dp, 
-                end = if (isCompact) 20.dp else 24.dp, // Extra space for the sidebar
+                end = if (isModern) (if (isCompact) 26.dp else 30.dp) else (if (isCompact) 20.dp else 24.dp), // Extra space for sidebar to prevent 3-dots collision
                 top = if (isCompact) 4.dp else 8.dp, 
-                bottom = if (isCompact) 4.dp else 8.dp
+                bottom = bottomPadding
             ),
-            verticalArrangement = Arrangement.spacedBy(if (isCompact) 4.dp else 8.dp)
+            verticalArrangement = if (isModern) {
+                Arrangement.spacedBy(if (isCompact) 2.dp else 4.dp)
+            } else {
+                Arrangement.spacedBy(if (isCompact) 4.dp else 8.dp)
+            }
         ) {
             if (headerContent != null) {
                 headerContent()
@@ -268,6 +297,7 @@ fun SongListView(
                     isMultiSelectMode = isMultiSelectMode,
                     showTrackNumbers = showTrackNumbers,
                     isCompact = isCompact,
+                    songStyle = songStyle,
                     onSongClick = onSongClick,
                     onSongLongClick = onSongLongClick,
                     onSongSelectToggle = onSongSelectToggle,
@@ -279,7 +309,9 @@ fun SongListView(
         FastScrollSidebar(
             items = songTitles,
             listState = listState,
-            modifier = Modifier.align(Alignment.CenterEnd)
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(bottom = bottomPadding)
         )
     }
 }
@@ -292,7 +324,8 @@ fun AlbumGridView(
     onDeleteAlbum: (String, List<AudioFile>) -> Unit,
     onAddAlbumToPlaylist: (String, List<AudioFile>) -> Unit,
     onEditAlbum: (String, List<AudioFile>) -> Unit,
-    onShowAlbumInfo: (String, List<AudioFile>) -> Unit
+    onShowAlbumInfo: (String, List<AudioFile>) -> Unit,
+    bottomPadding: androidx.compose.ui.unit.Dp = 160.dp
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val systemLang = remember { context.resources.configuration.locales[0].language }
@@ -302,7 +335,7 @@ fun AlbumGridView(
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = bottomPadding),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize()
@@ -424,14 +457,15 @@ fun AlbumGridView(
 fun ArtistListView(
     artists: Map<String, List<AudioFile>>,
     onArtistClick: (String) -> Unit,
-    listState: LazyListState = rememberLazyListState()
+    listState: LazyListState = rememberLazyListState(),
+    bottomPadding: androidx.compose.ui.unit.Dp = 160.dp
 ) {
     val artistNames = remember(artists) { artists.keys.toList() }
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 28.dp, top = 8.dp, bottom = 8.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 28.dp, top = 8.dp, bottom = bottomPadding),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(artistNames, key = { it }) { artistName ->
@@ -481,7 +515,9 @@ fun ArtistListView(
         FastScrollSidebar(
             items = artistNames,
             listState = listState,
-            modifier = Modifier.align(Alignment.CenterEnd)
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(bottom = bottomPadding)
         )
     }
 }
@@ -489,11 +525,12 @@ fun ArtistListView(
 @Composable
 fun GenreGridView(
     genres: Map<String, List<AudioFile>>,
-    onGenreClick: (String) -> Unit
+    onGenreClick: (String) -> Unit,
+    bottomPadding: androidx.compose.ui.unit.Dp = 160.dp
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = bottomPadding),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize()
@@ -673,11 +710,12 @@ fun MiniPlayer(
 @Composable
 fun FolderGridView(
     folders: Map<String, List<AudioFile>>,
-    onFolderClick: (String) -> Unit
+    onFolderClick: (String) -> Unit,
+    bottomPadding: androidx.compose.ui.unit.Dp = 160.dp
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = bottomPadding),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize()
@@ -1249,7 +1287,8 @@ fun PlaylistGridView(
     onCreatePlaylist: (String) -> Unit,
     onCreateSmartPlaylist: (String, com.kevshupp.kevmusicplayer.playback.SmartPlaylistRule, Int, Boolean, com.kevshupp.kevmusicplayer.playback.SmartRuleNode?) -> Unit,
     onPlaylistClick: (String) -> Unit,
-    onDeletePlaylist: (String) -> Unit
+    onDeletePlaylist: (String) -> Unit,
+    bottomPadding: androidx.compose.ui.unit.Dp = 160.dp
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }
@@ -1716,7 +1755,7 @@ fun PlaylistGridView(
     }
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = bottomPadding),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize()
@@ -2098,6 +2137,21 @@ private fun ArtistPlaceholderIcon(artist: String, modifier: Modifier) {
     }
 }
 
+private fun normalizeInitialChar(c: Char): Char {
+    val upper = c.uppercaseChar()
+    return when (upper) {
+        'Á', 'À', 'Â', 'Ä', 'Ã', 'Å' -> 'A'
+        'É', 'È', 'Ê', 'Ë' -> 'E'
+        'Í', 'Ì', 'Î', 'Ï' -> 'I'
+        'Ó', 'Ò', 'Ô', 'Ö', 'Õ' -> 'O'
+        'Ú', 'Ù', 'Û', 'Ü' -> 'U'
+        'Ñ' -> 'N'
+        in 'A'..'Z' -> upper
+        in '0'..'9' -> '#'
+        else -> '#'
+    }
+}
+
 @Composable
 fun FastScrollSidebar(
     items: List<String>,
@@ -2118,33 +2172,31 @@ fun FastScrollSidebar(
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val density = LocalDensity.current
 
-    val alphabet = remember(items) {
-        items.map { text ->
-            val firstChar = text.trimStart().firstOrNull()?.uppercaseChar() ?: '#'
-            when {
-                firstChar.isDigit() -> '#'
-                firstChar in 'A'..'Z' -> firstChar
-                else -> '?'
-            }
-        }
-        .distinct()
-        .sortedWith { a, b ->
-            when {
-                a == b -> 0
-                a == '#' -> -1
-                b == '#' -> 1
-                a == '?' -> 1
-                b == '?' -> -1
-                else -> a.compareTo(b)
-            }
-        }
+    val alphabet = remember {
+        listOf('#') + ('A'..'Z').toList()
     }
 
-    if (alphabet.isEmpty()) return
-
     var isDragging by remember { mutableStateOf(false) }
-    var currentLetter by remember { mutableStateOf(alphabet.first()) }
+    var currentLetter by remember { mutableStateOf('A') }
     var dragY by remember { mutableStateOf(0f) }
+
+    fun findTargetIndex(letter: Char): Int {
+        if (items.isEmpty()) return -1
+        if (letter == '#') {
+            val idx = items.indexOfFirst {
+                val firstChar = it.trimStart().firstOrNull() ?: return@indexOfFirst false
+                normalizeInitialChar(firstChar) == '#'
+            }
+            if (idx != -1) return idx
+        }
+        val targetChar = if (letter == '#') 'A' else letter
+        val matchIndex = items.indexOfFirst {
+            val firstChar = it.trimStart().firstOrNull() ?: return@indexOfFirst false
+            val norm = normalizeInitialChar(firstChar)
+            if (norm == '#') false else norm >= targetChar
+        }
+        return if (matchIndex != -1) matchIndex else items.lastIndex
+    }
 
     val scrollPercent = remember {
         derivedStateOf {
@@ -2168,8 +2220,8 @@ fun FastScrollSidebar(
         modifier = modifier
             .fillMaxHeight()
             .width(28.dp)
-            .padding(vertical = 16.dp)
-            .pointerInput(alphabet, items) {
+            .padding(vertical = 4.dp)
+            .pointerInput(items) {
                 detectVerticalDragGestures(
                     onDragStart = { offset ->
                         dragY = offset.y
@@ -2184,15 +2236,7 @@ fun FastScrollSidebar(
                                 try { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) } catch (e: Exception) {}
                             }
                         }
-                        val targetIndex = items.indexOfFirst {
-                            val firstChar = it.trimStart().firstOrNull()?.uppercaseChar() ?: '#'
-                            val mappedChar = when {
-                                firstChar.isDigit() -> '#'
-                                firstChar in 'A'..'Z' -> firstChar
-                                else -> '?'
-                            }
-                            mappedChar == currentLetter
-                        }
+                        val targetIndex = findTargetIndex(newLetter)
                         if (targetIndex != -1) {
                             coroutineScope.launch { listState.scrollToItem(targetIndex) }
                         }
@@ -2211,15 +2255,7 @@ fun FastScrollSidebar(
                                 try { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) } catch (e: Exception) {}
                             }
                         }
-                        val targetIndex = items.indexOfFirst {
-                            val firstChar = it.trimStart().firstOrNull()?.uppercaseChar() ?: '#'
-                            val mappedChar = when {
-                                firstChar.isDigit() -> '#'
-                                firstChar in 'A'..'Z' -> firstChar
-                                else -> '?'
-                            }
-                            mappedChar == currentLetter
-                        }
+                        val targetIndex = findTargetIndex(newLetter)
                         if (targetIndex != -1) {
                             coroutineScope.launch { listState.scrollToItem(targetIndex) }
                         }
@@ -2228,7 +2264,7 @@ fun FastScrollSidebar(
             }
     ) {
         val containerHeightPx = with(density) { maxHeight.toPx() }
-        val thumbHeight = 32.dp
+        val thumbHeight = 28.dp
         val thumbHeightPx = with(density) { thumbHeight.toPx() }
         val maxOffsetPx = (containerHeightPx - thumbHeightPx).coerceAtLeast(0f)
         val thumbOffsetDp = with(density) { (maxOffsetPx * scrollPercent.value).toDp() }
@@ -2268,17 +2304,25 @@ fun FastScrollSidebar(
                 .fillMaxSize()
                 .graphicsLayer { alpha = alphabetAlpha }
                 .padding(end = 6.dp),
-            verticalArrangement = Arrangement.SpaceEvenly,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             alphabet.forEach { letter ->
                 val isActive = currentLetter == letter && isDragging
-                Text(
-                    text = letter.toString(),
-                    color = if (isActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.65f),
-                    fontWeight = if (isActive) FontWeight.Black else FontWeight.Bold,
-                    fontSize = if (isActive) 11.sp else 8.5.sp
-                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = letter.toString(),
+                        color = if (isActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.65f),
+                        fontWeight = if (isActive) FontWeight.Black else FontWeight.Bold,
+                        fontSize = if (isActive) 10.sp else 7.5.sp,
+                        lineHeight = 8.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
             }
         }
 

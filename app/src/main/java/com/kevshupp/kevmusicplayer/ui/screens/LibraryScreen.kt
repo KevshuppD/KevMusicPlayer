@@ -131,15 +131,22 @@ fun LibraryScreen(
     var libraryLayoutMode by remember {
         mutableStateOf(settingsPrefs.getString("library_layout_mode", "normal") ?: "normal")
     }
+    var librarySongStyle by remember {
+        mutableStateOf(settingsPrefs.getString("library_song_style", "modern") ?: "modern")
+    }
 
     // Keep preference in sync if updated elsewhere
     DisposableEffect(isActive) {
         if (isActive) {
             libraryLayoutMode = settingsPrefs.getString("library_layout_mode", "normal") ?: "normal"
+            librarySongStyle = settingsPrefs.getString("library_song_style", "modern") ?: "modern"
         }
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == "library_layout_mode") {
                 libraryLayoutMode = settingsPrefs.getString("library_layout_mode", "normal") ?: "normal"
+            }
+            if (key == "library_song_style") {
+                librarySongStyle = settingsPrefs.getString("library_song_style", "modern") ?: "modern"
             }
         }
         settingsPrefs.registerOnSharedPreferenceChangeListener(listener)
@@ -339,11 +346,10 @@ fun LibraryScreen(
             )
             .statusBarsPadding()
     ) {
+        val bottomBarPadding = if (player?.currentMediaItem != null) 160.dp else 88.dp
+
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
-                .padding(bottom = if (player?.currentMediaItem != null) 164.dp else 88.dp)
+            modifier = Modifier.fillMaxSize()
         ) {
             if (currentSubView == null) {
                 // Primary Header
@@ -737,6 +743,8 @@ fun LibraryScreen(
                                         songs = filteredFiles,
                                         listState = songsListState,
                                         isCompact = isCompact,
+                                        songStyle = librarySongStyle,
+                                        bottomPadding = bottomBarPadding,
                                         onSongClick = { song ->
                                             songForOptionsSheet = song
                                             playlistContextForOptionsSheet = null
@@ -783,6 +791,7 @@ fun LibraryScreen(
                                 "Albums" -> {
                                     AlbumGridView(
                                         albums = albums,
+                                        bottomPadding = bottomBarPadding,
                                         onAlbumClick = { navigateToSubView(SubView.AlbumDetail(it)) },
                                         onDeleteAlbum = { name, songs -> albumToDelete = Pair(name, songs) },
                                         onAddAlbumToPlaylist = { name, songs -> albumForPlaylist = Pair(name, songs) },
@@ -793,18 +802,21 @@ fun LibraryScreen(
                                 "Artists" -> {
                                     ArtistListView(
                                         artists = artists,
+                                        bottomPadding = bottomBarPadding,
                                         onArtistClick = { navigateToSubView(SubView.ArtistDetail(it)) }
                                     )
                                 }
                                 "Genres" -> {
                                     GenreGridView(
                                         genres = genres,
+                                        bottomPadding = bottomBarPadding,
                                         onGenreClick = { navigateToSubView(SubView.GenreDetail(it)) }
                                     )
                                 }
                                 "Folders" -> {
                                     FolderGridView(
                                         folders = folders,
+                                        bottomPadding = bottomBarPadding,
                                         onFolderClick = { navigateToSubView(SubView.FolderDetail(it)) }
                                     )
                                 }
@@ -825,6 +837,7 @@ fun LibraryScreen(
                                         viewModel = viewModel,
                                         playlists = allPlaylists,
                                         playlistCovers = viewModel?.playlistCovers ?: emptyMap(),
+                                        bottomPadding = bottomBarPadding,
                                         onCreatePlaylist = { viewModel?.createPlaylist(it) },
                                         onCreateSmartPlaylist = { name, rule, limit, isAdvanced, advRule ->
                                             viewModel?.createSmartPlaylist(name, rule, limit, isAdvanced, advRule)
@@ -1104,6 +1117,8 @@ fun LibraryScreen(
                             showTrackNumbers = subView is SubView.AlbumDetail,
                             listState = subViewSongsListState,
                             isCompact = isCompact,
+                            songStyle = librarySongStyle,
+                            bottomPadding = bottomBarPadding,
                             onSongClick = { song ->
                                 songForOptionsSheet = song
                                 playlistContextForOptionsSheet = if (subView is SubView.PlaylistDetail) {
@@ -1527,29 +1542,11 @@ fun LibraryScreen(
             }
         }
 
-        // Persistent Glassmorphic Floating Mini-player
-        if (player != null) {
-            val playerState = rememberPlayerState(player)
-            if (playerState.currentSong != null) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .navigationBarsPadding()
-                        .padding(start = 16.dp, end = 16.dp, bottom = 92.dp)
-                        .fillMaxWidth()
-                ) {
-                    MiniPlayer(
-                        player = player,
-                        playerState = playerState,
-                        onClick = onMiniPlayerClick
-                    )
-                }
-            }
-        }
-
-        // Glassmorphic Bottom Navigation Bar
+        // Glassmorphic Unified Bottom Navigation & Player Bar
         BottomNavBar(
             currentScreen = "library",
+            player = player,
+            onMiniPlayerClick = onMiniPlayerClick,
             onTabSelected = { tab ->
                 if (tab == "home") {
                     onNavigateToHome()

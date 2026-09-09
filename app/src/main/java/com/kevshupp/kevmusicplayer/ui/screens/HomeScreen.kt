@@ -122,7 +122,7 @@ fun HomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -327,29 +327,11 @@ fun HomeScreen(
             }
         }
 
-        // MiniPlayer Overlay
-        if (player != null) {
-            val playerState = rememberPlayerState(player)
-            if (playerState.currentSong != null) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .navigationBarsPadding()
-                        .padding(start = 16.dp, end = 16.dp, bottom = 92.dp) // Offset above the BottomNavBar
-                        .fillMaxWidth()
-                ) {
-                    MiniPlayer(
-                        player = player,
-                        playerState = playerState,
-                        onClick = onMiniPlayerClick
-                    )
-                }
-            }
-        }
-
-        // Glassmorphic Bottom Navigation Bar
+        // Glassmorphic Unified Bottom Navigation & Player Bar
         BottomNavBar(
             currentScreen = "home",
+            player = player,
+            onMiniPlayerClick = onMiniPlayerClick,
             onTabSelected = { tab ->
                 if (tab == "library") {
                     onNavigateToLibrary()
@@ -462,14 +444,14 @@ fun HomeHorizontalSection(
                 letterSpacing = (-0.5).sp
             ),
             color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(horizontal = 24.dp)
+            modifier = Modifier.padding(horizontal = 20.dp)
         )
 
         if (items.isEmpty()) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
+                    .padding(horizontal = 20.dp)
                     .height(100.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
@@ -489,12 +471,10 @@ fun HomeHorizontalSection(
                 }
             }
         } else {
-            androidx.compose.foundation.lazy.LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp)
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp)
             ) {
                 items(
                     items = items,
@@ -524,16 +504,15 @@ fun HomeSongCard(
 
     Column(
         modifier = modifier
-            .width(130.dp)
+            .width(136.dp)
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .padding(8.dp),
+            .clickable(onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // Song Artwork
         Box(
             modifier = Modifier
-                .size(114.dp)
+                .size(136.dp)
                 .clip(roundedShape)
                 .background(getGradientForString(song.title)),
             contentAlignment = Alignment.Center
@@ -551,14 +530,16 @@ fun HomeSongCard(
                     imageVector = Icons.Rounded.MusicNote,
                     contentDescription = null,
                     tint = Color.White.copy(alpha = 0.8f),
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(40.dp)
                 )
             }
         }
 
         // Song details
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 2.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(

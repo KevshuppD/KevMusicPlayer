@@ -93,6 +93,9 @@ fun LibrarySettingsSection(
     var useSameFolderForBackup by remember {
         mutableStateOf(settingsPrefs.getBoolean("use_same_folder_for_backup", false))
     }
+    var preferredCoverProvider by remember {
+        mutableStateOf(settingsPrefs.getString("preferred_cover_provider", "deezer") ?: "deezer")
+    }
 
     var showExportCustomDialog by remember { mutableStateOf(false) }
     var exportSettings by remember { mutableStateOf(true) }
@@ -914,6 +917,59 @@ fun LibrarySettingsSection(
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Preferred Cover Provider Selector
+            Text(
+                text = getLocalized("Proveedor preferido para descargas automáticas:", "Preferred provider for auto-downloads:"),
+                fontSize = 11.sp,
+                color = Color.White.copy(alpha = 0.6f)
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                FilterChip(
+                    selected = preferredCoverProvider == "deezer",
+                    onClick = {
+                        preferredCoverProvider = "deezer"
+                        settingsPrefs.edit().putString("preferred_cover_provider", "deezer").apply()
+                    },
+                    label = { Text(getLocalized("⚡ Deezer (HD)", "⚡ Deezer (HD)"), fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                        selectedLabelColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+                FilterChip(
+                    selected = preferredCoverProvider == "itunes",
+                    onClick = {
+                        preferredCoverProvider = "itunes"
+                        settingsPrefs.edit().putString("preferred_cover_provider", "itunes").apply()
+                    },
+                    label = { Text(getLocalized("🍎 iTunes", "🍎 iTunes"), fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                        selectedLabelColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+                FilterChip(
+                    selected = preferredCoverProvider == "both",
+                    onClick = {
+                        preferredCoverProvider = "both"
+                        settingsPrefs.edit().putString("preferred_cover_provider", "both").apply()
+                    },
+                    label = { Text(getLocalized("🌐 Ambos", "🌐 Both"), fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                        selectedLabelColor = MaterialTheme.colorScheme.primary
+                    )
                 )
             }
 
@@ -2068,6 +2124,118 @@ fun LibrarySettingsSection(
                         }
                     }
                     if (index < layoutModes.size - 1) {
+                        HorizontalDivider(
+                            color = settingsDividerColor(),
+                            modifier = Modifier.padding(horizontal = 14.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
+
+    // 0.1 Library Song List Style Section (Modern vs Classic)
+    var librarySongStyle by remember {
+        mutableStateOf(settingsPrefs.getString("library_song_style", "modern") ?: "modern")
+    }
+
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = getLocalized("ESTILO VISUAL DE CANCIONES", "SONG LIST VISUAL STYLE"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp,
+                modifier = Modifier.weight(1f)
+            )
+            SettingsInfoButton(
+                title = getLocalized("Estilo de Canciones", "Song List Style"),
+                infoText = getLocalized(
+                    "Elige entre la nueva vista moderna (filas limpias, carátulas ampliadas y fluidas) o la vista clásica anterior (tarjetas y cajas individuales).",
+                    "Choose between the new modern view (clean fluid rows, larger artwork) or the classic view (individual boxed cards)."
+                )
+            )
+        }
+
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = settingsCardContainerColor()
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
+                val songStyles = listOf(
+                    Triple(
+                        "modern",
+                        getLocalized("Vista Nueva / Moderna (Recomendada)", "New / Modern View (Recommended)"),
+                        getLocalized("Filas limpias y fluidas, carátulas más grandes (52dp) y Fast Scroll integrado sin interferencias", "Clean fluid rows, larger 52dp artwork, and sleek non-intrusive fast scroll")
+                    ),
+                    Triple(
+                        "classic",
+                        getLocalized("Vista Antigua / Clásica", "Classic / Previous View"),
+                        getLocalized("Diseño anterior con cajas oscuras individuales para cada canción", "Previous layout with individual dark boxed cards for each song")
+                    )
+                )
+
+                songStyles.forEachIndexed { index, (style, name, desc) ->
+                    val isSelected = librarySongStyle == style
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                librarySongStyle = style
+                                settingsPrefs.edit().putString("library_song_style", style).apply()
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = {
+                                librarySongStyle = style
+                                settingsPrefs.edit().putString("library_song_style", style).apply()
+                            },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = MaterialTheme.colorScheme.primary
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = if (style == "modern") Icons.Rounded.AutoAwesome else Icons.Rounded.GridView,
+                                contentDescription = null,
+                                tint = if (isSelected) MaterialTheme.colorScheme.primary else settingsTextMutedColor(),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = name,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = settingsTextColor()
+                                )
+                                Text(
+                                    text = desc,
+                                    fontSize = 11.sp,
+                                    color = settingsTextMutedColor()
+                                )
+                            }
+                        }
+                    }
+                    if (index < songStyles.size - 1) {
                         HorizontalDivider(
                             color = settingsDividerColor(),
                             modifier = Modifier.padding(horizontal = 14.dp)
