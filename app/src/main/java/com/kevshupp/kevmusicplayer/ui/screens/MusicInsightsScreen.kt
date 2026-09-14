@@ -265,6 +265,9 @@ fun MusicInsightsScreen(
         }
     }
 
+    val enableCardTransparency = com.kevshupp.kevmusicplayer.ui.theme.LocalCardTransparencyEnabled.current
+    val insightsCardContainerColor = if (enableCardTransparency) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f)
+
     Surface(
         modifier = Modifier
             .fillMaxSize()
@@ -597,7 +600,7 @@ fun MusicInsightsScreen(
                                 Card(
                                     shape = RoundedCornerShape(24.dp),
                                     colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                        containerColor = insightsCardContainerColor,
                                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 ) {
@@ -706,7 +709,7 @@ fun MusicInsightsScreen(
                                 Card(
                                     shape = RoundedCornerShape(24.dp),
                                     colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                        containerColor = insightsCardContainerColor,
                                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 ) {
@@ -775,7 +778,7 @@ fun MusicInsightsScreen(
                                 Card(
                                     shape = RoundedCornerShape(24.dp),
                                     colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                        containerColor = insightsCardContainerColor,
                                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 ) {
@@ -874,7 +877,7 @@ fun MusicInsightsScreen(
                                 Card(
                                     shape = RoundedCornerShape(24.dp),
                                     colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                        containerColor = insightsCardContainerColor,
                                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 ) {
@@ -950,7 +953,7 @@ fun MusicInsightsScreen(
                             Card(
                                 shape = RoundedCornerShape(24.dp),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                    containerColor = insightsCardContainerColor,
                                     contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             ) {
@@ -1048,7 +1051,7 @@ fun MusicInsightsScreen(
                             Card(
                                 shape = RoundedCornerShape(24.dp),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                    containerColor = insightsCardContainerColor,
                                     contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             ) {
@@ -1431,9 +1434,12 @@ fun MusicInsightsScreen(
 
 @Composable
 fun EmptyStatsCard(text: String) {
+    val enableCardTransparency = com.kevshupp.kevmusicplayer.ui.theme.LocalCardTransparencyEnabled.current
     Card(
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)),
+        colors = CardDefaults.cardColors(
+            containerColor = if (enableCardTransparency) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
+        ),
         modifier = Modifier.fillMaxWidth()
     ) {
         Box(

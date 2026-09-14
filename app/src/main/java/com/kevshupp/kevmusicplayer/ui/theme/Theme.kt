@@ -130,6 +130,8 @@ private val DarkColorScheme = darkColorScheme(
 val LocalDisableAnimations = androidx.compose.runtime.staticCompositionLocalOf { false }
 val LocalSongImageRounded = androidx.compose.runtime.staticCompositionLocalOf { true }
 val LocalTransparencyEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }
+val LocalCardTransparencyEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }
+val LocalNavBarTransparencyEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }
 
 @Composable
 fun KevMusicPlayerTheme(
@@ -138,10 +140,13 @@ fun KevMusicPlayerTheme(
     val context = LocalContext.current
     val prefs = remember(context) { context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE) }
     // Observe dynamic changes instantly
+    val initialLegacyTrans = prefs.getBoolean("enable_transparency", true)
     var currentTheme by remember { mutableStateOf(prefs.getString("app_theme", "cyberpunk") ?: "cyberpunk") }
     var currentDisableAnimations by remember { mutableStateOf(prefs.getBoolean("disable_animations", false)) }
     var currentSongImageRounded by remember { mutableStateOf(prefs.getBoolean("song_image_rounded", true)) }
-    var currentTransparencyEnabled by remember { mutableStateOf(prefs.getBoolean("enable_transparency", true)) }
+    var currentTransparencyEnabled by remember { mutableStateOf(initialLegacyTrans) }
+    var currentCardTransparencyEnabled by remember { mutableStateOf(prefs.getBoolean("enable_card_transparency", initialLegacyTrans)) }
+    var currentNavBarTransparencyEnabled by remember { mutableStateOf(prefs.getBoolean("enable_navbar_transparency", initialLegacyTrans)) }
     
     // Store strong references to the change listeners so they are not garbage collected
     val listener = remember {
@@ -154,6 +159,10 @@ fun KevMusicPlayerTheme(
                 currentSongImageRounded = p.getBoolean("song_image_rounded", true)
             } else if (key == "enable_transparency") {
                 currentTransparencyEnabled = p.getBoolean("enable_transparency", true)
+            } else if (key == "enable_card_transparency") {
+                currentCardTransparencyEnabled = p.getBoolean("enable_card_transparency", true)
+            } else if (key == "enable_navbar_transparency") {
+                currentNavBarTransparencyEnabled = p.getBoolean("enable_navbar_transparency", true)
             }
         }
     }
@@ -186,7 +195,9 @@ fun KevMusicPlayerTheme(
     CompositionLocalProvider(
         LocalDisableAnimations provides currentDisableAnimations,
         LocalSongImageRounded provides currentSongImageRounded,
-        LocalTransparencyEnabled provides currentTransparencyEnabled
+        LocalTransparencyEnabled provides currentTransparencyEnabled,
+        LocalCardTransparencyEnabled provides currentCardTransparencyEnabled,
+        LocalNavBarTransparencyEnabled provides currentNavBarTransparencyEnabled
     ) {
         MaterialTheme(
             colorScheme = colorScheme,

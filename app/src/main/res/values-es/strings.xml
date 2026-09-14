@@ -21,7 +21,6 @@
     <string name="category_folders_desc">Explorar pistas por carpeta</string>
     <string name="category_playlists_desc">Colecciones de usuario</string>
     <string name="search_placeholder">Buscar canciones...</string>
-    <string name="close_lyrics">Cerrar letras</string>
     <string name="find_lyrics">Buscar letras</string>
     <string name="translate_lyrics">Traducir</string>
     <string name="no_lyrics">No se encontraron letras para esta pista</string>

@@ -105,7 +105,7 @@ graph TD
   - *Fase 2 (Metadatos e igual duración):* Asocia por coincidencia de título, artista y variación de duración <= 3s.
 - **Borrado Masivo Sincronizado (`deleteSongs`):** Elimina el archivo en disco (`File.delete()`), borra en `ContentResolver`, remueve de Room y notifica a ExoPlayer.
 
-### G.2. Buscador de Canciones Cortas / Incompletas ([Dialogs.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/Dialogs.kt))
+### G.2. Buscador de Canciones Cortas / Incompletas ([ShortSongsDialog.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/dialogs/ShortSongsDialog.kt))
 - **Detección Rápida de Descargas Incompletas:** Filtra canciones con duración inusualmente baja mediante umbrales dinámicos seleccionables (`< 30s`, `< 60s`, `< 90s`, `< 120s`).
 - **Gestión y Re-descarga Fácil:**
   - Muestra duración exacta formateada (`mm:ss`) con badge de advertencia.
@@ -311,7 +311,6 @@ app/src/main/java/com/kevshupp/kevmusicplayer/
 ├── ui/                           # Interfaz de usuario Jetpack Compose
 │   ├── theme/                    # Paleta de colores, tipografías y definición de temas
 │   └── screens/                  # Vistas del flujo de la aplicación
-│       ├── Dialogs.kt            # Diálogos principales
 │       ├── dialogs/              # Diálogos modulares desacoplados
 │       │   ├── SleepTimerDialog.kt   # Temporizador de apagado
 │       │   ├── SaveQueueDialog.kt    # Guardar cola activa como playlist
@@ -413,7 +412,7 @@ Ubicación: [conectar_adb.sh](file:///home/kevin/Escritorio/sh/conectar_adb.sh)
 
 ---
 
-## 8. Novedades y Optimizaciones v1.2.28
+## 8. Novedades y Optimizaciones v1.2.29
 
 1. **Diseño Visual de Biblioteca (Vista Moderna vs Vista Clásica):**
    - Selector en **Configuración > Biblioteca > Estilo Visual de Canciones** para alternar libremente entre la nueva vista moderna y la clásica.
@@ -435,4 +434,12 @@ Ubicación: [conectar_adb.sh](file:///home/kevin/Escritorio/sh/conectar_adb.sh)
 
 5. **Perfiles de Rendimiento y Tasa de Refresco:**
    - Modo intermedio de **90 Hz** y nuevo perfil **Máxima Optimización a 120 Hz**.
-   - Selector de transparencia de interfaz en Configuración (activar/desactivar efectos de cristal / glassmorphism).
+   - Selector granular de transparencia en Configuración: permite activar o desactivar independientemente el efecto cristal (Glassmorphism) en la **Barra Inferior / Mini-reproductor** (`enable_navbar_transparency`) y en las **Tarjetas y Paneles** (`enable_card_transparency`).
+
+6. **Ordenamiento por Número de Pista en Álbumes:**
+   - Las canciones dentro de la vista de detalle de álbum (`SubView.AlbumDetail`) y en las agrupaciones de álbumes se ordenan estrictamente por su número de pista físico (`track`), con fallback por título si carecen de etiqueta de pista.
+   - Manejo mejorado del cálculo de número de pista en `SongListItem` (`song.track % 1000`) para compatibilidad con discos múltiples.
+
+7. **Rediseño Expresivo de Barra Inferior y Mini-Reproductor ([BottomNavBar.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/ui/screens/BottomNavBar.kt)):**
+   - **Píldoras de Navegación Expresivas (`NavPillTab`):** Pestañas tipo cápsula interactiva (`RoundedCornerShape(50)`) con animaciones suaves de color, borde y fondo (`animateColorAsState`). Al seleccionarse, se iluminan con borde de acento y fondo sutil en el color primario del tema.
+   - **Dock Flotante del Mini-Reproductor:** Tarjeta con esquinas suaves (20.dp), borde sutil, carátula con profundidad, botón circular de reproducción iluminado en neón y barra de progreso inferior curvada e integrada con gradiente horizontal.

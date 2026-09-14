@@ -156,7 +156,9 @@ fun GeneralSettingsSection(
         }
     }
 
-    var enableTransparency by remember { mutableStateOf(settingsPrefs.getBoolean("enable_transparency", true)) }
+    val initialLegacyTrans = settingsPrefs.getBoolean("enable_transparency", true)
+    var enableNavBarTransparency by remember { mutableStateOf(settingsPrefs.getBoolean("enable_navbar_transparency", initialLegacyTrans)) }
+    var enableCardTransparency by remember { mutableStateOf(settingsPrefs.getBoolean("enable_card_transparency", initialLegacyTrans)) }
 
     Spacer(modifier = Modifier.height(16.dp))
 
@@ -181,6 +183,7 @@ fun GeneralSettingsSection(
             Column(
                 modifier = Modifier.padding(16.dp)
             ) {
+                // Barra Inferior y Mini Reproductor
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
@@ -204,15 +207,15 @@ fun GeneralSettingsSection(
 
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = getLocalized("Efecto de Transparencia", "Transparency Effect"),
+                            text = getLocalized("Barra Inferior y Mini-reproductor", "Bottom Bar & Mini-Player"),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = getLocalized(
-                                "Fondos translúcidos con estilo cristal (Glassmorphism) en la barra inferior y tarjetas. Desactívalo para colores sólidos.",
-                                "Translucent glassmorphism backgrounds on the bottom bar and cards. Disable for solid colors."
+                                "Fondo translúcido con efecto cristal (Glassmorphism) en la barra de navegación y reproductor acoplado.",
+                                "Translucent glass effect on the navigation bar and docked mini-player."
                             ),
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -220,10 +223,69 @@ fun GeneralSettingsSection(
                     }
 
                     Switch(
-                        checked = enableTransparency,
+                        checked = enableNavBarTransparency,
                         onCheckedChange = { checked ->
-                            enableTransparency = checked
-                            settingsPrefs.edit().putBoolean("enable_transparency", checked).apply()
+                            enableNavBarTransparency = checked
+                            settingsPrefs.edit()
+                                .putBoolean("enable_navbar_transparency", checked)
+                                .putBoolean("enable_transparency", checked && enableCardTransparency)
+                                .apply()
+                        }
+                    )
+                }
+
+                HorizontalDivider(
+                    color = settingsDividerColor(),
+                    modifier = Modifier.padding(vertical = 12.dp)
+                )
+
+                // Tarjetas y Paneles
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Layers,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(14.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = getLocalized("Tarjetas y Paneles", "Cards & Panels"),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = getLocalized(
+                                "Fondo semi-transparente en tarjetas de ajustes, listas y cuadrículas. Desactívalo para colores sólidos y mayor contraste.",
+                                "Semi-transparent background on settings cards, lists, and grids. Disable for solid colors and higher contrast."
+                            ),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+
+                    Switch(
+                        checked = enableCardTransparency,
+                        onCheckedChange = { checked ->
+                            enableCardTransparency = checked
+                            settingsPrefs.edit()
+                                .putBoolean("enable_card_transparency", checked)
+                                .putBoolean("enable_transparency", checked && enableNavBarTransparency)
+                                .apply()
                         }
                     )
                 }

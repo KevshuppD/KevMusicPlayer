@@ -21,7 +21,6 @@
     <string name="category_folders_desc">Browse tracks by system folders</string>
     <string name="category_playlists_desc">Managed user collections</string>
     <string name="search_placeholder">Search songs...</string>
-    <string name="close_lyrics">Close lyrics</string>
     <string name="find_lyrics">Find Lyrics</string>
     <string name="translate_lyrics">Translate</string>
     <string name="no_lyrics">No lyrics found for this track</string>

@@ -1,5 +1,6 @@
 package com.kevshupp.kevmusicplayer.ui.screens
 
+import com.kevshupp.kevmusicplayer.ui.screens.dialogs.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures

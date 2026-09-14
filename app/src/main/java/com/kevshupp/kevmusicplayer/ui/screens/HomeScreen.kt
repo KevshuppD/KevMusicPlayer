@@ -381,6 +381,7 @@ fun QuickActionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val enableCardTransparency = com.kevshupp.kevmusicplayer.ui.theme.LocalCardTransparencyEnabled.current
     Card(
         modifier = modifier
             .height(72.dp)
@@ -388,9 +389,9 @@ fun QuickActionCard(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+            containerColor = if (enableCardTransparency) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
         ),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+        border = BorderStroke(1.dp, Color.White.copy(alpha = if (enableCardTransparency) 0.08f else 0.15f))
     ) {
         Row(
             modifier = Modifier
@@ -433,6 +434,7 @@ fun HomeHorizontalSection(
     onItemClick: (AudioFile) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val enableCardTransparency = com.kevshupp.kevmusicplayer.ui.theme.LocalCardTransparencyEnabled.current
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -455,9 +457,9 @@ fun HomeHorizontalSection(
                     .height(100.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.08f)
+                    containerColor = if (enableCardTransparency) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f)
                 ),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.05f))
+                border = BorderStroke(1.dp, Color.White.copy(alpha = if (enableCardTransparency) 0.05f else 0.12f))
             ) {
                 Box(
                     modifier = Modifier.fillMaxSize(),

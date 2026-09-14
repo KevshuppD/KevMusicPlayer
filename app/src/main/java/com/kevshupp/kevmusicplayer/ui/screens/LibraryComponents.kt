@@ -118,6 +118,7 @@ fun SongListItem(
     }
     val cornerRadius = if (isModern) 12.dp else (if (isCompact) 12.dp else 16.dp)
 
+    val enableCardTransparency = com.kevshupp.kevmusicplayer.ui.theme.LocalCardTransparencyEnabled.current
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -126,7 +127,8 @@ fun SongListItem(
                 when {
                     isSelected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
                     isModern -> Color.Transparent
-                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                    enableCardTransparency -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
                 }
             )
             .then(
@@ -162,7 +164,12 @@ fun SongListItem(
                 modifier = Modifier.size(artSize),
                 contentAlignment = Alignment.Center
             ) {
-                val trackNum = if (song.track > 0) (song.track % 1000) else (index + 1)
+                val trackNum = if (song.track > 0) {
+                    val mod = song.track % 1000
+                    if (mod != 0) mod else song.track
+                } else {
+                    index + 1
+                }
                 Text(
                     text = trackNum.toString(),
                     fontWeight = FontWeight.Bold,
@@ -333,6 +340,7 @@ fun AlbumGridView(
         if (systemLang == "es") es else en
     }
 
+    val enableCardTransparency = com.kevshupp.kevmusicplayer.ui.theme.LocalCardTransparencyEnabled.current
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = bottomPadding),
@@ -348,7 +356,7 @@ fun AlbumGridView(
                 Card(
                     shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(20.dp) else androidx.compose.ui.graphics.RectangleShape,
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                        containerColor = if (enableCardTransparency) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
                     ),
                     modifier = Modifier
                         .fillMaxWidth()

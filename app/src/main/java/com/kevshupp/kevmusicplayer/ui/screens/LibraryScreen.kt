@@ -1,5 +1,6 @@
 package com.kevshupp.kevmusicplayer.ui.screens
 
+import com.kevshupp.kevmusicplayer.ui.screens.dialogs.*
 import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.BorderStroke
@@ -309,6 +310,10 @@ fun LibraryScreen(
             } else {
                 val subSongs = when (val sv = currentSubView) {
                     is SubView.AlbumDetail -> filteredFiles.filter { it.album == sv.albumName }
+                        .sortedWith(
+                            compareBy<AudioFile> { if (it.track > 0) it.track else Int.MAX_VALUE }
+                                .thenBy { it.title.lowercase() }
+                        )
                     is SubView.ArtistDetail -> filteredFiles.filter { it.artist == sv.artistName }
                     is SubView.GenreDetail -> filteredFiles.filter { it.genre == sv.genreName }
                     is SubView.FolderDetail -> filteredFiles.filter { it.folderName == sv.folderName }
@@ -328,7 +333,16 @@ fun LibraryScreen(
     }
 
     // Grouping
-    val albums by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.album } } }
+    val albums by remember(filteredFiles) {
+        derivedStateOf {
+            filteredFiles.groupBy { it.album }.mapValues { (_, songs) ->
+                songs.sortedWith(
+                    compareBy<AudioFile> { if (it.track > 0) it.track else Int.MAX_VALUE }
+                        .thenBy { it.title.lowercase() }
+                )
+            }
+        }
+    }
     val artists by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.artist } } }
     val genres by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.genre } } }
     val folders by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.folderName } } }
@@ -873,7 +887,13 @@ fun LibraryScreen(
                 }
                  val subSongs = remember(filteredFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy) {
                     val baseList = when (subView) {
-                        is SubView.AlbumDetail -> filteredFiles.filter { it.album == subView.albumName }
+                        is SubView.AlbumDetail -> {
+                            filteredFiles.filter { it.album == subView.albumName }
+                                .sortedWith(
+                                    compareBy<AudioFile> { if (it.track > 0) it.track else Int.MAX_VALUE }
+                                        .thenBy { it.title.lowercase() }
+                                )
+                        }
                         is SubView.ArtistDetail -> filteredFiles.filter { it.artist == subView.artistName }
                         is SubView.GenreDetail -> filteredFiles.filter { it.genre == subView.genreName }
                         is SubView.FolderDetail -> filteredFiles.filter { it.folderName == subView.folderName }
