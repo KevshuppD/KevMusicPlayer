@@ -30,7 +30,7 @@ enum class RuleOperator {
 }
 
 sealed class SmartRuleNode {
-    abstract fun evaluate(context: android.content.Context, song: AudioFile): Boolean
+    abstract fun evaluate(context: android.content.Context? = null, song: AudioFile): Boolean
     abstract fun toJson(): JSONObject
 
     companion object {
@@ -59,7 +59,7 @@ data class ConditionNode(
     val value: String
 ) : SmartRuleNode() {
 
-    override fun evaluate(context: android.content.Context, song: AudioFile): Boolean {
+    override fun evaluate(context: android.content.Context?, song: AudioFile): Boolean {
         return try {
             val fieldValue: String = when (field) {
                 RuleField.TITLE -> song.title
@@ -118,7 +118,7 @@ data class GroupNode(
     val operator: LogicalOperator,
     val children: List<SmartRuleNode>
 ) : SmartRuleNode() {
-    override fun evaluate(context: android.content.Context, song: AudioFile): Boolean {
+    override fun evaluate(context: android.content.Context?, song: AudioFile): Boolean {
         if (children.isEmpty()) return true
         return when (operator) {
             LogicalOperator.AND -> children.all { it.evaluate(context, song) }

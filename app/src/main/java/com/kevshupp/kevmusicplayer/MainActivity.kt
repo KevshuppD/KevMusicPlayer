@@ -123,6 +123,9 @@ class MainActivity : ComponentActivity() {
         applyRefreshRate(settingsPrefs.getString("refresh_rate", "120") ?: "120")
         settingsPrefs.registerOnSharedPreferenceChangeListener(refreshRateListener)
 
+        // Initialize Cloud Auth state
+        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.init(this)
+
         setContent {
             KevMusicPlayerTheme {
                 AppNavigation()
@@ -1009,7 +1012,7 @@ fun OnboardingFlow(
                                     onClick = { selectBackupFolderLauncher.launch(null) },
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(52.dp),
+                                        .height(50.dp),
                                     shape = RoundedCornerShape(16.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = MaterialTheme.colorScheme.primary,
@@ -1023,7 +1026,33 @@ fun OnboardingFlow(
                                         Icon(Icons.Rounded.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            "Restaurar Copia de Seguridad",
+                                            "Restaurar Archivo Local",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        // Trigger Google Sign-In / Cloud Sync onboarding
+                                        step = 2
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(50.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(Icons.Rounded.Backup, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            "Sincronizar con Google (Nube)",
+                                            color = MaterialTheme.colorScheme.primary,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 14.sp
                                         )
@@ -1034,16 +1063,23 @@ fun OnboardingFlow(
                                     onClick = { step = 2 },
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(50.dp),
+                                        .height(48.dp),
                                     shape = RoundedCornerShape(16.dp),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f))
                                 ) {
-                                    Text(
-                                        "Empezar desde Cero",
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            "Modo Local (Empezar desde Cero)",
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp
+                                        )
+                                    }
                                 }
                             }
 

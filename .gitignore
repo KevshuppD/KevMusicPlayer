@@ -20,3 +20,7 @@ local.properties
 !shared.keystore
 *.keystore.base64
 
+# Google Services / Firebase credentials
+google-services.json
+app/google-services.json
+

@@ -17,7 +17,9 @@ import kotlinx.serialization.Serializable
         Index(value = ["folderPath"]),
         Index(value = ["playCount"]),
         Index(value = ["title"]),
-        Index(value = ["dateAdded"])
+        Index(value = ["dateAdded"]),
+        Index(value = ["genre"]),
+        Index(value = ["lastPlayed"])
     ]
 )
 data class AudioFile(

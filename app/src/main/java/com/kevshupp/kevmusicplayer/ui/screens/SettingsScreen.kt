@@ -494,7 +494,8 @@ fun SettingsScreen(
                                 notificationPermissionLauncher = notificationPermissionLauncher,
                                 getLocalized = getLocalized,
                                 settingsPrefs = settingsPrefs,
-                                context = context
+                                context = context,
+                                viewModel = viewModel
                             )
                         }
                         "library" -> {

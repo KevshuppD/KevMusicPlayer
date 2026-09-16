@@ -59,6 +59,7 @@ import com.kevshupp.kevmusicplayer.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+@Immutable
 sealed interface SubView {
     data class AlbumDetail(val albumName: String) : SubView
     data class ArtistDetail(val artistName: String) : SubView

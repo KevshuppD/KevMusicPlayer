@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.sp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 import com.kevshupp.kevmusicplayer.playback.getPhysicalPath
@@ -2100,23 +2101,32 @@ fun ArtistImage(
     contentDescription: String? = null
 ) {
     val context = LocalContext.current
-    var imageFile by remember(artist) {
-        mutableStateOf(com.kevshupp.kevmusicplayer.data.ArtistImageHelper.getArtistImageFile(context, artist))
+    var lastModified by remember(artist) {
+        val initialFile = com.kevshupp.kevmusicplayer.data.ArtistImageHelper.getArtistImageFile(context, artist)
+        mutableStateOf(if (initialFile.exists() && initialFile.length() > 0) initialFile.lastModified() else 0L)
     }
-    var triggerDownload by remember(artist) { mutableStateOf(!imageFile.exists()) }
 
-    LaunchedEffect(artist, triggerDownload) {
-        if (triggerDownload) {
+    LaunchedEffect(artist) {
+        val currentFile = com.kevshupp.kevmusicplayer.data.ArtistImageHelper.getArtistImageFile(context, artist)
+        if (!currentFile.exists() || currentFile.length() == 0L) {
             val file = com.kevshupp.kevmusicplayer.data.ArtistImageHelper.downloadArtistImage(context, artist)
-            if (file != null && file.exists()) {
-                imageFile = file
+            if (file != null && file.exists() && file.length() > 0) {
+                lastModified = file.lastModified()
             }
         }
     }
 
-    if (imageFile.exists() && imageFile.length() > 0) {
+    val imageFile = remember(artist, lastModified) {
+        com.kevshupp.kevmusicplayer.data.ArtistImageHelper.getArtistImageFile(context, artist)
+    }
+
+    if (lastModified > 0L && imageFile.exists() && imageFile.length() > 0) {
         SubcomposeAsyncImage(
-            model = imageFile,
+            model = ImageRequest.Builder(context)
+                .data(imageFile)
+                .setParameter("lastModified", lastModified, memoryCacheKey = "$artist-$lastModified")
+                .crossfade(true)
+                .build(),
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
             modifier = modifier,
