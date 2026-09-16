@@ -35,6 +35,7 @@ import org.json.JSONArray
 import java.io.InputStream
 import java.io.OutputStream
 import android.content.Context
+import android.content.Intent
 
 class MediaBrowserViewModel(application: Application) : AndroidViewModel(application) {
     private var initialDbLoadJob: kotlinx.coroutines.Job? = null
@@ -1011,19 +1012,27 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     val cloudUser = com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.currentUser
 
-    fun signInWithGoogle(
-        activity: android.app.Activity,
+    fun getGoogleSignInIntent(context: Context): Intent =
+        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.getGoogleSignInIntent(context)
+
+    fun handleGoogleSignInResult(
+        context: Context,
+        intent: Intent?,
         onSuccess: (com.kevshupp.kevmusicplayer.data.cloud.CloudUser) -> Unit,
         onError: (String) -> Unit
     ) {
         viewModelScope.launch {
-            val result = com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.signInWithGoogle(activity)
+            val result = com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.handleGoogleSignInResult(context, intent)
             result.onSuccess { user ->
                 withContext(Dispatchers.Main) { onSuccess(user) }
             }.onFailure { err ->
                 withContext(Dispatchers.Main) { onError(err.localizedMessage ?: "Error al iniciar sesión") }
             }
         }
+    }
+
+    fun updateCustomUserPhoto(context: Context, photoUri: String?) {
+        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.updateCustomPhoto(context, photoUri)
     }
 
     fun signOutGoogle(context: Context) {

@@ -52,6 +52,33 @@ fun CloudSyncCard(
 
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()) }
 
+    val googleSignInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.data != null) {
+            isProcessing = true
+            processingMessage = getLocalized("Autenticando con Google...", "Authenticating with Google...")
+            viewModel.handleGoogleSignInResult(
+                context = context,
+                intent = result.data,
+                onSuccess = {
+                    isProcessing = false
+                    Toast.makeText(
+                        context,
+                        getLocalized("Sesión iniciada con éxito", "Signed in successfully"),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                onError = { errorMsg ->
+                    isProcessing = false
+                    Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                }
+            )
+        } else {
+            isProcessing = false
+        }
+    }
+
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
@@ -141,25 +168,8 @@ fun CloudSyncCard(
 
                 Button(
                     onClick = {
-                        if (activity != null) {
-                            isProcessing = true
-                            processingMessage = getLocalized("Iniciando sesión...", "Signing in...")
-                            viewModel.signInWithGoogle(
-                                activity = activity,
-                                onSuccess = {
-                                    isProcessing = false
-                                    Toast.makeText(
-                                        context,
-                                        getLocalized("Sesión iniciada con éxito", "Signed in successfully"),
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                },
-                                onError = { errorMsg ->
-                                    isProcessing = false
-                                    Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
-                                }
-                            )
-                        }
+                        val signInIntent = viewModel.getGoogleSignInIntent(context)
+                        googleSignInLauncher.launch(signInIntent)
                     },
                     enabled = !isProcessing,
                     colors = ButtonDefaults.buttonColors(

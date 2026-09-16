@@ -1006,7 +1006,8 @@ fun getDiskAlbumArtCacheSizeBytes(context: android.content.Context): Long {
 }
 
 fun loadAlbumArtBitmapSync(context: android.content.Context, uriString: String): android.graphics.Bitmap? {
-    if (albumArtCache.get(uriString) != null) return albumArtCache.get(uriString)
+    val cachedRam = albumArtCache.get(uriString)
+    if (cachedRam != null) return cachedRam
     val res = try {
         context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
     } catch (e: Exception) { 500 }
@@ -1014,6 +1015,7 @@ fun loadAlbumArtBitmapSync(context: android.content.Context, uriString: String):
     val diskFile = getDiskCacheFile(context, uriString, res)
     if (diskFile.exists() && diskFile.isFile) {
         if (diskFile.length() == 0L) {
+            diskFile.delete()
             return null
         }
         val bmp = decodeSampledBitmapFromFile(diskFile.absolutePath, res, res)
@@ -1036,37 +1038,59 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
     val diskFile = getDiskCacheFile(context, uriString, res)
     if (diskFile.exists() && diskFile.isFile) {
         if (diskFile.length() == 0L) {
-            return null
-        }
-        val bmp = decodeSampledBitmapFromFile(diskFile.absolutePath, res, res)
-        if (bmp != null) {
-            albumArtCache.put(uriString, bmp)
-            return bmp
+            diskFile.delete()
+        } else {
+            val bmp = decodeSampledBitmapFromFile(diskFile.absolutePath, res, res)
+            if (bmp != null) {
+                albumArtCache.put(uriString, bmp)
+                return bmp
+            }
         }
     }
 
-    val retriever = android.media.MediaMetadataRetriever()
-    var pfd: android.os.ParcelFileDescriptor? = null
     var decodedResult: android.graphics.Bitmap? = null
 
-    // 1. Try reading directly from physical path
-    try {
-        val songId = uriString.substringAfterLast("/").toLongOrNull()
-        val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
-        if (!physicalPath.isNullOrBlank()) {
-            val file = java.io.File(physicalPath)
-            if (file.exists() && file.isFile) {
-                retriever.setDataSource(physicalPath)
-                val picture = retriever.embeddedPicture
-                if (picture != null) {
-                    decodedResult = decodeSampledBitmap(picture, res, res)
+    // Tier 1: Hardware/Native MediaStore Thumbnail (Android 10+ / API 29+)
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        try {
+            val parsedUri = Uri.parse(uriString)
+            val thumb = context.contentResolver.loadThumbnail(parsedUri, android.util.Size(res, res), null)
+            if (thumb != null) {
+                decodedResult = thumb
+            }
+        } catch (e: Exception) {
+            // Fallback to extraction methods
+        }
+    }
+
+    // Tier 2: Try reading directly from physical path with MediaMetadataRetriever
+    if (decodedResult == null) {
+        try {
+            val songId = uriString.substringAfterLast("/").toLongOrNull()
+            val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
+            if (!physicalPath.isNullOrBlank()) {
+                val file = java.io.File(physicalPath)
+                if (file.isFile) {
+                    val retriever = android.media.MediaMetadataRetriever()
+                    try {
+                        retriever.setDataSource(physicalPath)
+                        val picture = retriever.embeddedPicture
+                        if (picture != null) {
+                            decodedResult = decodeSampledBitmap(picture, res, res)
+                        }
+                    } catch (e: Exception) {
+                    } finally {
+                        try { retriever.release() } catch (e: Exception) {}
+                    }
                 }
             }
-        }
-    } catch (e: Exception) {}
+        } catch (e: Exception) {}
+    }
 
-    // 2. Fallback to ParcelFileDescriptor / Uri
+    // Tier 3: Fallback to ParcelFileDescriptor / Content Uri with MediaMetadataRetriever
     if (decodedResult == null) {
+        val retriever = android.media.MediaMetadataRetriever()
+        var pfd: android.os.ParcelFileDescriptor? = null
         try {
             pfd = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
             if (pfd != null) {
@@ -1086,10 +1110,11 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
             } catch (ex: Exception) {}
         } finally {
             try { pfd?.close() } catch (e: Exception) {}
+            try { retriever.release() } catch (e: Exception) {}
         }
     }
 
-    // 3. Fallback to folder cover file
+    // Tier 4: Fallback to folder cover file (cover.jpg, folder.jpg, etc.)
     if (decodedResult == null) {
         try {
             val songId = uriString.substringAfterLast("/").toLongOrNull()
@@ -1098,7 +1123,11 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
                 val audioFile = java.io.File(physicalPath)
                 val parentDir = audioFile.parentFile
                 if (parentDir != null && parentDir.exists() && parentDir.isDirectory) {
-                    val coverNames = listOf("cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg")
+                    val coverNames = listOf(
+                        "cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "artwork.jpg",
+                        "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg", "Artwork.jpg",
+                        "cover.png", "folder.png", "album.png", "front.png", "Cover.png", "Folder.png"
+                    )
                     val foundCover = coverNames.map { java.io.File(parentDir, it) }.firstOrNull { it.exists() && it.isFile && it.length() > 0 }
                     if (foundCover != null) {
                         decodedResult = decodeSampledBitmapFromFile(foundCover.absolutePath, res, res)
@@ -1108,14 +1137,30 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
         } catch (e: Exception) {}
     }
 
-    try { retriever.release() } catch (e: Exception) {}
+    // Tier 5: Jaudiotagger tag parsing fallback for physical audio files
+    if (decodedResult == null) {
+        try {
+            val songId = uriString.substringAfterLast("/").toLongOrNull()
+            val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
+            if (!physicalPath.isNullOrBlank()) {
+                val file = java.io.File(physicalPath)
+                if (file.exists() && file.isFile) {
+                    val audioFile = org.jaudiotagger.audio.AudioFileIO.read(file)
+                    val tag = audioFile.tag
+                    val artwork = tag?.firstArtwork
+                    if (artwork != null && artwork.binaryData != null && artwork.binaryData.isNotEmpty()) {
+                        decodedResult = decodeSampledBitmap(artwork.binaryData, res, res)
+                    }
+                }
+            }
+        } catch (e: Exception) {}
+    }
 
     if (decodedResult != null) {
         albumArtCache.put(uriString, decodedResult)
         saveBitmapToDiskCache(context, diskFile, decodedResult)
         return decodedResult
     } else {
-        try { diskFile.createNewFile() } catch (e: Exception) {}
         return null
     }
 }
@@ -1131,8 +1176,11 @@ fun rememberAlbumArt(uriString: String?): android.graphics.Bitmap? {
     }
     var bitmap by remember(uriString, version) { mutableStateOf(initialBitmap) }
 
-    if (bitmap == null) {
-        LaunchedEffect(uriString, version) {
+    LaunchedEffect(uriString, version) {
+        val cached = albumArtCache.get(uriString)
+        if (cached != null) {
+            bitmap = cached
+        } else {
             val loadedBmp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 loadAlbumArtBitmap(context, uriString)
             }

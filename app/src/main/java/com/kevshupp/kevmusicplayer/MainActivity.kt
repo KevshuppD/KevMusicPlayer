@@ -68,11 +68,16 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.FolderSpecial
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.graphics.Brush
@@ -834,6 +839,40 @@ fun OnboardingFlow(
         }
     }
 
+    var isOnboardingSigningIn by remember { mutableStateOf(false) }
+    var showOnboardingRestoreDialog by remember { mutableStateOf(false) }
+    var onboardingCloudBackupMetadata by remember { mutableStateOf<com.kevshupp.kevmusicplayer.data.cloud.CloudBackupMetadata?>(null) }
+
+    val onboardingGoogleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.data != null) {
+            isOnboardingSigningIn = true
+            viewModel.handleGoogleSignInResult(
+                context = context,
+                intent = result.data,
+                onSuccess = { user ->
+                    viewModel.getLatestCloudBackupInfo(context) { metadata ->
+                        isOnboardingSigningIn = false
+                        if (metadata != null) {
+                            onboardingCloudBackupMetadata = metadata
+                            showOnboardingRestoreDialog = true
+                        } else {
+                            android.widget.Toast.makeText(context, "Sesión iniciada con Google.", android.widget.Toast.LENGTH_SHORT).show()
+                            step = 2
+                        }
+                    }
+                },
+                onError = { error ->
+                    isOnboardingSigningIn = false
+                    android.widget.Toast.makeText(context, error, android.widget.Toast.LENGTH_LONG).show()
+                }
+            )
+        } else {
+            isOnboardingSigningIn = false
+        }
+    }
+
     val scrollState = rememberScrollState()
 
     Box(
@@ -1033,11 +1072,13 @@ fun OnboardingFlow(
                                     }
                                 }
 
-                                OutlinedButton(
+                                 OutlinedButton(
                                     onClick = {
-                                        // Trigger Google Sign-In / Cloud Sync onboarding
-                                        step = 2
+                                        isOnboardingSigningIn = true
+                                        val signInIntent = viewModel.getGoogleSignInIntent(context)
+                                        onboardingGoogleSignInLauncher.launch(signInIntent)
                                     },
+                                    enabled = !isOnboardingSigningIn,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(50.dp),
@@ -1048,14 +1089,29 @@ fun OnboardingFlow(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.Center
                                     ) {
-                                        Icon(Icons.Rounded.Backup, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            "Sincronizar con Google (Nube)",
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp
-                                        )
+                                        if (isOnboardingSigningIn) {
+                                            CircularProgressIndicator(
+                                                color = MaterialTheme.colorScheme.primary,
+                                                strokeWidth = 2.dp,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                "Iniciando sesión con Google...",
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp
+                                            )
+                                        } else {
+                                            Icon(Icons.Rounded.AccountCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                "Sincronizar con Google (Nube)",
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp
+                                            )
+                                        }
                                     }
                                 }
 
@@ -1302,7 +1358,76 @@ fun OnboardingFlow(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
+
+        if (showOnboardingRestoreDialog && onboardingCloudBackupMetadata != null) {
+        val meta = onboardingCloudBackupMetadata!!
+        val dateFormat = java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale.getDefault())
+        AlertDialog(
+            onDismissRequest = {
+                showOnboardingRestoreDialog = false
+                step = 2
+            },
+            title = {
+                Text("¡Copia en la Nube Encontrada!", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Se encontró una copia de seguridad en tu cuenta de Google. ¿Deseas restaurar tus listas, letras y configuraciones ahora?",
+                        fontSize = 13.sp
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("📅 Fecha: ${dateFormat.format(java.util.Date(meta.timestamp))}", fontSize = 12.sp)
+                            if (meta.device.isNotBlank()) Text("📱 Dispositivo: ${meta.device}", fontSize = 12.sp)
+                            if (meta.playlistsCount > 0 || meta.tracksCount > 0) {
+                                Text("🎵 ${meta.playlistsCount} playlists • ${meta.tracksCount} canciones", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showOnboardingRestoreDialog = false
+                        viewModel.restoreCloudBackup(
+                            context = context,
+                            onSuccess = {
+                                settingsPrefs.edit().putBoolean("is_first_run", false).apply()
+                                android.widget.Toast.makeText(context, "¡Copia restaurada con éxito!", android.widget.Toast.LENGTH_LONG).show()
+                                (context as? android.app.Activity)?.recreate()
+                                onDismiss()
+                            },
+                            onError = { err ->
+                                android.widget.Toast.makeText(context, "Error al restaurar: $err", android.widget.Toast.LENGTH_LONG).show()
+                                step = 2
+                            }
+                        )
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Restaurar Ahora", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showOnboardingRestoreDialog = false
+                        step = 2
+                    }
+                ) {
+                    Text("Configurar desde cero")
+                }
+            },
+            shape = RoundedCornerShape(24.dp)
+        )
     }
+}
 }
 
 private fun android.content.Context.findActivity(): android.app.Activity? {

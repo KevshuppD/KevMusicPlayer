@@ -2,6 +2,8 @@ package com.kevshupp.kevmusicplayer.ui.screens
 
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -72,6 +74,8 @@ fun HomeScreen(
     }
 
     var showInsights by remember { mutableStateOf(false) }
+    var showProfileDialog by remember { mutableStateOf(false) }
+    val cloudUser by (viewModel?.cloudUser ?: kotlinx.coroutines.flow.MutableStateFlow(null)).collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
     // 1. Recently Played
@@ -118,7 +122,7 @@ fun HomeScreen(
                 .fillMaxSize()
                 .navigationBarsPadding()
         ) {
-            // Header row with Greeting, Insights, Settings and Refresh
+            // Header row with Greeting, Profile, Insights, Settings and Refresh
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -126,19 +130,23 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                     Text(
                         text = greeting,
                         style = MaterialTheme.typography.headlineLarge.copy(
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = (-1).sp
                         ),
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = if (isEs) "Tu música favorita te espera" else "Your favorite music awaits",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -146,6 +154,47 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Profile / Cloud Sync Avatar Button
+                    IconButton(
+                        onClick = { showProfileDialog = true },
+                        colors = IconButtonDefaults.iconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        if (cloudUser != null && !cloudUser?.photoUrl.isNullOrBlank()) {
+                            Box(contentAlignment = Alignment.Center) {
+                                SubcomposeAsyncImage(
+                                    model = cloudUser?.photoUrl,
+                                    contentDescription = "Perfil",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .border(
+                                            1.5.dp,
+                                            MaterialTheme.colorScheme.primary,
+                                            CircleShape
+                                        ),
+                                    error = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.AccountCircle,
+                                            contentDescription = "Perfil",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                    }
+                                )
+                            }
+                        } else {
+                            Icon(
+                                imageVector = Icons.Rounded.AccountCircle,
+                                contentDescription = "Perfil",
+                                tint = if (cloudUser != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    }
+
                     val isScanning = viewModel?.isScanning?.value == true
                     IconButton(
                         onClick = { viewModel?.scanFiles(isManual = true) },
@@ -198,6 +247,13 @@ fun HomeScreen(
                         )
                     }
                 }
+            }
+
+            if (showProfileDialog && viewModel != null) {
+                com.kevshupp.kevmusicplayer.ui.screens.dialogs.UserProfileDialog(
+                    viewModel = viewModel,
+                    onDismiss = { showProfileDialog = false }
+                )
             }
 
             // Scrollable Content

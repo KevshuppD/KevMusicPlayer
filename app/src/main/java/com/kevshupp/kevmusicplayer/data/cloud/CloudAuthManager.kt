@@ -2,12 +2,11 @@ package com.kevshupp.kevmusicplayer.data.cloud
 
 import android.app.Activity
 import android.content.Context
-import androidx.credentials.ClearCredentialStateRequest
-import androidx.credentials.CredentialManager
-import androidx.credentials.CustomCredential
-import androidx.credentials.GetCredentialRequest
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import android.content.Intent
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInClient
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.kevshupp.kevmusicplayer.data.PreferenceConstants
@@ -29,6 +28,7 @@ object CloudAuthManager {
     private const val KEY_USER_EMAIL = "cloud_user_email"
     private const val KEY_USER_NAME = "cloud_user_name"
     private const val KEY_USER_PHOTO = "cloud_user_photo"
+    private const val KEY_CUSTOM_PHOTO = "cloud_user_custom_photo"
     private const val KEY_LAST_SYNC = "cloud_last_sync_timestamp"
     private const val KEY_AUTO_SYNC = "cloud_auto_sync_enabled"
 
@@ -37,18 +37,40 @@ object CloudAuthManager {
 
     private val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
 
+    fun getGoogleSignInClient(context: Context): GoogleSignInClient {
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(WEB_CLIENT_ID)
+            .requestEmail()
+            .requestProfile()
+            .build()
+        return GoogleSignIn.getClient(context, gso)
+    }
+
+    fun getGoogleSignInIntent(context: Context): Intent {
+        val client = getGoogleSignInClient(context)
+        // Sign out client before launching intent to always allow picking accounts
+        try {
+            client.signOut()
+        } catch (e: Exception) {
+            // Ignore
+        }
+        return client.signInIntent
+    }
+
     fun init(context: Context) {
         val prefs = PreferenceConstants.getSettingsPrefs(context)
         val firebaseUser = auth.currentUser
 
         if (firebaseUser != null) {
+            val customPhoto = prefs.getString(KEY_CUSTOM_PHOTO, null)
+            val photo = customPhoto ?: firebaseUser.photoUrl?.toString()
             val lastSync = prefs.getLong(KEY_LAST_SYNC, 0L)
             val autoSync = prefs.getBoolean(KEY_AUTO_SYNC, true)
             val user = CloudUser(
                 uid = firebaseUser.uid,
                 email = firebaseUser.email ?: "",
                 displayName = firebaseUser.displayName,
-                photoUrl = firebaseUser.photoUrl?.toString(),
+                photoUrl = photo,
                 lastSyncTimestamp = lastSync,
                 isAutoSyncEnabled = autoSync
             )
@@ -58,7 +80,8 @@ object CloudAuthManager {
             val email = prefs.getString(KEY_USER_EMAIL, null)
             if (!uid.isNullOrBlank() && !email.isNullOrBlank()) {
                 val name = prefs.getString(KEY_USER_NAME, null)
-                val photo = prefs.getString(KEY_USER_PHOTO, null)
+                val customPhoto = prefs.getString(KEY_CUSTOM_PHOTO, null)
+                val photo = customPhoto ?: prefs.getString(KEY_USER_PHOTO, null)
                 val lastSync = prefs.getLong(KEY_LAST_SYNC, 0L)
                 val autoSync = prefs.getBoolean(KEY_AUTO_SYNC, true)
 
@@ -78,13 +101,15 @@ object CloudAuthManager {
             if (u == null) {
                 _currentUser.value = null
             } else {
+                val customPhoto = prefs.getString(KEY_CUSTOM_PHOTO, null)
+                val photo = customPhoto ?: u.photoUrl?.toString()
                 val lastSync = prefs.getLong(KEY_LAST_SYNC, 0L)
                 val autoSync = prefs.getBoolean(KEY_AUTO_SYNC, true)
                 _currentUser.value = CloudUser(
                     uid = u.uid,
                     email = u.email ?: "",
                     displayName = u.displayName,
-                    photoUrl = u.photoUrl?.toString(),
+                    photoUrl = photo,
                     lastSyncTimestamp = lastSync,
                     isAutoSyncEnabled = autoSync
                 )
@@ -92,54 +117,63 @@ object CloudAuthManager {
         }
     }
 
-    suspend fun signInWithGoogle(activity: Activity): Result<CloudUser> = withContext(Dispatchers.IO) {
+    suspend fun handleGoogleSignInResult(context: Context, intent: Intent?): Result<CloudUser> = withContext(Dispatchers.IO) {
         try {
-            val credentialManager = CredentialManager.create(activity)
-            val googleIdOption = GetGoogleIdOption.Builder()
-                .setFilterByAuthorizedAccounts(false)
-                .setServerClientId(WEB_CLIENT_ID)
-                .setAutoSelectEnabled(false)
-                .build()
+            if (intent == null) throw Exception("Intent de Google nulo o cancelado")
+            val task = GoogleSignIn.getSignedInAccountFromIntent(intent)
+            val account = task.getResult(ApiException::class.java)
+            val idToken = account.idToken ?: throw Exception("Google no devolvió ningún ID Token")
 
-            val request = GetCredentialRequest.Builder()
-                .addCredentialOption(googleIdOption)
-                .build()
+            val credential = GoogleAuthProvider.getCredential(idToken, null)
+            val authResult = auth.signInWithCredential(credential).await()
+            val firebaseUser = authResult.user ?: throw Exception("Error al autenticar usuario en Firebase")
 
-            val result = credentialManager.getCredential(
-                request = request,
-                context = activity
+            val prefs = PreferenceConstants.getSettingsPrefs(context)
+            val customPhoto = prefs.getString(KEY_CUSTOM_PHOTO, null)
+            val photo = customPhoto ?: firebaseUser.photoUrl?.toString() ?: account.photoUrl?.toString()
+            val lastSync = prefs.getLong(KEY_LAST_SYNC, 0L)
+            val autoSync = prefs.getBoolean(KEY_AUTO_SYNC, true)
+
+            val user = CloudUser(
+                uid = firebaseUser.uid,
+                email = firebaseUser.email ?: account.email ?: "",
+                displayName = firebaseUser.displayName ?: account.displayName,
+                photoUrl = photo,
+                lastSyncTimestamp = lastSync,
+                isAutoSyncEnabled = autoSync
             )
 
-            val credential = result.credential
-            if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
-                val idToken = googleIdTokenCredential.idToken
-
-                val authCredential = GoogleAuthProvider.getCredential(idToken, null)
-                val authResult = auth.signInWithCredential(authCredential).await()
-                val firebaseUser = authResult.user ?: throw Exception("Firebase user is null after sign in")
-
-                val prefs = PreferenceConstants.getSettingsPrefs(activity)
-                val lastSync = prefs.getLong(KEY_LAST_SYNC, 0L)
-                val autoSync = prefs.getBoolean(KEY_AUTO_SYNC, true)
-
-                val user = CloudUser(
-                    uid = firebaseUser.uid,
-                    email = firebaseUser.email ?: googleIdTokenCredential.id,
-                    displayName = firebaseUser.displayName ?: googleIdTokenCredential.displayName,
-                    photoUrl = firebaseUser.photoUrl?.toString() ?: googleIdTokenCredential.profilePictureUri?.toString(),
-                    lastSyncTimestamp = lastSync,
-                    isAutoSyncEnabled = autoSync
-                )
-
-                saveUser(activity, user)
-                Result.success(user)
-            } else {
-                Result.failure(Exception("Tipo de credencial no reconocido"))
-            }
+            saveUser(context, user)
+            Result.success(user)
         } catch (e: Exception) {
-            TelemetryLogger.logError(activity, "CloudAuth", "Error al iniciar sesión con Google", e)
-            Result.failure(e)
+            val userFriendlyMsg = if (e is ApiException) {
+                when (e.statusCode) {
+                    10 -> "Error 10 (DEVELOPER_ERROR): El paquete '${context.packageName}' no está registrado con su huella SHA-1 en la consola de Firebase para Google Sign-In."
+                    7 -> "Error 7: Sin conexión a Internet."
+                    12500 -> "Error 12500: Fallo de configuración en Google Play Services."
+                    12501 -> "Inicio de sesión cancelado."
+                    12502 -> "Operación en progreso."
+                    else -> "Error de Google (${e.statusCode}): ${e.localizedMessage ?: "Fallo de autenticación"}"
+                }
+            } else {
+                e.localizedMessage ?: "Error al autenticar con Google"
+            }
+            TelemetryLogger.logError(context, "CloudAuth", userFriendlyMsg, e)
+            Result.failure(Exception(userFriendlyMsg, e))
+        }
+    }
+
+    fun updateCustomPhoto(context: Context, photoUri: String?) {
+        val prefs = PreferenceConstants.getSettingsPrefs(context)
+        if (photoUri != null) {
+            prefs.edit().putString(KEY_CUSTOM_PHOTO, photoUri).apply()
+        } else {
+            prefs.edit().remove(KEY_CUSTOM_PHOTO).apply()
+        }
+        val current = _currentUser.value
+        if (current != null) {
+            val effectivePhoto = photoUri ?: auth.currentUser?.photoUrl?.toString() ?: prefs.getString(KEY_USER_PHOTO, null)
+            _currentUser.value = current.copy(photoUrl = effectivePhoto)
         }
     }
 
@@ -177,8 +211,7 @@ object CloudAuthManager {
     suspend fun signOut(context: Context) = withContext(Dispatchers.IO) {
         try {
             auth.signOut()
-            val credentialManager = CredentialManager.create(context)
-            credentialManager.clearCredentialState(ClearCredentialStateRequest())
+            getGoogleSignInClient(context).signOut()
         } catch (e: Exception) {
             TelemetryLogger.logError(context, "CloudAuth", "Error al cerrar sesión", e)
         }
@@ -189,6 +222,7 @@ object CloudAuthManager {
             .remove(KEY_USER_EMAIL)
             .remove(KEY_USER_NAME)
             .remove(KEY_USER_PHOTO)
+            .remove(KEY_CUSTOM_PHOTO)
             .remove(KEY_LAST_SYNC)
             .remove(KEY_AUTO_SYNC)
             .apply()
