@@ -1054,10 +1054,7 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
         try {
             val parsedUri = Uri.parse(uriString)
-            val thumb = context.contentResolver.loadThumbnail(parsedUri, android.util.Size(res, res), null)
-            if (thumb != null) {
-                decodedResult = thumb
-            }
+            decodedResult = context.contentResolver.loadThumbnail(parsedUri, android.util.Size(res, res), null)
         } catch (e: Exception) {
             // Fallback to extraction methods
         }

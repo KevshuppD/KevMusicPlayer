@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.kevshupp.kevmusicplayer.data.cloud
 
 import android.app.Activity

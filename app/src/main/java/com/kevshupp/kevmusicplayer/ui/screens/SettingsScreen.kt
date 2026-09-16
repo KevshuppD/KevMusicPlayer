@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.kevshupp.kevmusicplayer.ui.screens
 
 import com.kevshupp.kevmusicplayer.ui.screens.dialogs.*

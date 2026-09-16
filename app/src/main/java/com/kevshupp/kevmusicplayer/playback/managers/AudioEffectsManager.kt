@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.kevshupp.kevmusicplayer.playback.managers
 
 import android.content.Context
