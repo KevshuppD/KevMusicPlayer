@@ -281,7 +281,7 @@ fun SystemSettingsSection(
                                     try {
                                         val uri = androidx.core.content.FileProvider.getUriForFile(
                                             context,
-                                            "com.kevshupp.kevmusicplayer.fileprovider",
+                                            "${context.packageName}.fileprovider",
                                             logFile
                                         )
                                         val intent = Intent(Intent.ACTION_SEND).apply {

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -115,7 +116,7 @@ fun CloudSyncCard(
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.Logout,
+                            imageVector = Icons.AutoMirrored.Rounded.ExitToApp,
                             contentDescription = getLocalized("Cerrar sesión", "Sign out"),
                             tint = settingsTextMutedColor(),
                             modifier = Modifier.size(18.dp)
