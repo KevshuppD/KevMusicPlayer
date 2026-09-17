@@ -272,11 +272,14 @@ data class AudioFile(
     - `⚖️ Equilibrado`: 120Hz, Animaciones activas, Caché RAM 150 (Med), Precarga 3, Calidad 500p, Compresión WebP 85%, Búfer IPC 1500.
     - `🔋 Ahorro de Batería`: 60Hz, Sin animaciones, Caché RAM 50 (Baja), Precarga Off (0), Calidad 250p, Compresión WebP 70% (Rápida), Búfer IPC 500.
     - `⚙️ Personalizado`: Conmuta automáticamente al perfil manual tan pronto como el usuario modifica cualquier control individual en pantalla.
-12. **Aceleración de Compilación en Gradle y R8:**
+12. **Aceleración de Compilación en Gradle y Optimización R8:**
     - [gradle.properties](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/gradle.properties) configurado con `-Xmx6144m -XX:+UseParallelGC -Dcom.android.tools.r8.maxNumberOfThreads=8`, compilación incremental Kotlin/KSP y AGP `nonTransitiveRClass`.
-    - Desactivado `lintVital` en `app/build.gradle.kts` (`checkReleaseBuilds = false`, `abortOnError = false`) y regla `-dontoptimize` en `app/proguard-rules.pro`, reduciendo los tiempos de `assembleDebug` y `installRelease` a solo **8-15 segundos**.
+    - Desactivado `lintVital` en `app/build.gradle.kts` (`checkReleaseBuilds = false`, `abortOnError = false`).
+    - En `app/proguard-rules.pro` se retiró `-dontoptimize` para que las compilaciones Release ejecuten los pases completos de optimización de bytecode en tiempo de ejecución.
 13. **Desactivación de Auto-Backup en Manifiesto:**
     - Configurado `android:allowBackup="false"` en [AndroidManifest.xml](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/AndroidManifest.xml) para evitar que Google Cloud Backup restaure bases de datos obsoletas tras una reinstalación.
+14. **Bitácora y Plan Continuo de Optimización ([optimizacion.md](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/optimizacion.md)):**
+    - Todo diagnóstico de rendimiento, auditoría técnica, optimizaciones implementadas (marcadas como `[✅ APLICADO]`) y mejoras futuras o pendientes (marcadas como `[⏳ PENDIENTE]`) se gestionan y documentan de forma centralizada en el archivo `optimizacion.md` en la raíz del proyecto.
 
 ---
 

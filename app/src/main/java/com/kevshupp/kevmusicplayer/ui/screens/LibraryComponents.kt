@@ -78,10 +78,12 @@ private val GradientPairs = listOf(
     listOf(Color(0xFF3F51B5), Color(0xFF00BCD4))
 )
 
+// Pre-created brushes — only 7 objects ever created for the lifetime of the app
+private val GradientBrushes: List<Brush> = GradientPairs.map { Brush.linearGradient(it) }
+
 fun getGradientForString(name: String): Brush {
-    val index = java.lang.Math.abs(name.hashCode()) % GradientPairs.size
-    val colors = GradientPairs[index]
-    return Brush.linearGradient(colors)
+    val index = java.lang.Math.abs(name.hashCode()) % GradientBrushes.size
+    return GradientBrushes[index]
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -273,7 +275,7 @@ fun SongListView(
     headerContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
 ) {
     val isModern = songStyle == "modern"
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -936,18 +938,26 @@ fun preloadAlbumArt(context: android.content.Context, uriString: String) {
     loadAlbumArtBitmap(context, uriString)
 }
 
+private var cachedArtResolution: Int = -1
+private fun getArtResolution(context: android.content.Context): Int {
+    if (cachedArtResolution == -1) {
+        cachedArtResolution = try {
+            context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
+        } catch (e: Exception) {
+            500
+        }
+    }
+    return cachedArtResolution
+}
+
 fun getDiskCacheFile(context: android.content.Context, uriString: String, res: Int): java.io.File {
     val dir = java.io.File(context.cacheDir, "album_art_thumbnails")
     if (!dir.exists()) {
         dir.mkdirs()
     }
-    val md5Key = try {
-        val bytes = java.security.MessageDigest.getInstance("MD5").digest("$uriString-$res".toByteArray())
-        bytes.joinToString("") { "%02x".format(it) }
-    } catch (e: Exception) {
-        uriString.hashCode().toString() + "_$res"
-    }
-    return java.io.File(dir, "$md5Key.webp")
+    val rawHash = "$uriString-$res".hashCode().toString(16)
+    val fileKey = if (rawHash.startsWith('-')) "n${rawHash.substring(1)}" else rawHash
+    return java.io.File(dir, "$fileKey.webp")
 }
 
 private fun saveBitmapToDiskCache(context: android.content.Context, file: java.io.File, bitmap: android.graphics.Bitmap) {
@@ -982,9 +992,7 @@ fun clearDiskAlbumArtCache(context: android.content.Context) {
 
 fun deleteDiskAlbumArtCacheForUri(context: android.content.Context, uriString: String) {
     try {
-        val res = try {
-            context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
-        } catch (e: Exception) { 500 }
+        val res = getArtResolution(context)
         val diskFile = getDiskCacheFile(context, uriString, res)
         if (diskFile.exists()) {
             diskFile.delete()
@@ -1008,9 +1016,7 @@ fun getDiskAlbumArtCacheSizeBytes(context: android.content.Context): Long {
 fun loadAlbumArtBitmapSync(context: android.content.Context, uriString: String): android.graphics.Bitmap? {
     val cachedRam = albumArtCache.get(uriString)
     if (cachedRam != null) return cachedRam
-    val res = try {
-        context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
-    } catch (e: Exception) { 500 }
+    val res = getArtResolution(context)
 
     val diskFile = getDiskCacheFile(context, uriString, res)
     if (diskFile.exists() && diskFile.isFile) {
@@ -1031,9 +1037,7 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
     val cachedRam = albumArtCache.get(uriString)
     if (cachedRam != null) return cachedRam
 
-    val res = try {
-        context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE).getInt("art_resolution", 500)
-    } catch (e: Exception) { 500 }
+    val res = getArtResolution(context)
 
     val diskFile = getDiskCacheFile(context, uriString, res)
     if (diskFile.exists() && diskFile.isFile) {
@@ -1168,16 +1172,12 @@ fun rememberAlbumArt(uriString: String?): android.graphics.Bitmap? {
     val context = LocalContext.current
     val version = albumArtVersion
 
-    val initialBitmap = remember(uriString, version) {
-        albumArtCache.get(uriString)
+    var bitmap by remember(uriString, version) {
+        mutableStateOf(albumArtCache.get(uriString))
     }
-    var bitmap by remember(uriString, version) { mutableStateOf(initialBitmap) }
 
     LaunchedEffect(uriString, version) {
-        val cached = albumArtCache.get(uriString)
-        if (cached != null) {
-            bitmap = cached
-        } else {
+        if (bitmap == null) {
             val loadedBmp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 loadAlbumArtBitmap(context, uriString)
             }
@@ -1507,7 +1507,7 @@ fun PlaylistGridView(
                             androidx.compose.foundation.lazy.LazyColumn(
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                items(filteredSongs) { song ->
+                                items(filteredSongs, key = { it.id }) { song ->
                                     val isSelected = selectedSongIds.contains(song.id)
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,

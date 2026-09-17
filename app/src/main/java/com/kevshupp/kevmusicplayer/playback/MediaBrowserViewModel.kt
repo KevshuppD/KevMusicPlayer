@@ -36,12 +36,22 @@ import java.io.InputStream
 import java.io.OutputStream
 import android.content.Context
 import android.content.Intent
+import androidx.compose.runtime.getValue
+import com.kevshupp.kevmusicplayer.ui.screens.stripAccents
 
 class MediaBrowserViewModel(application: Application) : AndroidViewModel(application) {
     private var initialDbLoadJob: kotlinx.coroutines.Job? = null
     private var browserFuture: ListenableFuture<MediaBrowser>? = null
     val browser = mutableStateOf<MediaBrowser?>(null)
     val localAudioFiles = mutableStateListOf<AudioFile>()
+    val audioFileMap: Map<String, AudioFile> by androidx.compose.runtime.derivedStateOf {
+        localAudioFiles.associateBy { it.id.toString() }
+    }
+    val searchIndex: Map<Long, String> by androidx.compose.runtime.derivedStateOf {
+        localAudioFiles.associate { song ->
+            song.id to "${song.title.stripAccents()} ${song.artist.stripAccents()} ${song.album.stripAccents()} ${song.genre.stripAccents()}"
+        }
+    }
     val enabledTabs = mutableStateOf(run {
         val prefs = application.getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
         val saved = prefs.getString("enabled_tabs", null)
@@ -253,6 +263,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         browserFuture = null
     }
 
+    private var saveStateJob: kotlinx.coroutines.Job? = null
+
     fun savePlaybackState() {
         if (ignoreSavePlaybackState) return
         val b = browser.value ?: return
@@ -262,14 +274,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         val activeIndex = b.currentMediaItemIndex
         val shuffleModeEnabled = isShuffleActive.value || b.shuffleModeEnabled
         
-        // Fetch media item IDs on the main thread
-        val mediaIds = ArrayList<String>(b.mediaItemCount)
-        for (i in 0 until b.mediaItemCount) {
+        val itemCount = b.mediaItemCount
+        val mediaIds = ArrayList<String>(itemCount)
+        for (i in 0 until itemCount) {
             val item = b.getMediaItemAt(i)
             mediaIds.add(item.mediaId)
         }
 
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        saveStateJob?.cancel()
+        saveStateJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            kotlinx.coroutines.delay(300) // Debounce rapid playback events
             val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
             val editor = prefs.edit()
                 .putBoolean("last_shuffle_enabled", shuffleModeEnabled)

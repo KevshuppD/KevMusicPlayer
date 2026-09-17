@@ -59,6 +59,8 @@ import com.kevshupp.kevmusicplayer.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private val WHITESPACE_REGEX = Regex("\\s+")
+
 @Immutable
 sealed interface SubView {
     data class AlbumDetail(val albumName: String) : SubView
@@ -253,19 +255,16 @@ fun LibraryScreen(
     }
 
     // Filter audio files by search query
-    val filteredFiles by remember(audioFiles, searchQuery, sortBy) {
+    val filteredFiles by remember(audioFiles, searchQuery, sortBy, viewModel?.searchIndex) {
         derivedStateOf {
             val queryClean = searchQuery.stripAccents().trim()
             val filtered = if (queryClean.isEmpty()) {
                 audioFiles
             } else {
-                val terms = queryClean.split(Regex("\\s+"))
+                val terms = queryClean.split(WHITESPACE_REGEX)
+                val sIndex = viewModel?.searchIndex
                 audioFiles.filter { song ->
-                    val titleNorm = song.title.stripAccents()
-                    val artistNorm = song.artist.stripAccents()
-                    val albumNorm = song.album.stripAccents()
-                    val genreNorm = song.genre.stripAccents()
-                    val fullText = "$titleNorm $artistNorm $albumNorm $genreNorm"
+                    val fullText = sIndex?.get(song.id) ?: "${song.title.stripAccents()} ${song.artist.stripAccents()} ${song.album.stripAccents()} ${song.genre.stripAccents()}"
                     terms.all { term -> fullText.contains(term, ignoreCase = true) }
                 }
             }

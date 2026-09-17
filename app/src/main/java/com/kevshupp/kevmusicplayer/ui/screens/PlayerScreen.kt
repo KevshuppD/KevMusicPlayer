@@ -388,8 +388,8 @@ fun PlayerScreen(
         label = "DominantColor"
     ).value
 
-    val glowEnabled = remember(settingsPrefs, playerState.currentSong?.mediaId) { settingsPrefs.getBoolean("ambient_glow_enabled", true) }
-    val glowIntensity = remember(settingsPrefs, playerState.currentSong?.mediaId) { settingsPrefs.getString("ambient_glow_intensity", "normal") ?: "normal" }
+    val glowEnabled = remember(settingsPrefs) { settingsPrefs.getBoolean("ambient_glow_enabled", true) }
+    val glowIntensity = remember(settingsPrefs) { settingsPrefs.getString("ambient_glow_intensity", "normal") ?: "normal" }
 
     // Dynamic background gradient based on the animated extracted cover color
     val backgroundBrush = remember(animatedColor, background, glowEnabled, glowIntensity) {
@@ -421,7 +421,7 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(backgroundBrush)
     ) {
-        val pulseScale = if (disableAnimations) 1f else {
+        val pulseScale = if (glowEnabled && !disableAnimations) {
             val infiniteTransition = rememberInfiniteTransition(label = "pulse")
             val scale by infiniteTransition.animateFloat(
                 initialValue = 0.85f,
@@ -433,7 +433,7 @@ fun PlayerScreen(
                 label = "pulseScale"
             )
             scale
-        }
+        } else 1f
 
         if (glowEnabled) {
             val pulseAlpha = if (glowIntensity == "strong") 0.85f else 0.45f
@@ -2238,13 +2238,13 @@ fun rememberDominantColor(bitmap: android.graphics.Bitmap?): Color {
         if (bitmap != null) {
             withContext(Dispatchers.IO) {
                 try {
-                    val palette = Palette.from(bitmap).generate()
+                    val smallBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, 50, 50, false)
+                    val palette = Palette.from(smallBitmap).generate()
+                    smallBitmap.recycle()
                     val color = palette.getVibrantColor(
                         palette.getDominantColor(defaultColor.toArgb())
                     )
                     dominantColor = Color(color)
-                    // Note: We MUST NOT call bitmap.recycle() here, because the bitmap is cached
-                    // globally in albumArtCache and will be drawn/reused by rememberAlbumArt.
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }

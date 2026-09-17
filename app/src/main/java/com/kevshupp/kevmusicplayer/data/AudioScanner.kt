@@ -73,11 +73,11 @@ class AudioScanner(private val context: Context) {
                     var folderName = "Root"
                     if (dataPath.isNotEmpty()) {
                         try {
-                            val file = java.io.File(dataPath)
-                            val parentFile = file.parentFile
-                            if (parentFile != null) {
-                                folderPath = parentFile.absolutePath
-                                folderName = parentFile.name
+                            val lastSlash = dataPath.lastIndexOf('/')
+                            if (lastSlash > 0) {
+                                folderPath = dataPath.substring(0, lastSlash)
+                                val prevSlash = folderPath.lastIndexOf('/')
+                                folderName = if (prevSlash >= 0) folderPath.substring(prevSlash + 1) else folderPath
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()

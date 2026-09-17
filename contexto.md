@@ -136,6 +136,9 @@ com/kevshupp/kevmusicplayer/
 ### D. Flujo de Configuración (Settings Hub)
 - El menú de ajustes se organiza como un **Hub principal** con búsqueda en tiempo real, tarjeta de sincronización en la nube y accesos directos a **subpáginas nativas**, sin barras de pestañas horizontales saturadas ni botones flotantes innecesarios.
 
+### E. Registro y Control de Rendimiento (`optimizacion.md`)
+- El archivo [`optimizacion.md`](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/optimizacion.md) en la raíz del proyecto es la referencia técnica donde se registran todas las auditorías de rendimiento, los parches implementados (`[✅ APLICADO]`) y las tareas pendientes/futuras (`[⏳ PENDIENTE]`) con código antes/después para trazabilidad.
+
 ---
 
 ## 5. Automatización de Compilación y Publicación (CI/CD)
