@@ -123,12 +123,14 @@ com/kevshupp/kevmusicplayer/
 ### B. Sistema de Carga y Caché de Carátulas (Album Art)
 - **Cero archivos vacíos (0 bytes):** Bajo ninguna circunstancia se debe crear un archivo de 0 bytes en caché ante un error temporal.
 - **Auto-recuperación:** Si la caché encuentra un archivo de 0 bytes residual, lo borra en el acto (`diskFile.delete()`) y reintenta la lectura real.
+- **Cero contaminación de galería fotográfica:** Nunca se registran carátulas en `MediaStore.Images` ni se guardan imágenes sueltas en las carpetas públicas de música. Se guardan en almacenamiento privado (`context.filesDir/covers/`) y en subdirectorios ocultos protegidos (`.covers/` con archivo `.nomedia`), usando nombres sanitizados `cover_<artista>_<álbum>.jpg`.
 - **Jerarquía de Carga:**
   1. `LruCache` en memoria RAM.
   2. Archivos WebP en disco (`cacheDir/album_art_thumbnails/`).
   3. `contentResolver.loadThumbnail()` (Nativo en Android 10+).
   4. Extracción de `MediaMetadataRetriever` sobre ruta física / descriptores.
-  5. Imágenes de carpeta (`cover.jpg`, `folder.jpg`, etc.) y análisis ID3 de Jaudiotagger.
+  5. Imágenes en subcarpeta oculta `.covers/` y almacenamiento interno de la app.
+  6. Análisis y extracción ID3/APIC/FLAC/MP4 vía Jaudiotagger sobre el archivo físico.
 
 ### C. Procesamiento DSP y Efectos de Audio
 - Se mantienen y suprimen advertencias (`@file:Suppress("DEPRECATION")`) en las clases `android.media.audiofx.Equalizer`, `BassBoost` y `Virtualizer`, ya que son las únicas APIs de Android que permiten control manual continuo (0-1000) en el procesador de señal digital de cualquier salida de audio.

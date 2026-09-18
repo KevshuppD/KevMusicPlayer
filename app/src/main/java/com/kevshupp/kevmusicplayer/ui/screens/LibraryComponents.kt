@@ -1115,7 +1115,7 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
         }
     }
 
-    // Tier 4: Fallback to folder cover file (cover.jpg, folder.jpg, etc.)
+    // Tier 4: Fallback to hidden .covers folder or app internal covers directory
     if (decodedResult == null) {
         try {
             val songId = uriString.substringAfterLast("/").toLongOrNull()
@@ -1124,14 +1124,42 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
                 val audioFile = java.io.File(physicalPath)
                 val parentDir = audioFile.parentFile
                 if (parentDir != null && parentDir.exists() && parentDir.isDirectory) {
-                    val coverNames = listOf(
-                        "cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "artwork.jpg",
-                        "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg", "Artwork.jpg",
-                        "cover.png", "folder.png", "album.png", "front.png", "Cover.png", "Folder.png"
-                    )
-                    val foundCover = coverNames.map { java.io.File(parentDir, it) }.firstOrNull { it.exists() && it.isFile && it.length() > 0 }
-                    if (foundCover != null) {
-                        decodedResult = decodeSampledBitmapFromFile(foundCover.absolutePath, res, res)
+                    // 1. Check hidden .covers directory (contains .nomedia to protect gallery)
+                    val hiddenDir = java.io.File(parentDir, ".covers")
+                    if (hiddenDir.exists() && hiddenDir.isDirectory) {
+                        val hiddenFiles = hiddenDir.listFiles { f ->
+                            f.isFile && f.length() > 0 && !f.name.startsWith(".") &&
+                            (f.name.endsWith(".jpg", ignoreCase = true) || f.name.endsWith(".png", ignoreCase = true) || f.name.endsWith(".webp", ignoreCase = true))
+                        }
+                        val matchingCover = hiddenFiles?.firstOrNull()
+                        if (matchingCover != null) {
+                            decodedResult = decodeSampledBitmapFromFile(matchingCover.absolutePath, res, res)
+                        }
+                    }
+
+                    // 2. Fallback to legacy loose cover file if present
+                    if (decodedResult == null) {
+                        val coverNames = listOf(
+                            "cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "artwork.jpg",
+                            "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg", "Artwork.jpg",
+                            "cover.png", "folder.png", "album.png", "front.png", "Cover.png", "Folder.png"
+                        )
+                        val foundCover = coverNames.map { java.io.File(parentDir, it) }.firstOrNull { it.exists() && it.isFile && it.length() > 0 }
+                        if (foundCover != null) {
+                            decodedResult = decodeSampledBitmapFromFile(foundCover.absolutePath, res, res)
+                        }
+                    }
+                }
+            }
+
+            // 3. Check app internal private covers directory
+            if (decodedResult == null) {
+                val internalDir = java.io.File(context.filesDir, "covers")
+                if (internalDir.exists() && internalDir.isDirectory) {
+                    val internalFiles = internalDir.listFiles { f -> f.isFile && f.length() > 0 }
+                    val matchingInternal = internalFiles?.firstOrNull()
+                    if (matchingInternal != null) {
+                        decodedResult = decodeSampledBitmapFromFile(matchingInternal.absolutePath, res, res)
                     }
                 }
             }

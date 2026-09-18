@@ -65,19 +65,24 @@ class TagEditorManager(
                     t.printStackTrace()
                 }
 
+                val songObj = localAudioFiles.find { it.id == songId }
                 val songEntity = audioDao.getAudioFileById(songId)
-                var songUriString: String? = null
+                val targetUri = songEntity?.uriString ?: songObj?.uriString ?: android.content.ContentUris.withAppendedId(
+                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                    songId
+                ).toString()
+                val songUriString = targetUri
 
-                val pathForMp3Agic = getPhysicalPath(context, songId, songEntity?.uriString)
+                val pathForMp3Agic = getPhysicalPath(context, songId, targetUri)
                 var isMp3Success = false
                 if (!pathForMp3Agic.isNullOrBlank() && pathForMp3Agic.endsWith(".mp3", ignoreCase = true)) {
-                    isMp3Success = writeMp3TagsWithMp3Agic(pathForMp3Agic, title, artist, album, genre, coverBytes)
+                    isMp3Success = writeMp3TagsWithMp3Agic(context, songId, targetUri, pathForMp3Agic, title, artist, album, genre, coverBytes)
                 }
 
                 val writeSuccess = if (isMp3Success) {
                     true
                 } else {
-                    writeMetadataWithTempFile(context, songId, songEntity?.uriString) { audioFile ->
+                    writeMetadataWithTempFile(context, songId, targetUri) { audioFile ->
                         val tag = audioFile.getTagOrCreateAndSetDefault()
                         tag.setField(FieldKey.TITLE, title)
                         tag.setField(FieldKey.ARTIST, artist)
@@ -97,7 +102,9 @@ class TagEditorManager(
                                             tag.addField(artwork)
                                         } catch (e2: Throwable) {
                                             val field = tag.createField(artwork)
-                                            tag.setField(field)
+                                            if (field != null) {
+                                                tag.setField(field)
+                                            }
                                         }
                                     }
                                 }
@@ -113,10 +120,6 @@ class TagEditorManager(
                     TelemetryLogger.logError(context, "MetadataWrite", "Warning: Physical tags could not be written for songId $songId, continuing with DB and cache update")
                 }
 
-                val targetUri = songEntity?.uriString ?: android.content.ContentUris.withAppendedId(
-                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                    songId
-                ).toString()
                 try {
                     val values = ContentValues().apply {
                         put(MediaStore.Audio.Media.TITLE, title)
@@ -142,15 +145,16 @@ class TagEditorManager(
 
                 val allEntities = audioDao.getAllAudioFiles()
                 val targetEntity = allEntities.find { it.id == songId }
-                val songObj = localAudioFiles.find { it.id == songId }
-                val songUri = targetEntity?.uriString ?: songObj?.uriString
                 val folderPath = songObj?.folderPath ?: targetEntity?.folderPath
-                val physicalPath = getPhysicalPath(context, songId, songUri) ?: folderPath ?: songUri?.let {
+                val physicalPath = getPhysicalPath(context, songId, targetUri) ?: folderPath ?: targetUri.let {
                     if (it.startsWith("file://")) Uri.parse(it).path else null
                 }
 
                 if (!physicalPath.isNullOrBlank()) {
-                    invalidateMediaStoreAlbumArt(context, songId, songUri)
+                    invalidateMediaStoreAlbumArt(context, songId, targetUri)
+                    if (coverBytes != null) {
+                        saveFolderCoverArt(context, physicalPath, coverBytes, artist, album.ifBlank { title })
+                    }
                 }
                 val newModTime = if (physicalPath != null) File(physicalPath).lastModified() else 0L
                 if (targetEntity != null) {
@@ -161,29 +165,26 @@ class TagEditorManager(
                         genre = genre,
                         dateModified = newModTime
                     )
-                    songUriString = updatedEntity.uriString
                     audioDao.insertAll(listOf(updatedEntity))
                 }
 
-                if (songUriString != null) {
-                    deleteDiskAlbumArtCacheForUri(application, songUriString)
-                    if (coverBytes != null) {
-                        try {
-                            val res = try {
-                                context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE).getInt("art_resolution", 500)
-                            } catch (e: Exception) { 500 }
-                            val diskFile = getDiskCacheFile(context, songUriString, res)
-                            diskFile.parentFile?.mkdirs()
-                            diskFile.writeBytes(coverBytes)
-                        } catch (e: Exception) {}
+                deleteDiskAlbumArtCacheForUri(application, songUriString)
+                if (coverBytes != null) {
+                    try {
+                        val res = try {
+                            context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE).getInt("art_resolution", 500)
+                        } catch (e: Exception) { 500 }
+                        val diskFile = getDiskCacheFile(context, songUriString, res)
+                        diskFile.parentFile?.mkdirs()
+                        diskFile.writeBytes(coverBytes)
+                    } catch (e: Exception) {}
 
-                        val bitmap = BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
-                        if (bitmap != null) {
-                            albumArtCache.put(songUriString, bitmap)
-                        }
-                    } else {
-                        albumArtCache.remove(songUriString)
+                    val bitmap = BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
+                    if (bitmap != null) {
+                        albumArtCache.put(songUriString, bitmap)
                     }
+                } else {
+                    albumArtCache.remove(songUriString)
                 }
 
                 withContext(Dispatchers.Main) {
@@ -293,7 +294,7 @@ class TagEditorManager(
                     var writtenPhysically = false
                     val pathForMp3Agic = getPhysicalPath(context, song.id, song.uriString)
                     if (!pathForMp3Agic.isNullOrBlank() && pathForMp3Agic.endsWith(".mp3", ignoreCase = true)) {
-                        writtenPhysically = writeMp3TagsWithMp3Agic(pathForMp3Agic, coverBytes = coverBytes)
+                        writtenPhysically = writeMp3TagsWithMp3Agic(context, song.id, song.uriString, pathForMp3Agic, coverBytes = coverBytes)
                     }
 
                     if (!writtenPhysically) {
@@ -312,7 +313,9 @@ class TagEditorManager(
                                             tag.addField(artwork)
                                         } catch (e2: Throwable) {
                                             val field = tag.createField(artwork)
-                                            tag.setField(field)
+                                            if (field != null) {
+                                                tag.setField(field)
+                                            }
                                         }
                                     }
                                 }
@@ -344,7 +347,14 @@ class TagEditorManager(
                 if (songsInAlbum.isNotEmpty()) {
                     songsInAlbum.forEach { song ->
                         val songUri = song.uriString
-                        invalidateMediaStoreAlbumArt(context, song.id, songUri)
+                        val folderPath = song.folderPath
+                        val path = getPhysicalPath(context, song.id, songUri) ?: folderPath ?: songUri.let {
+                            if (it.startsWith("file://")) Uri.parse(it).path else null
+                        }
+                        if (!path.isNullOrBlank()) {
+                            saveFolderCoverArt(context, path, coverBytes, song.artist, song.album)
+                            invalidateMediaStoreAlbumArt(context, song.id, songUri)
+                        }
                     }
                 }
 
@@ -435,7 +445,7 @@ class TagEditorManager(
                     var writtenPhysically = false
                     val pathForMp3Agic = getPhysicalPath(context, song.id, song.uriString)
                     if (!pathForMp3Agic.isNullOrBlank() && pathForMp3Agic.endsWith(".mp3", ignoreCase = true)) {
-                        writtenPhysically = writeMp3TagsWithMp3Agic(pathForMp3Agic, album = newAlbumName, artist = if (newArtist.isNotBlank()) newArtist else null, coverBytes = coverBytes)
+                        writtenPhysically = writeMp3TagsWithMp3Agic(context, song.id, song.uriString, pathForMp3Agic, album = newAlbumName, artist = if (newArtist.isNotBlank()) newArtist else null, coverBytes = coverBytes)
                     }
 
                     if (!writtenPhysically) {
@@ -459,7 +469,9 @@ class TagEditorManager(
                                                 tag.addField(artwork)
                                             } catch (e2: Throwable) {
                                                 val field = tag.createField(artwork)
-                                                tag.setField(field)
+                                                if (field != null) {
+                                                    tag.setField(field)
+                                                }
                                             }
                                         }
                                     }
@@ -510,7 +522,7 @@ class TagEditorManager(
                             if (it.startsWith("file://")) Uri.parse(it).path else null
                         }
                         if (!path.isNullOrBlank()) {
-                            saveFolderCoverArt(context, path, coverBytes)
+                            saveFolderCoverArt(context, path, coverBytes, if (newArtist.isNotBlank()) newArtist else song.artist, newAlbumName)
                             invalidateMediaStoreAlbumArt(context, song.id, songUri)
                         }
                     }

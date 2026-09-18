@@ -289,6 +289,7 @@ fun createJaudiotaggerArtwork(coverBytes: ByteArray): org.jaudiotagger.tag.image
         val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
         artwork.binaryData = coverBytes
         artwork.mimeType = mimeType
+        artwork.description = ""
         artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
 
         if (artwork is org.jaudiotagger.tag.images.AndroidArtwork) {
@@ -323,6 +324,7 @@ fun createJaudiotaggerArtwork(coverBytes: ByteArray): org.jaudiotagger.tag.image
             val androidArtwork = org.jaudiotagger.tag.images.AndroidArtwork()
             androidArtwork.binaryData = coverBytes
             androidArtwork.mimeType = mimeType
+            androidArtwork.description = ""
             androidArtwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
             try {
                 androidArtwork.setImageFromData()
@@ -402,10 +404,16 @@ fun writeMetadataWithTagLib(context: android.content.Context, physicalPath: Stri
     return false
 }
 
-fun saveFolderCoverArt(context: android.content.Context, physicalPathOrFolder: String, coverBytes: ByteArray) {
+fun saveFolderCoverArt(
+    context: android.content.Context,
+    physicalPathOrFolder: String,
+    coverBytes: ByteArray,
+    artist: String? = null,
+    albumOrTitle: String? = null
+) {
     try {
-        android.util.Log.d("FolderCover", "saveFolderCoverArt called for path: $physicalPathOrFolder with ${coverBytes.size} bytes")
-        
+        if (coverBytes.isEmpty()) return
+
         var realPath: String? = physicalPathOrFolder
         if (physicalPathOrFolder.startsWith("content://") || physicalPathOrFolder.startsWith("file://")) {
             realPath = getPhysicalPath(context, 0L, physicalPathOrFolder)
@@ -414,83 +422,64 @@ fun saveFolderCoverArt(context: android.content.Context, physicalPathOrFolder: S
             }
         }
         
-        if (realPath.isNullOrBlank()) {
-            android.util.Log.w("FolderCover", "Could not resolve real file system path for: $physicalPathOrFolder")
-            return
+        val cleanArtist = artist?.replace(Regex("[\\\\/:*?\"<>|]"), "_")?.trim() ?: ""
+        val cleanAlbumOrTitle = albumOrTitle?.replace(Regex("[\\\\/:*?\"<>|]"), "_")?.trim() ?: ""
+        val coverFileName = when {
+            cleanArtist.isNotBlank() && cleanAlbumOrTitle.isNotBlank() -> "cover_${cleanArtist}_$cleanAlbumOrTitle.jpg"
+            cleanAlbumOrTitle.isNotBlank() -> "cover_$cleanAlbumOrTitle.jpg"
+            cleanArtist.isNotBlank() -> "cover_$cleanArtist.jpg"
+            else -> "cover.jpg"
         }
 
-        val target = java.io.File(realPath)
-        val parentDir = if (target.isDirectory) target else target.parentFile
-        if (parentDir != null && (parentDir.exists() || parentDir.mkdirs())) {
-            // Write ONLY 1 canonical cover image file: cover.jpg
-            val coverFile = java.io.File(parentDir, "cover.jpg")
-            var written = false
-            try {
-                coverFile.outputStream().use { out ->
-                    out.write(coverBytes)
+        // 1. Save in app internal private storage (100% hidden and invisible to gallery apps)
+        try {
+            val internalCoversDir = java.io.File(context.filesDir, "covers")
+            if (!internalCoversDir.exists()) internalCoversDir.mkdirs()
+            val internalCoverFile = java.io.File(internalCoversDir, coverFileName)
+            internalCoverFile.writeBytes(coverBytes)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 2. Save in physical folder under hidden '.covers' with '.nomedia' to protect user gallery
+        if (!realPath.isNullOrBlank()) {
+            val target = java.io.File(realPath)
+            val parentDir = if (target.isDirectory) target else target.parentFile
+            if (parentDir != null && (parentDir.exists() || parentDir.mkdirs())) {
+                val hiddenDir = java.io.File(parentDir, ".covers")
+                if (!hiddenDir.exists()) {
+                    hiddenDir.mkdirs()
                 }
-                written = true
-                android.util.Log.d("FolderCover", "Successfully wrote cover.jpg in ${coverFile.absolutePath}")
-            } catch (e: Exception) {
-                android.util.Log.w("FolderCover", "Direct outputStream failed writing cover.jpg in ${parentDir.absolutePath}, attempting MediaStore fallback", e)
-            }
-
-            if (!written) {
-                try {
-                    val values = android.content.ContentValues().apply {
-                        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "cover.jpg")
-                        put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                            val relativePath = parentDir.absolutePath.substringAfter("/storage/emulated/0/")
-                            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, relativePath)
-                            put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
-                        } else {
-                            put(android.provider.MediaStore.Images.Media.DATA, coverFile.absolutePath)
-                        }
-                    }
-                    val imageUri = context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                    if (imageUri != null) {
-                        context.contentResolver.openOutputStream(imageUri)?.use { out ->
-                            out.write(coverBytes)
-                        }
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                            values.clear()
-                            values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
-                            context.contentResolver.update(imageUri, values, null, null)
-                        }
-                        written = true
-                        android.util.Log.d("FolderCover", "Successfully inserted cover.jpg via MediaStore for ${parentDir.absolutePath}")
-                    }
-                } catch (ex: Exception) {
-                    android.util.Log.e("FolderCover", "MediaStore fallback also failed for ${parentDir.absolutePath}", ex)
+                // Ensure .nomedia exists so gallery/media scanner ignores all files inside
+                val noMediaFile = java.io.File(hiddenDir, ".nomedia")
+                if (!noMediaFile.exists()) {
+                    try { noMediaFile.createNewFile() } catch (e: Exception) {}
                 }
-            }
 
-            if (written && coverFile.exists()) {
+                val hiddenCoverFile = java.io.File(hiddenDir, coverFileName)
                 try {
-                    android.media.MediaScannerConnection.scanFile(
-                        context,
-                        arrayOf(coverFile.absolutePath),
-                        arrayOf("image/jpeg")
-                    ) { path, uri ->
-                        android.util.Log.d("FolderCover", "MediaScanner scanned cover.jpg at $path -> $uri")
+                    hiddenCoverFile.outputStream().use { out ->
+                        out.write(coverBytes)
                     }
-                } catch (e: Exception) {}
-            }
-
-            // Delete old/redundant duplicate files if they exist (folder.jpg, album.jpg, front.jpg)
-            listOf("folder.jpg", "album.jpg", "front.jpg", "folder.png", "album.png", "front.png", "cover.png").forEach { name ->
-                try {
-                    val redundantFile = java.io.File(parentDir, name)
-                    if (redundantFile.exists() && !redundantFile.name.equals(coverFile.name, ignoreCase = true)) {
-                        redundantFile.delete()
-                    }
+                    android.util.Log.d("FolderCover", "Successfully saved hidden cover at: ${hiddenCoverFile.absolutePath}")
                 } catch (e: Exception) {
-                    // ignore
+                    android.util.Log.w("FolderCover", "Failed saving hidden cover in ${hiddenDir.absolutePath}", e)
+                }
+
+                // Clean up any old visible loose cover files from parentDir (cover.jpg, folder.jpg)
+                // so they stop cluttering the user's photo gallery / file manager
+                listOf(
+                    "cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "artwork.jpg",
+                    "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg", "cover.png", "folder.png"
+                ).forEach { name ->
+                    try {
+                        val looseFile = java.io.File(parentDir, name)
+                        if (looseFile.exists() && looseFile.isFile) {
+                            looseFile.delete()
+                        }
+                    } catch (e: Exception) {}
                 }
             }
-        } else {
-            android.util.Log.w("FolderCover", "parentDir is null or cannot be created for path: $realPath")
         }
     } catch (e: Exception) {
         android.util.Log.w("FolderCover", "Error in saveFolderCoverArt for $physicalPathOrFolder", e)
@@ -537,6 +526,9 @@ fun invalidateMediaStoreAlbumArt(context: android.content.Context, songId: Long,
 }
 
 fun writeMp3TagsWithMp3Agic(
+    context: android.content.Context,
+    songId: Long,
+    uriString: String? = null,
     filePath: String,
     title: String? = null,
     artist: String? = null,
@@ -544,8 +536,38 @@ fun writeMp3TagsWithMp3Agic(
     genre: String? = null,
     coverBytes: ByteArray? = null
 ): Boolean {
+    val uri = if (!uriString.isNullOrBlank()) {
+        Uri.parse(uriString)
+    } else {
+        android.content.ContentUris.withAppendedId(
+            android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            songId
+        )
+    }
+
+    var tempSaveFile: File? = null
+    var tempSourceFile: File? = null
+
     return try {
-        val mp3file = com.mpatric.mp3agic.Mp3File(filePath)
+        val origFile = File(filePath)
+        val sourceFile = if (origFile.exists() && origFile.canRead()) {
+            origFile
+        } else {
+            tempSourceFile = File(context.cacheDir, "temp_mp3_src_${System.currentTimeMillis()}_$songId.mp3")
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                tempSourceFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            tempSourceFile
+        }
+
+        if (!sourceFile.exists() || sourceFile.length() == 0L) {
+            android.util.Log.e("Mp3Agic", "Source MP3 file does not exist or is empty: $filePath")
+            return false
+        }
+
+        val mp3file = com.mpatric.mp3agic.Mp3File(sourceFile.absolutePath)
         val id3v2Tag = if (mp3file.hasId3v2Tag()) {
             mp3file.id3v2Tag
         } else {
@@ -569,26 +591,54 @@ fun writeMp3TagsWithMp3Agic(
             android.util.Log.d("Mp3Agic", "Set album image on ID3v2 tag (${coverBytes.size} bytes, $mimeType) for $filePath")
         }
 
-        val tempSavePath = "$filePath.tmp_save"
-        mp3file.save(tempSavePath)
+        tempSaveFile = File(context.cacheDir, "temp_mp3_save_${System.currentTimeMillis()}_$songId.mp3")
+        mp3file.save(tempSaveFile.absolutePath)
 
-        val origFile = java.io.File(filePath)
-        val tmpFile = java.io.File(tempSavePath)
-
-        if (tmpFile.exists() && tmpFile.length() > 0) {
-            val renamed = tmpFile.renameTo(origFile)
-            if (!renamed) {
-                origFile.delete()
-                tmpFile.renameTo(origFile)
-            }
-            android.util.Log.d("Mp3Agic", "Successfully saved updated MP3 file at $filePath")
-            true
-        } else {
-            false
+        if (!tempSaveFile.exists() || tempSaveFile.length() < 1024) {
+            android.util.Log.e("Mp3Agic", "Temp save file is invalid or too small: ${tempSaveFile.length()}")
+            return false
         }
+
+        var writtenDirectly = false
+        try {
+            val destFile = File(filePath)
+            tempSaveFile.inputStream().use { input ->
+                destFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            writtenDirectly = true
+            android.util.Log.d("Mp3Agic", "Direct physical write succeeded for $filePath")
+        } catch (e: Exception) {
+            android.util.Log.w("Mp3Agic", "Direct physical write failed, trying ContentResolver fallback", e)
+        }
+
+        if (!writtenDirectly) {
+            context.contentResolver.openOutputStream(uri, "rwt")?.use { output ->
+                tempSaveFile.inputStream().use { input ->
+                    input.copyTo(output)
+                }
+            } ?: run {
+                android.util.Log.e("Mp3Agic", "Fallback openOutputStream returned null for $uri")
+                return false
+            }
+            android.util.Log.d("Mp3Agic", "ContentResolver fallback copy succeeded for $uri")
+        }
+
+        android.media.MediaScannerConnection.scanFile(
+            context,
+            arrayOf(filePath),
+            arrayOf("audio/mpeg")
+        ) { _, _ -> }
+
+        android.util.Log.d("Mp3Agic", "Successfully saved updated MP3 file at $filePath")
+        true
     } catch (e: Exception) {
         android.util.Log.e("Mp3Agic", "Failed to write MP3 tags with mp3agic for $filePath", e)
         false
+    } finally {
+        try { tempSaveFile?.delete() } catch (e: Exception) {}
+        try { tempSourceFile?.delete() } catch (e: Exception) {}
     }
 }
 
