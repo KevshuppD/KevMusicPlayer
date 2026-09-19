@@ -388,8 +388,24 @@ fun PlayerScreen(
         label = "DominantColor"
     ).value
 
-    val glowEnabled = remember(settingsPrefs) { settingsPrefs.getBoolean("ambient_glow_enabled", true) }
-    val glowIntensity = remember(settingsPrefs) { settingsPrefs.getString("ambient_glow_intensity", "normal") ?: "normal" }
+    var glowEnabled by remember { mutableStateOf(settingsPrefs.getBoolean("ambient_glow_enabled", true)) }
+    var glowIntensity by remember { mutableStateOf(settingsPrefs.getString("ambient_glow_intensity", "normal") ?: "normal") }
+
+    val prefsListener = remember {
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
+            when (key) {
+                "ambient_glow_enabled" -> glowEnabled = prefs.getBoolean("ambient_glow_enabled", true)
+                "ambient_glow_intensity" -> glowIntensity = prefs.getString("ambient_glow_intensity", "normal") ?: "normal"
+                "show_visualizer" -> isVisualizerEnabled = prefs.getBoolean("show_visualizer", false)
+            }
+        }
+    }
+    DisposableEffect(settingsPrefs) {
+        settingsPrefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        onDispose {
+            settingsPrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        }
+    }
 
     // Dynamic background gradient based on the animated extracted cover color
     val backgroundBrush = remember(animatedColor, background, glowEnabled, glowIntensity) {

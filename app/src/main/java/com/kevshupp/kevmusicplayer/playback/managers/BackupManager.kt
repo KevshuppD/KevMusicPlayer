@@ -54,7 +54,7 @@ class BackupManager(
             settingsJson.put("enabled_tabs", playbackPrefs.getString("enabled_tabs", ""))
 
             settingsJson.put("ambient_glow_enabled", settingsPrefs.getBoolean("ambient_glow_enabled", true))
-            settingsJson.put("ambient_glow_intensity", settingsPrefs.getString("ambient_glow_intensity", "medium"))
+            settingsJson.put("ambient_glow_intensity", settingsPrefs.getString("ambient_glow_intensity", "normal") ?: "normal")
             settingsJson.put("auto_translate", settingsPrefs.getBoolean("auto_translate", false))
             settingsJson.put("bluetooth_resume_enabled", settingsPrefs.getBoolean("bluetooth_resume_enabled", false))
             settingsJson.put("bluetooth_resume_all", settingsPrefs.getBoolean("bluetooth_resume_all", false))
@@ -66,7 +66,7 @@ class BackupManager(
             
             settingsJson.put("normalize_sound", settingsPrefs.getBoolean("normalize_sound", false))
             settingsJson.put("crossfade_duration", settingsPrefs.getInt("crossfade_duration", 0))
-            settingsJson.put("show_visualizer", settingsPrefs.getBoolean("show_visualizer", true))
+            settingsJson.put("show_visualizer", settingsPrefs.getBoolean("show_visualizer", false))
             settingsJson.put("haptic_feedback_enabled", settingsPrefs.getBoolean("haptic_feedback_enabled", true))
             settingsJson.put("song_image_rounded", settingsPrefs.getBoolean("song_image_rounded", true))
             settingsJson.put("enable_transparency", settingsPrefs.getBoolean("enable_transparency", true))
@@ -247,7 +247,20 @@ class BackupManager(
 
         // 0. Build mapping from old ID to new ID using songs_metadata
         val oldToNewIdMap = mutableMapOf<Long, Long>()
-        val currentSongs = audioDao.getAllAudioFiles()
+        var currentSongs = audioDao.getAllAudioFiles()
+        
+        // Ensure local library is scanned into Room so we can match and restore metadata/stats
+        if (currentSongs.isEmpty()) {
+            try {
+                val scanned = com.kevshupp.kevmusicplayer.data.AudioScanner(context).scanAudioFiles()
+                if (!scanned.isNullOrEmpty()) {
+                    audioDao.insertAll(scanned)
+                    currentSongs = scanned
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
         
         if (json.has("songs_metadata")) {
             val songsMetadataArray = json.getJSONArray("songs_metadata")
@@ -256,14 +269,14 @@ class BackupManager(
                 val oldId = meta.getLong("id")
                 val title = meta.getString("title")
                 val artist = meta.getString("artist")
-                val album = meta.getString("album")
+                val album = if (meta.has("album")) meta.getString("album") else ""
                 val duration = meta.getLong("duration")
                 
                 // Look for a matching local song
                 val matchedSong = currentSongs.find { current ->
                     current.title.trim().equals(title.trim(), ignoreCase = true) &&
                     (current.artist.trim().equals(artist.trim(), ignoreCase = true) || artist.isBlank() || current.artist.isBlank()) &&
-                    Math.abs(current.duration - duration) < 4000
+                    (duration == 0L || Math.abs(current.duration - duration) < 4000)
                 }
                 if (matchedSong != null) {
                     oldToNewIdMap[oldId] = matchedSong.id
@@ -272,11 +285,7 @@ class BackupManager(
         }
 
         fun translateId(oldId: Long): Long? {
-            return if (oldToNewIdMap.isNotEmpty()) {
-                oldToNewIdMap[oldId]
-            } else {
-                oldId // fallback to direct mapping for backward compatibility
-            }
+            return oldToNewIdMap[oldId] ?: if (currentSongs.any { it.id == oldId }) oldId else null
         }
 
         // 1. Restore settings
@@ -437,42 +446,55 @@ class BackupManager(
                 val songJson = librarySongsArray.getJSONObject(i)
                 val oldId = songJson.getLong("id")
                 val newId = translateId(oldId)
-                if (newId != null) {
-                    val localSong = currentSongs.find { it.id == newId }
-                    if (localSong != null) {
-                        var updated = localSong
-                        if (songJson.has("playCount")) {
-                            updated = updated.copy(playCount = songJson.getInt("playCount"))
-                        }
-                        if (songJson.has("lastPlayed")) {
-                            updated = updated.copy(lastPlayed = songJson.getLong("lastPlayed"))
-                        }
-                        if (songJson.has("replayGain") && !songJson.isNull("replayGain")) {
-                            updated = updated.copy(replayGain = songJson.getDouble("replayGain").toFloat())
-                        }
-                        if (songJson.has("genre") && !songJson.isNull("genre")) {
-                            updated = updated.copy(genre = songJson.getString("genre"))
-                        }
-                        if (songJson.has("year") && !songJson.isNull("year")) {
-                            updated = updated.copy(year = songJson.getString("year"))
-                        }
-                        if (songJson.has("track")) {
-                            updated = updated.copy(track = songJson.getInt("track"))
-                        }
-                        if (songJson.has("title") && !songJson.isNull("title")) {
-                            updated = updated.copy(title = songJson.getString("title"))
-                        }
-                        if (songJson.has("artist") && !songJson.isNull("artist")) {
-                            updated = updated.copy(artist = songJson.getString("artist"))
-                        }
-                        if (songJson.has("album") && !songJson.isNull("album")) {
-                            updated = updated.copy(album = songJson.getString("album"))
-                        }
-                        if (songJson.has("dateAdded")) {
-                            updated = updated.copy(dateAdded = songJson.getLong("dateAdded"))
-                        }
-                        songsToUpdate.add(updated)
+                
+                // Find matching local song by translated ID or fallback to title/artist matching
+                val localSong = (if (newId != null) currentSongs.find { it.id == newId } else null)
+                    ?: currentSongs.find { current ->
+                        val songTitle = if (songJson.has("title")) songJson.getString("title") else ""
+                        val songArtist = if (songJson.has("artist")) songJson.getString("artist") else ""
+                        val songDur = if (songJson.has("duration")) songJson.getLong("duration") else 0L
+                        songTitle.isNotBlank() &&
+                        current.title.trim().equals(songTitle.trim(), ignoreCase = true) &&
+                        (current.artist.trim().equals(songArtist.trim(), ignoreCase = true) || songArtist.isBlank() || current.artist.isBlank()) &&
+                        (songDur == 0L || Math.abs(current.duration - songDur) < 4000)
                     }
+
+                if (localSong != null) {
+                    var updated = localSong
+                    if (songJson.has("playCount")) {
+                        updated = updated.copy(playCount = songJson.getInt("playCount"))
+                    }
+                    if (songJson.has("lastPlayed")) {
+                        updated = updated.copy(lastPlayed = songJson.getLong("lastPlayed"))
+                    }
+                    if (songJson.has("replayGain") && !songJson.isNull("replayGain")) {
+                        updated = updated.copy(replayGain = songJson.getDouble("replayGain").toFloat())
+                    }
+                    if (songJson.has("genre") && !songJson.isNull("genre")) {
+                        updated = updated.copy(genre = songJson.getString("genre"))
+                    }
+                    if (songJson.has("year") && !songJson.isNull("year")) {
+                        updated = updated.copy(year = songJson.getString("year"))
+                    }
+                    if (songJson.has("track")) {
+                        updated = updated.copy(track = songJson.getInt("track"))
+                    }
+                    if (songJson.has("title") && !songJson.isNull("title")) {
+                        val t = songJson.getString("title")
+                        if (t.isNotBlank()) updated = updated.copy(title = t)
+                    }
+                    if (songJson.has("artist") && !songJson.isNull("artist")) {
+                        val a = songJson.getString("artist")
+                        if (a.isNotBlank()) updated = updated.copy(artist = a)
+                    }
+                    if (songJson.has("album") && !songJson.isNull("album")) {
+                        val al = songJson.getString("album")
+                        if (al.isNotBlank()) updated = updated.copy(album = al)
+                    }
+                    if (songJson.has("dateAdded")) {
+                        updated = updated.copy(dateAdded = songJson.getLong("dateAdded"))
+                    }
+                    songsToUpdate.add(updated)
                 }
             }
             if (songsToUpdate.isNotEmpty()) {

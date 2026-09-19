@@ -187,9 +187,13 @@ fun KevMusicPlayerTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            val darkTheme = currentTheme != "monochrome"
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            val window = (view.context as? Activity)?.window
+            if (window != null) {
+                val darkTheme = currentTheme != "monochrome"
+                val insetsController = WindowCompat.getInsetsController(window, view)
+                insetsController.isAppearanceLightStatusBars = !darkTheme
+                insetsController.isAppearanceLightNavigationBars = !darkTheme
+            }
         }
     }
     CompositionLocalProvider(

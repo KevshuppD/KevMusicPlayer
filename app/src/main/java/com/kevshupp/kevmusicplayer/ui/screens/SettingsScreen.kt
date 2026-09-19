@@ -154,7 +154,7 @@ fun SettingsScreen(
         }
     }
 
-    BackHandler(enabled = activeCategory != null || isSearchActive || searchQuery.isNotEmpty()) {
+    BackHandler(enabled = true) {
         handleBack()
     }
 
@@ -1007,8 +1007,7 @@ fun SettingsScreen(
                                     notificationPermissionLauncher = notificationPermissionLauncher,
                                     getLocalized = getLocalized,
                                     settingsPrefs = settingsPrefs,
-                                    context = context,
-                                    viewModel = viewModel
+                                    context = context
                                 )
                             }
                             "library" -> {

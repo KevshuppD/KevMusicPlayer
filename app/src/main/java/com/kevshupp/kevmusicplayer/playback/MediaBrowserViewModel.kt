@@ -609,7 +609,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     
                     // 2. Map scanned files to database entities, preserving custom edited lyrics and metadata
                     val entities = filteredScanned.map { file ->
-                        val existing = existingEntities[file.id]
+                        val existing = existingEntities[file.id] ?: existingEntities.values.find {
+                            it.title.trim().equals(file.title.trim(), ignoreCase = true) &&
+                            (it.artist.trim().equals(file.artist.trim(), ignoreCase = true) || it.artist.isBlank() || file.artist.isBlank()) &&
+                            Math.abs(it.duration - file.duration) < 4000
+                        }
                         if (existing != null && existing.dateModified == file.dateModified) {
                             // File has not been modified on disk. Preserve user's database metadata edits!
                             file.copy(
@@ -864,6 +868,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                 }
                 loadPlaylists() // Sync playlists cache
+                triggerAutoSync()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -884,6 +889,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     localAudioFiles[index] = file.copy(translatedLyrics = null)
                 }
                 loadPlaylists() // Sync playlists cache
+                triggerAutoSync()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -906,6 +912,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                 }
                 loadPlaylists() // Sync playlists cache
+                triggerAutoSync()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -990,24 +997,18 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         .remove("last_active_index")
                         .apply()
 
-                    browser.value?.clearMediaItems()
-                    browser.value?.stop()
-                    browser.value?.release()
-
-                    browserFuture?.let {
-                        try {
-                            MediaBrowser.releaseFuture(it)
-                        } catch (ex: Exception) {
-                            ex.printStackTrace()
-                        }
+                    // Safely clear previous playback items without tearing down the browser connection
+                    try {
+                        browser.value?.stop()
+                        browser.value?.clearMediaItems()
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
-                    browserFuture = null
-                    browser.value = null
-                    
-                    val serviceIntent = android.content.Intent(context, com.kevshupp.kevmusicplayer.playback.PlaybackService::class.java)
-                    context.stopService(serviceIntent)
 
-                    kotlinx.coroutines.delay(800)
+                    if (browser.value == null) {
+                        connect()
+                    }
+
                     onSuccess()
                 }
             } catch (e: Exception) {
@@ -1055,8 +1056,31 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    private var autoSyncJob: kotlinx.coroutines.Job? = null
+
+    fun triggerAutoSync(debounceMs: Long = 4000L) {
+        val user = cloudUser.value ?: return
+        if (!user.isAutoSyncEnabled) return
+
+        autoSyncJob?.cancel()
+        autoSyncJob = viewModelScope.launch(Dispatchers.IO) {
+            if (debounceMs > 0) {
+                kotlinx.coroutines.delay(debounceMs)
+            }
+            try {
+                val cloudBackupMgr = com.kevshupp.kevmusicplayer.data.cloud.CloudBackupManager(getApplication())
+                cloudBackupMgr.uploadBackupToCloud(user)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     fun setCloudAutoSync(context: Context, enabled: Boolean) {
         com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.setAutoSyncEnabled(context, enabled)
+        if (enabled) {
+            triggerAutoSync(debounceMs = 0L)
+        }
     }
 
     fun uploadCloudBackup(
@@ -1118,18 +1142,17 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         .remove("last_active_index")
                         .apply()
 
-                    browser.value?.clearMediaItems()
-                    browser.value?.stop()
-                    browser.value?.release()
-                    browserFuture?.let {
-                        try {
-                            MediaBrowser.releaseFuture(it)
-                        } catch (ex: Exception) {
-                            ex.printStackTrace()
-                        }
+                    // Safely clear previous playback items without tearing down the browser connection
+                    try {
+                        browser.value?.stop()
+                        browser.value?.clearMediaItems()
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
-                    browserFuture = null
-                    browser.value = null
+
+                    if (browser.value == null) {
+                        connect()
+                    }
 
                     onSuccess()
                 }
@@ -1215,6 +1238,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         prefs.edit()
             .putString("enabled_tabs", tabs.joinToString(","))
             .apply()
+        triggerAutoSync()
     }
 
     fun incrementSongPlayCount(id: Long) {
@@ -1246,6 +1270,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
 
                     updateSmartPlaylists()
+                    triggerAutoSync(debounceMs = 30000L)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -1262,13 +1287,34 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     fun updateSmartPlaylists() = playlistManager.updateSmartPlaylists()
     fun loadPlaylists() = playlistManager.loadPlaylists()
-    fun createPlaylist(name: String) = playlistManager.createPlaylist(name)
-    fun createSmartPlaylist(name: String, rule: SmartPlaylistRule, limit: Int, isAdvanced: Boolean = false, advancedRule: SmartRuleNode? = null) = playlistManager.createSmartPlaylist(name, rule, limit, isAdvanced, advancedRule)
-    fun setPlaylistCover(name: String, imageUriStr: String) = playlistManager.setPlaylistCover(name, imageUriStr)
-    fun addSongToPlaylist(playlistName: String, songId: Long) = playlistManager.addSongToPlaylist(playlistName, songId)
-    fun addSongsToPlaylist(playlistName: String, songIds: List<Long>) = playlistManager.addSongsToPlaylist(playlistName, songIds)
-    fun removeSongFromPlaylist(playlistName: String, songId: Long) = playlistManager.removeSongFromPlaylist(playlistName, songId)
-    fun deletePlaylist(name: String) = playlistManager.deletePlaylist(name)
+    fun createPlaylist(name: String) {
+        playlistManager.createPlaylist(name)
+        triggerAutoSync()
+    }
+    fun createSmartPlaylist(name: String, rule: SmartPlaylistRule, limit: Int, isAdvanced: Boolean = false, advancedRule: SmartRuleNode? = null) {
+        playlistManager.createSmartPlaylist(name, rule, limit, isAdvanced, advancedRule)
+        triggerAutoSync()
+    }
+    fun setPlaylistCover(name: String, imageUriStr: String) {
+        playlistManager.setPlaylistCover(name, imageUriStr)
+        triggerAutoSync()
+    }
+    fun addSongToPlaylist(playlistName: String, songId: Long) {
+        playlistManager.addSongToPlaylist(playlistName, songId)
+        triggerAutoSync()
+    }
+    fun addSongsToPlaylist(playlistName: String, songIds: List<Long>) {
+        playlistManager.addSongsToPlaylist(playlistName, songIds)
+        triggerAutoSync()
+    }
+    fun removeSongFromPlaylist(playlistName: String, songId: Long) {
+        playlistManager.removeSongFromPlaylist(playlistName, songId)
+        triggerAutoSync()
+    }
+    fun deletePlaylist(name: String) {
+        playlistManager.deletePlaylist(name)
+        triggerAutoSync()
+    }
 
     // Queue system
     val queueManager = com.kevshupp.kevmusicplayer.playback.managers.QueueManager(browser, localAudioFiles) { savePlaybackState() }

@@ -56,28 +56,7 @@ fun SystemSettingsSection(
     getLocalized: (String, String) -> String,
     settingsPrefs: android.content.SharedPreferences,
     context: android.content.Context,
-    viewModel: MediaBrowserViewModel? = null
 ) {
-    if (viewModel != null) {
-        Column {
-            Text(
-                text = getLocalized("SINCRONIZACIÓN EN LA NUBE", "CLOUD SYNC & BACKUP"),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                letterSpacing = 1.sp,
-                modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
-            )
-
-            CloudSyncCard(
-                viewModel = viewModel,
-                getLocalized = getLocalized
-            )
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-    }
-
     // 1. Diagnóstico y Servicios (Diagnostics & Services Card)
     Column {
         Text(

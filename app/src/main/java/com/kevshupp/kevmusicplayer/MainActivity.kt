@@ -211,11 +211,6 @@ fun AppNavigation() {
         }
     }
 
-    // Intercept system back gestures to pop screens from backstack instead of closing the app!
-    BackHandler(enabled = backStack.size > 1) {
-        backStack.removeAt(backStack.size - 1)
-    }
-
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -226,6 +221,7 @@ fun AppNavigation() {
                     }
                 }
                 androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                    viewModel.triggerAutoSync(debounceMs = 0L)
                     val activity = context.findActivity()
                     if (activity == null || !activity.isChangingConfigurations) {
                         viewModel.disconnect()
@@ -237,6 +233,7 @@ fun AppNavigation() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.triggerAutoSync(debounceMs = 0L)
             val activity = context.findActivity()
             if (activity == null || !activity.isChangingConfigurations) {
                 viewModel.disconnect()
@@ -794,7 +791,6 @@ fun OnboardingFlow(
                              onSuccess = {
                                  settingsPrefs.edit().putBoolean("is_first_run", false).apply()
                                  android.widget.Toast.makeText(context, "Copia de seguridad restaurada con éxito", android.widget.Toast.LENGTH_LONG).show()
-                                 (context as? android.app.Activity)?.recreate()
                                  onDismiss()
                              },
                              onError = { error ->
@@ -1400,7 +1396,6 @@ fun OnboardingFlow(
                             onSuccess = {
                                 settingsPrefs.edit().putBoolean("is_first_run", false).apply()
                                 android.widget.Toast.makeText(context, "¡Copia restaurada con éxito!", android.widget.Toast.LENGTH_LONG).show()
-                                (context as? android.app.Activity)?.recreate()
                                 onDismiss()
                             },
                             onError = { err ->
