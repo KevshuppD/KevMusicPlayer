@@ -3,15 +3,12 @@ package com.kevshupp.kevmusicplayer.ui.screens
 import android.content.Intent
 import android.graphics.Bitmap
 import androidx.compose.animation.*
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material.icons.automirrored.rounded.*
@@ -1151,279 +1148,825 @@ fun MusicInsightsScreen(
         }
     }
 
-    // Modal: Wrapped Story Poster Dialog
+    // Modal: Spotify-Wrapped Fullscreen Interactive Story Experience
     if (showPosterDialog) {
         Dialog(
             onDismissRequest = { showPosterDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = true
+            )
         ) {
+            val totalSlides = 7
+            var currentSlide by remember { mutableIntStateOf(0) }
+            var isPaused by remember { mutableStateOf(false) }
+            val slideProgress = remember { androidx.compose.animation.core.Animatable(0f) }
+
+            // Story auto-advance timer
+            LaunchedEffect(currentSlide, isPaused) {
+                if (!isPaused) {
+                    slideProgress.snapTo(0f)
+                    slideProgress.animateTo(
+                        targetValue = 1f,
+                        animationSpec = androidx.compose.animation.core.tween(
+                            durationMillis = 5500,
+                            easing = androidx.compose.animation.core.LinearEasing
+                        )
+                    )
+                    if (currentSlide < totalSlides - 1) {
+                        currentSlide++
+                    }
+                }
+            }
+
+            // Determine listening personality archetype
+            val listeningPersonality = remember(playedSongs, topArtists, topGenres, totalMinListened, peakDayIndex) {
+                when {
+                    topArtists.isNotEmpty() && (topArtists.first().second.toFloat() / totalPlays.coerceAtLeast(1)) > 0.45f -> {
+                        Pair(
+                            getLocalized("El Fan Devoto", "The Devoted Fan"),
+                            getLocalized("Cuando encuentras un artista que te apasiona, lo escuchas en bucle sin descanso.", "When you love an artist, you keep them on repeat without hesitation.")
+                        )
+                    }
+                    timeDistribution[0] > (totalPlays * 0.3f) -> {
+                        Pair(
+                            getLocalized("El Melómano Búho", "The Night Owl"),
+                            getLocalized("Tus mejores sesiones musicales ocurren de madrugada bajo las estrellas.", "Your best music sessions happen in the dead of night under the stars.")
+                        )
+                    }
+                    topGenres.size >= 4 -> {
+                        Pair(
+                            getLocalized("El Explorador Sónico", "The Sonic Explorer"),
+                            getLocalized("Te mueves entre múltiples géneros y ritmos sin encerrarte en un solo estilo.", "You glide between genres and rhythms without staying in one lane.")
+                        )
+                    }
+                    playedSongs.size > 50 -> {
+                        Pair(
+                            getLocalized("El Archivista Acústico", "The Acoustic Collector"),
+                            getLocalized("Tu biblioteca es amplia, variada y disfrutas redescubrir cada joya musical.", "Your library is vast, diverse, and you cherish rediscovering every music gem.")
+                        )
+                    }
+                    else -> {
+                        Pair(
+                            getLocalized("El Connoisseur Musical", "The Music Connoisseur"),
+                            getLocalized("Escuchas con intención, priorizando calidad y tus temas favoritos.", "You listen with intent, prioritizing quality and your favorite hits.")
+                        )
+                    }
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.85f))
-                    .padding(20.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Visual Poster Card Container
-                    Card(
-                        shape = RoundedCornerShape(28.dp),
-                        modifier = Modifier
-                            .fillMaxWidth(0.92f)
-                            .drawWithContent {
-                                posterGraphicsLayer.record {
-                                    this@drawWithContent.drawContent()
-                                }
-                                drawLayer(posterGraphicsLayer)
+                    .background(Color.Black)
+                    .pointerInput(currentSlide) {
+                        detectTapGestures(
+                            onPress = {
+                                isPaused = true
+                                val released = tryAwaitRelease()
+                                isPaused = false
                             },
-                        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                            onTap = { offset ->
+                                val screenWidth = size.width
+                                if (offset.x < screenWidth * 0.35f) {
+                                    if (currentSlide > 0) currentSlide--
+                                } else {
+                                    if (currentSlide < totalSlides - 1) currentSlide++
+                                }
+                            }
+                        )
+                    }
+            ) {
+                // Background dynamic gradient based on current slide
+                val backgroundBrush = remember(currentSlide) {
+                    when (currentSlide) {
+                        0 -> Brush.verticalGradient(listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)))
+                        1 -> Brush.verticalGradient(listOf(Color(0xFF2E0854), Color(0xFF180B28), Color(0xFF003838)))
+                        2 -> Brush.verticalGradient(listOf(Color(0xFF3A1C71), Color(0xFFD76D77), Color(0xFFFFAF7B)))
+                        3 -> Brush.verticalGradient(listOf(Color(0xFF11998E), Color(0xFF38EF7D), Color(0xFF051923)))
+                        4 -> Brush.verticalGradient(listOf(Color(0xFF8A2387), Color(0xFFE94057), Color(0xFFF27121)))
+                        5 -> Brush.verticalGradient(listOf(Color(0xFF654EA3), Color(0xFFEAAFC8), Color(0xFF1B1B2F)))
+                        else -> Brush.verticalGradient(listOf(Color(0xFF1E0836), Color(0xFF0F0C20), Color(0xFF070B19)))
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(backgroundBrush)
+                )
+
+                // Slide Content Container
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Top Progress Bars Header
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp, bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    Brush.verticalGradient(
-                                        listOf(
-                                            Color(0xFF1E0836),
-                                            Color(0xFF0F0C20),
-                                            Color(0xFF070B19)
-                                        )
-                                    )
-                                )
-                                .padding(24.dp)
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                        for (i in 0 until totalSlides) {
+                            val progress = when {
+                                i < currentSlide -> 1f
+                                i == currentSlide -> slideProgress.value
+                                else -> 0f
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(3.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(Color.White.copy(alpha = 0.25f))
                             ) {
-                                // App Branding Header
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.GraphicEq,
-                                        contentDescription = null,
-                                        tint = Color(0xFF00FFCC),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "KEVMUSIC WRAPPED",
-                                        fontWeight = FontWeight.Black,
-                                        fontSize = 13.sp,
-                                        letterSpacing = 2.sp,
-                                        color = Color(0xFF00FFCC)
-                                    )
-                                }
-
-                                Text(
-                                    text = when (selectedPeriod) {
-                                        InsightPeriod.ALL_TIME -> getLocalized("Mi Resumen Musical", "My Music Wrapped")
-                                        InsightPeriod.THIS_YEAR -> getLocalized("Lo Mejor del $currentYear", "Best of $currentYear")
-                                        InsightPeriod.THIS_MONTH -> getLocalized("Mi Mes Musical", "My Monthly Hits")
-                                        InsightPeriod.LAST_30_DAYS -> getLocalized("Mis Últimos 30 Días", "My Last 30 Days")
-                                    },
-                                    fontSize = 22.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color.White,
-                                    textAlign = TextAlign.Center
-                                )
-
-                                // Top 1 Album Art & Song Spotlight
-                                val top1Song = topSongs.firstOrNull()
-                                if (top1Song != null) {
-                                    val artBytes = rememberAlbumArt(top1Song.uriString)
-                                    Box(
-                                        modifier = Modifier
-                                            .size(130.dp)
-                                            .shadow(20.dp, RoundedCornerShape(20.dp), spotColor = Color(0xFF00FFCC))
-                                            .clip(RoundedCornerShape(20.dp))
-                                            .background(Color.DarkGray)
-                                    ) {
-                                        SubcomposeAsyncImage(
-                                            model = artBytes,
-                                            contentDescription = null,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize(),
-                                            error = {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxSize()
-                                                        .background(MaterialTheme.colorScheme.primaryContainer),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Rounded.MusicNote,
-                                                        contentDescription = null,
-                                                        tint = Color.White,
-                                                        modifier = Modifier.size(40.dp)
-                                                    )
-                                                }
-                                            }
-                                        )
-                                    }
-
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(
-                                            text = top1Song.title,
-                                            fontSize = 17.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = top1Song.artist,
-                                            fontSize = 13.sp,
-                                            color = Color.White.copy(alpha = 0.7f),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-
-                                // Key Stats Grid
-                                Row(
+                                Box(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(16.dp))
-                                        .padding(vertical = 12.dp, horizontal = 16.dp),
-                                    horizontalArrangement = Arrangement.SpaceAround
-                                ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(
-                                            text = "$totalMinListened",
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.Black,
-                                            color = Color(0xFF00FFCC)
-                                        )
-                                        Text(
-                                            text = getLocalized("Minutos", "Minutes"),
-                                            fontSize = 11.sp,
-                                            color = Color.White.copy(alpha = 0.6f)
-                                        )
-                                    }
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(
-                                            text = "${topArtists.firstOrNull()?.first ?: "N/A"}",
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Black,
-                                            color = Color(0xFFFF66CC),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = getLocalized("Top Artista", "Top Artist"),
-                                            fontSize = 11.sp,
-                                            color = Color.White.copy(alpha = 0.6f)
-                                        )
-                                    }
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(
-                                            text = favoriteGenre,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Black,
-                                            color = Color(0xFFFFD200),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = getLocalized("Género", "Genre"),
-                                            fontSize = 11.sp,
-                                            color = Color.White.copy(alpha = 0.6f)
-                                        )
-                                    }
-                                }
-
-                                // Top 3 Songs list
-                                Column(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    topSongs.take(3).forEachIndexed { idx, song ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = "#${idx + 1}",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Black,
-                                                color = Color(0xFF00FFCC),
-                                                modifier = Modifier.width(24.dp)
-                                            )
-                                            Text(
-                                                text = "${song.title} · ${song.artist}",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = Color.White.copy(alpha = 0.9f),
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Text(
-                                    text = "Reproducido en KevMusicPlayer Offline",
-                                    fontSize = 10.sp,
-                                    color = Color.White.copy(alpha = 0.4f)
+                                        .fillMaxHeight()
+                                        .fillMaxWidth(progress)
+                                        .background(Color.White)
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(18.dp))
-
-                    // Share & Close Buttons
+                    // Top Bar: KevMusic Wrapped Branding + Close Button
                     Row(
-                        modifier = Modifier.fillMaxWidth(0.92f),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(
-                            onClick = {
-                                shareBitmap(posterGraphicsLayer)
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(50.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF00FFCC),
-                                contentColor = Color.Black
-                            )
-                        ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = Icons.Rounded.Share,
+                                imageVector = Icons.Rounded.GraphicEq,
                                 contentDescription = null,
+                                tint = Color(0xFF00FFCC),
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = getLocalized("Compartir Historia", "Share Story"),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
+                                text = "KEVMUSIC WRAPPED",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 2.sp,
+                                color = Color(0xFF00FFCC)
                             )
                         }
 
                         IconButton(
                             onClick = { showPosterDialog = false },
                             modifier = Modifier
-                                .size(50.dp)
+                                .size(36.dp)
                                 .background(Color.White.copy(alpha = 0.15f), CircleShape)
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Close,
                                 contentDescription = "Close",
-                                tint = Color.White
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
                             )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.weight(0.2f))
+
+                    // Current Slide Body
+                    Box(
+                        modifier = Modifier
+                            .weight(3f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AnimatedContent(
+                            targetState = currentSlide,
+                            transitionSpec = {
+                                (fadeIn(androidx.compose.animation.core.tween(300)) + slideInHorizontally { width -> width / 3 })
+                                    .togetherWith(fadeOut(androidx.compose.animation.core.tween(200)))
+                            },
+                            label = "WrappedStorySlide"
+                        ) { slide ->
+                            when (slide) {
+                                // Slide 0: Total Minutes & Total Plays
+                                0 -> {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = getLocalized("ESTE AÑO PASASTE", "YOU SPENT"),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 2.sp,
+                                            color = Color.White.copy(alpha = 0.7f)
+                                        )
+                                        Text(
+                                            text = "$totalMinListened",
+                                            fontSize = 64.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = Color(0xFF00FFCC),
+                                            lineHeight = 70.sp
+                                        )
+                                        Text(
+                                            text = getLocalized("minutos escuchando tu música favorita", "minutes listening to your favorite music"),
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(horizontal = 24.dp)
+                                        )
+
+                                        Spacer(modifier = Modifier.height(10.dp))
+
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(Color.White.copy(alpha = 0.12f))
+                                                .padding(horizontal = 20.dp, vertical = 12.dp)
+                                        ) {
+                                            Text(
+                                                text = getLocalized("Eso equivale a ${(totalMinListened / 60.0).let { "%.1f".format(it) }} horas de ritmos sin pausas", "That equals ${(totalMinListened / 60.0).let { "%.1f".format(it) }} hours of non-stop beats"),
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color.White.copy(alpha = 0.9f),
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Slide 1: Sound Aura & Top Genres
+                                1 -> {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = getLocalized("TU AURA SONORA", "YOUR AUDIO AURA"),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 2.sp,
+                                            color = Color(0xFFFF66CC)
+                                        )
+
+                                        Box(
+                                            modifier = Modifier
+                                                .size(140.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    Brush.radialGradient(
+                                                        listOf(
+                                                            Color(0xFFFF007F),
+                                                            Color(0xFF7928CA),
+                                                            Color(0xFF00DFD8)
+                                                        )
+                                                    )
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.GraphicEq,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(54.dp)
+                                            )
+                                        }
+
+                                        Text(
+                                            text = getLocalized("Tus Géneros Principales", "Your Top Genres"),
+                                            fontSize = 22.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color.White
+                                        )
+
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 20.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            topGenres.take(4).forEachIndexed { idx, (genre, plays) ->
+                                                val pct = (plays.toFloat() / totalGenrePlays) * 100
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Text(
+                                                        text = "${idx + 1}. $genre",
+                                                        fontSize = 15.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.White
+                                                    )
+                                                    Text(
+                                                        text = "${pct.toInt()}%",
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Black,
+                                                        color = Color(0xFF00FFCC)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Slide 2: Listening Habits & Clock
+                                2 -> {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = getLocalized("TUS HÁBITOS MUSICALES", "YOUR LISTENING HABITS"),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 2.sp,
+                                            color = Color(0xFFFFD200)
+                                        )
+
+                                        Text(
+                                            text = getLocalized("Tu día con más ritmo fue:", "Your most active day was:"),
+                                            fontSize = 16.sp,
+                                            color = Color.White.copy(alpha = 0.8f)
+                                        )
+
+                                        Text(
+                                            text = fullDayNames.getOrElse(peakDayIndex) { "Viernes" },
+                                            fontSize = 36.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = Color(0xFFFFD200)
+                                        )
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        val (timeTitle, timeEmoji) = when {
+                                            timeDistribution[0] >= timeDistribution.maxOrNull()!! -> Pair(getLocalized("Búho Nocturno (Madrugada)", "Night Owl (Late Night)"), "🌙")
+                                            timeDistribution[1] >= timeDistribution.maxOrNull()!! -> Pair(getLocalized("Madrugador Musical (Mañana)", "Early Bird (Morning)"), "🌅")
+                                            timeDistribution[2] >= timeDistribution.maxOrNull()!! -> Pair(getLocalized("Energía de Tarde", "Afternoon Energy"), "☀️")
+                                            else -> Pair(getLocalized("Noches Melódicas", "Evening Melodies"), "🌆")
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth(0.85f)
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(Color.White.copy(alpha = 0.15f))
+                                                .padding(16.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text(text = timeEmoji, fontSize = 32.sp)
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(
+                                                    text = timeTitle,
+                                                    fontSize = 16.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Slide 3: Top Songs Countdown
+                                3 -> {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = getLocalized("TU CANCIÓN #1", "YOUR TOP SONG"),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 2.sp,
+                                            color = Color(0xFF00FFCC)
+                                        )
+
+                                        val top1 = topSongs.firstOrNull()
+                                        if (top1 != null) {
+                                            val artBytes = rememberAlbumArt(top1.uriString)
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(150.dp)
+                                                    .shadow(24.dp, RoundedCornerShape(24.dp), spotColor = Color(0xFF00FFCC))
+                                                    .clip(RoundedCornerShape(24.dp))
+                                                    .background(Color.DarkGray)
+                                            ) {
+                                                SubcomposeAsyncImage(
+                                                    model = artBytes,
+                                                    contentDescription = null,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    error = {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .background(MaterialTheme.colorScheme.primaryContainer),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.MusicNote,
+                                                                contentDescription = null,
+                                                                tint = Color.White,
+                                                                modifier = Modifier.size(50.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                )
+                                            }
+
+                                            Text(
+                                                text = top1.title,
+                                                fontSize = 20.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = Color.White,
+                                                textAlign = TextAlign.Center,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "${top1.artist} · ${top1.playCount} ${getLocalized("reproducciones", "plays")}",
+                                                fontSize = 14.sp,
+                                                color = Color.White.copy(alpha = 0.75f),
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+
+                                        // Rest of top songs
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            topSongs.drop(1).take(3).forEachIndexed { idx, song ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(12.dp))
+                                                        .background(Color.White.copy(alpha = 0.08f))
+                                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = "#${idx + 2}",
+                                                        fontWeight = FontWeight.Black,
+                                                        fontSize = 13.sp,
+                                                        color = Color(0xFF00FFCC),
+                                                        modifier = Modifier.width(26.dp)
+                                                    )
+                                                    Text(
+                                                        text = "${song.title} — ${song.artist}",
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = Color.White,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Slide 4: Top Artists Spotlight
+                                4 -> {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = getLocalized("TU ARTISTA #1", "YOUR #1 ARTIST"),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 2.sp,
+                                            color = Color(0xFFFF66CC)
+                                        )
+
+                                        val topArtistName = topArtists.firstOrNull()?.first ?: "N/A"
+                                        val topArtistPlays = topArtists.firstOrNull()?.second ?: 0
+
+                                        ArtistImage(
+                                            artist = topArtistName,
+                                            modifier = Modifier
+                                                .size(150.dp)
+                                                .shadow(24.dp, CircleShape, spotColor = Color(0xFFFF66CC))
+                                                .clip(CircleShape)
+                                        )
+
+                                        Text(
+                                            text = topArtistName,
+                                            fontSize = 24.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = Color.White,
+                                            textAlign = TextAlign.Center
+                                        )
+
+                                        Text(
+                                            text = getLocalized("$topArtistPlays reproducciones acumuladas", "$topArtistPlays total plays"),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = Color.White.copy(alpha = 0.8f)
+                                        )
+
+                                        // Top Artists Ranking list
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            topArtists.drop(1).take(3).forEachIndexed { idx, (artistName, plays) ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(12.dp))
+                                                        .background(Color.White.copy(alpha = 0.08f))
+                                                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Text(
+                                                        text = "#${idx + 2}  $artistName",
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.White
+                                                    )
+                                                    Text(
+                                                        text = "$plays plays",
+                                                        fontSize = 12.sp,
+                                                        color = Color(0xFFFF66CC),
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Slide 5: Musical Archetype / Personality
+                                5 -> {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = getLocalized("TU PERSONALIDAD MUSICAL", "YOUR MUSICAL PERSONALITY"),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 2.sp,
+                                            color = Color(0xFFFFD200)
+                                        )
+
+                                        Box(
+                                            modifier = Modifier
+                                                .size(110.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.White.copy(alpha = 0.15f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Psychology,
+                                                contentDescription = null,
+                                                tint = Color(0xFFFFD200),
+                                                modifier = Modifier.size(54.dp)
+                                            )
+                                        }
+
+                                        Text(
+                                            text = listeningPersonality.first,
+                                            fontSize = 26.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = Color.White,
+                                            textAlign = TextAlign.Center
+                                        )
+
+                                        Text(
+                                            text = listeningPersonality.second,
+                                            fontSize = 14.sp,
+                                            lineHeight = 20.sp,
+                                            color = Color.White.copy(alpha = 0.85f),
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(horizontal = 24.dp)
+                                        )
+                                    }
+                                }
+
+                                // Slide 6: Final Shareable Summary Poster Card
+                                else -> {
+                                    Card(
+                                        shape = RoundedCornerShape(24.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.95f)
+                                            .drawWithContent {
+                                                posterGraphicsLayer.record {
+                                                    this@drawWithContent.drawContent()
+                                                }
+                                                drawLayer(posterGraphicsLayer)
+                                            },
+                                        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(
+                                                    Brush.verticalGradient(
+                                                        listOf(
+                                                            Color(0xFF1E0836),
+                                                            Color(0xFF0F0C20),
+                                                            Color(0xFF070B19)
+                                                        )
+                                                    )
+                                                )
+                                                .padding(20.dp)
+                                        ) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.Center,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.GraphicEq,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFF00FFCC),
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        text = "KEVMUSIC WRAPPED",
+                                                        fontWeight = FontWeight.Black,
+                                                        fontSize = 12.sp,
+                                                        letterSpacing = 2.sp,
+                                                        color = Color(0xFF00FFCC)
+                                                    )
+                                                }
+
+                                                Text(
+                                                    text = getLocalized("Mi Resumen Musical", "My Music Wrapped"),
+                                                    fontSize = 20.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = Color.White
+                                                )
+
+                                                // Top 1 Song
+                                                val top1Song = topSongs.firstOrNull()
+                                                if (top1Song != null) {
+                                                    val artBytes = rememberAlbumArt(top1Song.uriString)
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(100.dp)
+                                                            .clip(RoundedCornerShape(16.dp))
+                                                            .background(Color.DarkGray)
+                                                    ) {
+                                                        SubcomposeAsyncImage(
+                                                            model = artBytes,
+                                                            contentDescription = null,
+                                                            contentScale = ContentScale.Crop,
+                                                            modifier = Modifier.fillMaxSize()
+                                                        )
+                                                    }
+                                                    Text(
+                                                        text = top1Song.title,
+                                                        fontSize = 15.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.White,
+                                                        maxLines = 1
+                                                    )
+                                                    Text(
+                                                        text = top1Song.artist,
+                                                        fontSize = 12.sp,
+                                                        color = Color.White.copy(alpha = 0.7f),
+                                                        maxLines = 1
+                                                    )
+                                                }
+
+                                                // Key Stats Row
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                                                        .padding(vertical = 8.dp, horizontal = 12.dp),
+                                                    horizontalArrangement = Arrangement.SpaceAround
+                                                ) {
+                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                        Text(text = "$totalMinListened", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color(0xFF00FFCC))
+                                                        Text(text = getLocalized("Minutos", "Minutes"), fontSize = 10.sp, color = Color.White.copy(alpha = 0.6f))
+                                                    }
+                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                        Text(text = topArtists.firstOrNull()?.first ?: "N/A", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFFFF66CC), maxLines = 1)
+                                                        Text(text = getLocalized("Top Artista", "Top Artist"), fontSize = 10.sp, color = Color.White.copy(alpha = 0.6f))
+                                                    }
+                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                        Text(text = favoriteGenre, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFFFFD200), maxLines = 1)
+                                                        Text(text = getLocalized("Género", "Genre"), fontSize = 10.sp, color = Color.White.copy(alpha = 0.6f))
+                                                    }
+                                                }
+
+                                                // Top 3 Tracks
+                                                Column(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    topSongs.take(3).forEachIndexed { idx, song ->
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            Text(text = "#${idx + 1}", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF00FFCC), modifier = Modifier.width(20.dp))
+                                                            Text(text = "${song.title} · ${song.artist}", fontSize = 11.sp, color = Color.White.copy(alpha = 0.9f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        }
+                                                    }
+                                                }
+
+                                                Text(
+                                                    text = "🎧 ${listeningPersonality.first} • KevMusicPlayer Offline",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = Color.White.copy(alpha = 0.5f)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.weight(0.2f))
+
+                    // Bottom Navigation / Share Actions
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (currentSlide == totalSlides - 1) {
+                            Button(
+                                onClick = { shareBitmap(posterGraphicsLayer) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp),
+                                shape = RoundedCornerShape(18.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF00FFCC),
+                                    contentColor = Color.Black
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Share,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = getLocalized("Compartir en Redes", "Share on Socials"),
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 14.sp
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { currentSlide = 0 },
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .background(Color.White.copy(alpha = 0.15f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Replay,
+                                    contentDescription = "Replay",
+                                    tint = Color.White
+                                )
+                            }
+                        } else {
+                            TextButton(
+                                onClick = {
+                                    if (currentSlide < totalSlides - 1) currentSlide++
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp)
+                            ) {
+                                Text(
+                                    text = getLocalized("Toca para continuar ➔", "Tap to continue ➔"),
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                         }
                     }
                 }

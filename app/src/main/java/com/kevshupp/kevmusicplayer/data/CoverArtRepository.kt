@@ -217,81 +217,31 @@ object CoverArtRepository {
     }
 
     /**
-     * Unified multi-source cover search (Deezer + iTunes).
-     * Dispatches queries in parallel and merges results with Deezer prioritized by default.
+     * Search covers directly from Deezer API (1000x1000 HD artwork).
      */
     suspend fun searchCovers(query: String, type: CoverSearchType = CoverSearchType.AUTO): List<CoverSearchResult> {
         return withContext(Dispatchers.IO) {
             val trimmed = query.trim()
             if (trimmed.isBlank()) return@withContext emptyList()
 
-            val preferredProvider = try {
-                KevMusicPlayerApplication.instance.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
-                    .getString("preferred_cover_provider", "deezer") ?: "deezer"
-            } catch (e: Exception) {
-                "deezer"
+            val deezerResults = searchCoversFromDeezer(trimmed, type)
+            if (deezerResults.isNotEmpty()) {
+                return@withContext deezerResults
             }
 
-            coroutineScope {
-                val deezerDeferred = async { searchCoversFromDeezer(trimmed, type) }
-                val itunesDeferred = async { searchCoversFromITunes(trimmed, type) }
-
-                val deezerResults = try { deezerDeferred.await() } catch (e: Exception) { emptyList() }
-                val itunesResults = try { itunesDeferred.await() } catch (e: Exception) { emptyList() }
-
-                val combined = mutableListOf<CoverSearchResult>()
-                val seenUrls = mutableSetOf<String>()
-
-                when (preferredProvider) {
-                    "itunes" -> {
-                        // Prioritize iTunes first, then Deezer
-                        for (item in itunesResults) {
-                            if (seenUrls.add(item.coverUrl)) combined.add(item)
-                        }
-                        for (item in deezerResults) {
-                            if (seenUrls.add(item.coverUrl)) combined.add(item)
-                        }
-                    }
-                    "both" -> {
-                        // Interleave 1 Deezer, 1 iTunes
-                        val maxLen = maxOf(deezerResults.size, itunesResults.size)
-                        for (i in 0 until maxLen) {
-                            if (i < deezerResults.size) {
-                                val item = deezerResults[i]
-                                if (seenUrls.add(item.coverUrl)) combined.add(item)
-                            }
-                            if (i < itunesResults.size) {
-                                val item = itunesResults[i]
-                                if (seenUrls.add(item.coverUrl)) combined.add(item)
-                            }
-                        }
-                    }
-                    else -> {
-                        // "deezer" (Default & Recommended): Deezer results take highest priority (first in list)
-                        for (item in deezerResults) {
-                            if (seenUrls.add(item.coverUrl)) combined.add(item)
-                        }
-                        for (item in itunesResults) {
-                            if (seenUrls.add(item.coverUrl)) combined.add(item)
-                        }
+            // If empty and string has hyphens, fallback to searching main title part with Deezer
+            if (trimmed.contains(" ") && (trimmed.contains(" - ") || trimmed.contains(" – "))) {
+                val firstPart = trimmed.substringBefore(" - ").substringBefore(" – ").trim()
+                if (firstPart.isNotBlank() && firstPart != trimmed) {
+                    val fallbackDeezer = searchCoversFromDeezer(firstPart, type)
+                    if (fallbackDeezer.isNotEmpty()) {
+                        return@withContext fallbackDeezer
                     }
                 }
-
-                if (combined.isEmpty() && trimmed.contains(" ")) {
-                    val firstPart = trimmed.substringBefore(" - ").substringBefore(" – ").trim()
-                    if (firstPart.isNotBlank() && firstPart != trimmed) {
-                        val fallbackDeezer = searchCoversFromDeezer(firstPart, type)
-                        val fallbackITunes = searchCoversFromITunes(firstPart, type)
-                        for (item in fallbackDeezer + fallbackITunes) {
-                            if (seenUrls.add(item.coverUrl)) {
-                                combined.add(item)
-                            }
-                        }
-                    }
-                }
-
-                combined
             }
+
+            // Last resort fallback
+            searchCoversFromITunes(trimmed, type)
         }
     }
 

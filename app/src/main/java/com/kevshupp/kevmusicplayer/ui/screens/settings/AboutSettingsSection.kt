@@ -201,16 +201,20 @@ fun AboutSettingsSection(
     }
 
     // Acerca de la Aplicación & Actualizaciones (About & GitHub Updates Card)
-    Column {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
         Text(
             text = getLocalized("INFORMACIÓN Y ACTUALIZACIONES", "ABOUT & UPDATES"),
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
             letterSpacing = 1.sp,
-            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
+            modifier = Modifier.padding(start = 8.dp)
         )
 
+        // 1. Main App Identity & Update Card
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
@@ -249,32 +253,32 @@ fun AboutSettingsSection(
 
                 Text(
                     text = "Kev Music Player",
-                    fontSize = 20.sp,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Black,
                     color = settingsTextColor()
                 )
 
                 Text(
-                    text = getLocalized("Versión v$versionName ($buildTypeText)", "Version v$versionName ($buildTypeText)"),
+                    text = getLocalized("Versión v$versionName ($buildTypeText) • 120Hz Native", "Version v$versionName ($buildTypeText) • 120Hz Native"),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
                     text = getLocalized(
-                        "Un reproductor de música minimalista, rápido y optimizado para una navegación fluida a 120Hz.",
-                        "A minimalist, fast, and optimized music player designed for fluid 120Hz navigation."
+                        "Reproductor de música nativo de alto rendimiento, ligero y offline con interfaz moderna en Jetpack Compose y sincronización en la nube vía Google Firebase.",
+                        "High-performance, lightweight and offline native music player with modern Jetpack Compose UI and Google Firebase cloud synchronization."
                     ),
                     fontSize = 12.sp,
                     color = settingsTextMutedColor(),
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 10.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp)
                 )
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
                 // GitHub Update Button
                 Button(
@@ -295,7 +299,6 @@ fun AboutSettingsSection(
                                             val latestTag = json.optString("tag_name", "1.0")
                                             val htmlUrl = json.optString("html_url", "https://github.com/KevshuppD/KevMusicPlayer")
                                             
-                                            // Parse assets to find APK
                                             val assets = json.optJSONArray("assets")
                                             var apkUrl: String? = null
                                             if (assets != null) {
@@ -401,7 +404,7 @@ fun AboutSettingsSection(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Developer GitHub Link Button
                 OutlinedButton(
@@ -427,48 +430,247 @@ fun AboutSettingsSection(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = getLocalized("GitHub del Desarrollador", "Developer GitHub Profile"),
+                        text = getLocalized("GitHub del Desarrollador (@KevshuppD)", "Developer GitHub (@KevshuppD)"),
                         fontWeight = FontWeight.Bold,
                         color = settingsTextColor()
                     )
                 }
+            }
+        }
 
-                Spacer(modifier = Modifier.height(20.dp))
-
-                HorizontalDivider(color = settingsDividerColor())
+        // 2. Licencia y Derechos de Autor (License Card)
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = settingsCardContainerColor()),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.VerifiedUser,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = getLocalized("Licencia de Software", "Software License"),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = settingsTextColor()
+                        )
+                        Text(
+                            text = getLocalized("Código Abierto • Licencia MIT", "Open Source • MIT License"),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Used libraries tag listing
                 Text(
-                    text = getLocalized("Tecnologías Utilizadas", "Libraries & Frameworks"),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = settingsTextMutedColor(),
-                    modifier = Modifier.align(Alignment.Start)
+                    text = getLocalized(
+                        "KevMusicPlayer es un proyecto de código abierto desarrollado bajo la Licencia MIT. Tienes total libertad para usar, estudiar, modificar y compartir el código respetando los términos de autoría y atribución original.",
+                        "KevMusicPlayer is an open-source project released under the MIT License. You have complete freedom to use, study, modify, and distribute the code while preserving original copyright and attribution."
+                    ),
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    color = settingsTextMutedColor()
+                )
+            }
+        }
+
+        // 3. Privacidad y Protección de Datos (Privacy & Data Protection Card)
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = settingsCardContainerColor()),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF00E5FF).copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Security,
+                            contentDescription = null,
+                            tint = Color(0xFF00E5FF),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = getLocalized("Privacidad y Protección de Datos", "Privacy & Data Protection"),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = settingsTextColor()
+                        )
+                        Text(
+                            text = getLocalized("Arquitectura Local-First & Nube Privada", "Local-First Architecture & Private Cloud"),
+                            fontSize = 12.sp,
+                            color = Color(0xFF00E5FF),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                val privacyPoints = listOf(
+                    Triple(
+                        Icons.Rounded.Lock,
+                        getLocalized("Cero Rastreadores Comerciales", "Zero Commercial Trackers"),
+                        getLocalized("No se recopilan ni venden datos de uso, hábitos ni perfiles a empresas publicitarias o analíticas invasivas.", "No usage data, habits, or user profiles are collected or sold to advertising or invasive tracking companies.")
+                    ),
+                    Triple(
+                        Icons.Rounded.FolderShared,
+                        getLocalized("Archivos de Música 100% Locales", "100% Local Music Files"),
+                        getLocalized("Tus archivos de audio nunca se suben ni transfieren a servidores externos. Todo el procesamiento y reproducción ocurre en tu dispositivo.", "Your audio files are never uploaded or transferred to external servers. All processing and playback occurs strictly on your device.")
+                    ),
+                    Triple(
+                        Icons.Rounded.CloudQueue,
+                        getLocalized("Respaldo Cifrado en Google Firestore", "Encrypted Google Firestore Backup"),
+                        getLocalized("Las listas, letras y estadísticas se sincronizan comprimidas en GZIP únicamente bajo la ruta privada de tu cuenta de Google.", "Playlists, lyrics, and listening stats are synced with GZIP compression solely inside your private Google account path.")
+                    ),
+                    Triple(
+                        Icons.AutoMirrored.Rounded.Rule,
+                        getLocalized("Permisos Estrictamente Necesarios", "Strictly Necessary Permissions"),
+                        getLocalized("Solo se solicitan permisos de lectura multimedia de Android y notificaciones en segundo plano.", "Only Android media read permissions and background audio notification permissions are requested.")
+                    )
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    privacyPoints.forEach { (icon, title, desc) ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .padding(top = 2.dp)
+                            )
+                            Column {
+                                Text(
+                                    text = title,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = settingsTextColor()
+                                )
+                                Text(
+                                    text = desc,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp,
+                                    color = settingsTextMutedColor()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
-                @OptIn(ExperimentalLayoutApi::class)
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+        // 4. Tecnologías y Arquitectura Utilizadas (Professional Tech Stack Showcase)
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = settingsCardContainerColor()),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    listOf("Compose M3", "Media3 ExoPlayer", "Room DB", "Jaudiotagger", "OkHttp", "Coil").forEach { library ->
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFFF0055).copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Code,
+                            contentDescription = null,
+                            tint = Color(0xFFFF0055),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = getLocalized("Stack Tecnológico y Arquitectura", "Tech Stack & Architecture"),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = settingsTextColor()
+                        )
+                        Text(
+                            text = getLocalized("Ingeniería Android Moderna", "Modern Android Engineering"),
+                            fontSize = 12.sp,
+                            color = Color(0xFFFF0055),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                val techCards = listOf(
+                    Pair("Jetpack Compose & Material 3", getLocalized("Interfaz declarativa reactiva con diseño Glassmorphism y soporte de tasa de refresco a 120Hz.", "Reactive declarative UI with Glassmorphism design and 120Hz refresh rate support.")),
+                    Pair("AndroidX Media3 ExoPlayer", getLocalized("Servicio multimedia de baja latencia con reproducción en segundo plano y control de notificaciones.", "Low-latency multimedia service with background playback and notification controls.")),
+                    Pair("DSP Audio FX Processing", getLocalized("Ecualizador de 5 bandas, refuerzo de graves (Bass Boost), sonido virtualizado y normalización ReplayGain.", "5-band equalizer, Bass Boost, Virtualizer surround sound, and ReplayGain normalization.")),
+                    Pair("Room SQLite Database", getLocalized("Almacenamiento local indexado para búsqueda instantánea en colecciones de miles de canciones.", "Indexed local storage for instant search across collections of thousands of songs.")),
+                    Pair("Google Firebase Cloud Services", getLocalized("Autenticación con Google Play Services y respaldos NoSQL comprimidos en Cloud Firestore.", "Google Play Services authentication and GZIP compressed NoSQL backups on Cloud Firestore.")),
+                    Pair("Jaudiotagger & Mp3agic", getLocalized("Edición física de etiquetas ID3v1/v2, FLAC, Vorbis y MP4 sin alterar la fidelidad sonora.", "Physical tag editing for ID3v1/v2, FLAC, Vorbis, and MP4 without altering sound fidelity.")),
+                    Pair("Coil & Multi-Level Art Cache", getLocalized("Caché en 5 niveles (RAM LruCache + WebP en disco + aceleración MediaStore por hardware).", "5-tier cache hierarchy (RAM LruCache + WebP on disk + hardware MediaStore thumbnails).")),
+                    Pair("Deezer API & OkHttp", getLocalized("Búsqueda y descarga de carátulas en ultra alta definición (1000x1000) y letras sincronizadas LRC.", "Ultra high-resolution cover search (1000x1000) and synchronized LRC lyrics fetching."))
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    techCards.forEach { (techName, techDesc) ->
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(settingsDividerColor())
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(settingsDividerColor().copy(alpha = 0.5f))
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
                         ) {
-                            Text(
-                                text = library,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = settingsTextMutedColor()
-                            )
+                            Column {
+                                Text(
+                                    text = techName,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = techDesc,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp,
+                                    color = settingsTextMutedColor()
+                                )
+                            }
                         }
                     }
                 }

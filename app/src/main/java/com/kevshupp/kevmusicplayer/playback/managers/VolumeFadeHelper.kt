@@ -145,15 +145,8 @@ class VolumeFadeHelper(
             TelemetryLogger.logInfo(
                 context,
                 "Playback_Volume",
-                "Performing manual skip (next=$next). Current volume: ${player.volume}"
+                "Performing instant manual skip (next=$next)"
             )
-            val fadeOutSteps = 10
-            val originalVolume = player.volume
-            for (i in fadeOutSteps downTo 0) {
-                player.volume = (i.toFloat() / fadeOutSteps) * originalVolume
-                delay(30)
-            }
-
             if (next) {
                 if (player.hasNextMediaItem()) {
                     player.seekToNextMediaItem()
@@ -170,12 +163,6 @@ class VolumeFadeHelper(
                         player.play()
                     }
                 }
-            }
-
-            player.volume = 0f
-            for (i in 1..fadeOutSteps) {
-                delay(30)
-                player.volume = (i.toFloat() / fadeOutSteps) * gainFactor
             }
             player.volume = gainFactor
             TelemetryLogger.logInfo(

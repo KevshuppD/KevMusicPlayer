@@ -169,7 +169,7 @@ class PlaybackService : MediaLibraryService() {
                 applyReplayGain(mediaItem)
 
                 val sessionId = player.audioSessionId
-                if (sessionId != 0) {
+                if (sessionId != 0 && audioEffectsManager.currentAudioSessionId != sessionId) {
                     TelemetryLogger.logInfo(
                         this@PlaybackService,
                         "Playback_Transition",

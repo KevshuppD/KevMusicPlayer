@@ -26,6 +26,8 @@ object ArtistImageHelper {
     private val failedArtists = ConcurrentHashMap<String, Long>()
     private const val FAILED_RETRY_INTERVAL_MS = 60_000L // Retry after 1 minute
 
+    private const val BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
     private val ignoredArtistNames = setOf(
         "unknown", "<unknown>", "unknown artist", "artista desconocido", "desconocido",
         "varios artistas", "various artists", "various", "soundtrack", "ost", "va", "v.a.",
@@ -83,13 +85,27 @@ object ArtistImageHelper {
     }
 
     fun getArtistImageFile(context: Context, artist: String): File {
-        val sanitized = artist.lowercase()
-            .replace(Regex("[^a-z0-9_]"), "_")
-            .replace(Regex("_+"), "_")
-            .trim('_')
         val dir = File(context.filesDir, "artist_images")
         if (!dir.exists()) dir.mkdirs()
-        return File(dir, "$sanitized.jpg")
+
+        val cleanBase = cleanArtistSearchName(artist) ?: artist.trim()
+        val slug = cleanBase.lowercase()
+            .stripAccents()
+            .replace(Regex("[^a-z0-9]"), "_")
+            .replace(Regex("_+"), "_")
+            .trim('_')
+            .take(24)
+
+        val hash = try {
+            val md5 = java.security.MessageDigest.getInstance("MD5")
+            val bytes = md5.digest(artist.trim().lowercase().toByteArray())
+            bytes.joinToString("") { "%02x".format(it) }.take(8)
+        } catch (e: Exception) {
+            artist.trim().hashCode().toString().replace("-", "n")
+        }
+
+        val fileName = if (slug.isNotEmpty()) "${slug}_$hash.jpg" else "art_$hash.jpg"
+        return File(dir, fileName)
     }
 
     fun deleteArtistImage(context: Context, artist: String): Boolean {
@@ -138,10 +154,6 @@ object ArtistImageHelper {
                     pictureUrl = searchDeezerTrackArtistPicture(cleanSearch)
                 }
 
-                if (pictureUrl.isNullOrEmpty()) {
-                    pictureUrl = searchItunesArtistPicture(cleanSearch)
-                }
-
                 if (!pictureUrl.isNullOrEmpty()) {
                     val downloaded = downloadImageToDisk(pictureUrl, localFile)
                     if (downloaded) {
@@ -162,13 +174,20 @@ object ArtistImageHelper {
         }
     }
 
+    private fun isValidPictureUrl(pic: String): Boolean {
+        if (pic.isBlank()) return false
+        if (pic.contains("default-artist") || pic.contains("avatar") || pic.contains("d41d8cd98f00b204e9800998ecf8427e")) return false
+        if (pic.endsWith("/500x500-000000-80-0-0.jpg") || pic.endsWith("/250x250-000000-80-0-0.jpg") || pic.contains("/images/artist//")) return false
+        return true
+    }
+
     private fun searchDeezerArtistPicture(cleanSearch: String): String? {
         return try {
             val encodedQuery = URLEncoder.encode(cleanSearch, "UTF-8")
             val url = "https://api.deezer.com/search/artist?q=$encodedQuery&limit=10"
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "KevMusicPlayer/1.5.6")
+                .header("User-Agent", BROWSER_USER_AGENT)
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -200,7 +219,7 @@ object ArtistImageHelper {
                         }
                     }
 
-                    if (pic.isNotEmpty() && !pic.contains("default-artist") && !pic.contains("avatar") && !pic.endsWith("/500x500-000000-80-0-0.jpg") && !pic.contains("/images/artist//")) {
+                    if (isValidPictureUrl(pic)) {
                         if (isExactMatch || isAlphaMatch) {
                             return pic
                         }
@@ -220,11 +239,11 @@ object ArtistImageHelper {
 
     private fun searchDeezerTrackArtistPicture(cleanSearch: String): String? {
         return try {
-            val encodedQuery = URLEncoder.encode("artist:\"$cleanSearch\"", "UTF-8")
-            val url = "https://api.deezer.com/search?q=$encodedQuery&limit=5"
+            val encodedQuery = URLEncoder.encode(cleanSearch, "UTF-8")
+            val url = "https://api.deezer.com/search?q=$encodedQuery&limit=8"
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "KevMusicPlayer/1.5.6")
+                .header("User-Agent", BROWSER_USER_AGENT)
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -241,7 +260,7 @@ object ArtistImageHelper {
                             artistObj.optString("picture_medium", "")
                         }
                     }
-                    if (pic.isNotEmpty() && !pic.contains("default-artist") && !pic.contains("/images/artist//")) {
+                    if (isValidPictureUrl(pic)) {
                         return pic
                     }
                 }
