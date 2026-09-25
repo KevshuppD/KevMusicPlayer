@@ -27,6 +27,10 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.mp3.Mp3Extractor
+import androidx.media3.extractor.ts.AdtsExtractor
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
@@ -128,8 +132,19 @@ class PlaybackService : MediaLibraryService() {
 
         val settingsPrefs = PreferenceConstants.getSettingsPrefs(this)
         val pauseOnNoisy = settingsPrefs.getBoolean(PreferenceConstants.KEY_PAUSE_ON_HEADPHONE_UNPLUG, true)
+        val extractorsFactory = DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+            .setMp3ExtractorFlags(
+                Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING or Mp3Extractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING
+            )
+            .setAdtsExtractorFlags(
+                AdtsExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING
+            )
+
+        val mediaSourceFactory = DefaultMediaSourceFactory(this, extractorsFactory)
 
         val player = ExoPlayer.Builder(this, renderersFactory)
+            .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -177,6 +192,22 @@ class PlaybackService : MediaLibraryService() {
                     )
                     audioEffectsManager.setupAudioEffects(sessionId)
                 }
+
+                if (mediaItem != null && reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
+                    val songId = mediaItem.mediaId.toLongOrNull()
+                    if (songId != null) {
+                        val now = System.currentTimeMillis()
+                        serviceScope.launch(Dispatchers.IO) {
+                            try {
+                                val database = AppDatabase.getDatabase(this@PlaybackService)
+                                database.audioDao().incrementPlayCount(songId, now)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
+                }
+
                 savePlaybackState(player)
             }
 

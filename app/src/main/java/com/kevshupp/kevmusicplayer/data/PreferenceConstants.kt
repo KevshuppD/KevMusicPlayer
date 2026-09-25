@@ -31,6 +31,14 @@ object PreferenceConstants {
     const val KEY_AUTO_DOWNLOAD_ARTIST_IMAGES = "auto_download_artist_images"
     const val KEY_AUTO_DOWNLOAD_LYRICS = "auto_download_lyrics"
 
+    // Cloud Sync Keys
+    const val KEY_CLOUD_AUTO_SYNC_MODE = "cloud_auto_sync_mode" // "realtime", "on_exit", "daily", "manual"
+    const val KEY_CLOUD_SYNC_WIFI_ONLY = "cloud_sync_wifi_only"
+    const val KEY_CLOUD_SYNC_INCLUDE_PLAYLISTS = "cloud_sync_include_playlists"
+    const val KEY_CLOUD_SYNC_INCLUDE_LYRICS = "cloud_sync_include_lyrics"
+    const val KEY_CLOUD_SYNC_INCLUDE_STATS = "cloud_sync_include_stats"
+    const val KEY_CLOUD_SYNC_INCLUDE_SETTINGS = "cloud_sync_include_settings"
+
     // Playback Keys
     const val KEY_LAST_SHUFFLE_ENABLED = "last_shuffle_enabled"
     const val KEY_LAST_SONG_ID = "last_song_id"

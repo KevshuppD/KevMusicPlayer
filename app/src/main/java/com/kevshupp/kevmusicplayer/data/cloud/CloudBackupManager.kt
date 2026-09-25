@@ -45,16 +45,22 @@ class CloudBackupManager(
     /**
      * Exports current app state (settings, playlists, lyrics, stats) as a UTF-8 JSON String.
      */
-    suspend fun generateBackupPayload(): String = withContext(Dispatchers.IO) {
+    suspend fun generateBackupPayload(
+        includeSettings: Boolean = true,
+        includeEqualizer: Boolean = true,
+        includePlaylists: Boolean = true,
+        includeLyrics: Boolean = true,
+        includeStatistics: Boolean = true
+    ): String = withContext(Dispatchers.IO) {
         val out = ByteArrayOutputStream()
         backupManager.exportBackup(
             context = context,
             outputStream = out,
-            includeSettings = true,
-            includeEqualizer = true,
-            includePlaylists = true,
-            includeLyrics = true,
-            includeStatistics = true
+            includeSettings = includeSettings,
+            includeEqualizer = includeEqualizer,
+            includePlaylists = includePlaylists,
+            includeLyrics = includeLyrics,
+            includeStatistics = includeStatistics
         )
         out.toString(Charsets.UTF_8.name())
     }
@@ -72,7 +78,13 @@ class CloudBackupManager(
      */
     suspend fun uploadBackupToCloud(user: CloudUser): Result<Long> = withContext(Dispatchers.IO) {
         try {
-            val payload = generateBackupPayload()
+            val payload = generateBackupPayload(
+                includeSettings = user.includeSettings,
+                includeEqualizer = user.includeSettings,
+                includePlaylists = user.includePlaylists,
+                includeLyrics = user.includeLyrics,
+                includeStatistics = user.includeStats
+            )
             val timestamp = System.currentTimeMillis()
             val compressedPayload = compressGzip(payload)
 

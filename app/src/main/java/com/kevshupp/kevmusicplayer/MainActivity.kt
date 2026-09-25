@@ -221,7 +221,7 @@ fun AppNavigation() {
                     }
                 }
                 androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
-                    viewModel.triggerAutoSync(debounceMs = 0L)
+                    viewModel.triggerAutoSync(debounceMs = 0L, trigger = com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.ON_EXIT)
                     val activity = context.findActivity()
                     if (activity == null || !activity.isChangingConfigurations) {
                         viewModel.disconnect()
@@ -233,7 +233,7 @@ fun AppNavigation() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            viewModel.triggerAutoSync(debounceMs = 0L)
+            viewModel.triggerAutoSync(debounceMs = 0L, trigger = com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.ON_EXIT)
             val activity = context.findActivity()
             if (activity == null || !activity.isChangingConfigurations) {
                 viewModel.disconnect()

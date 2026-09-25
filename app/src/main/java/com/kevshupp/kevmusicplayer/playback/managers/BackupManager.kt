@@ -422,6 +422,7 @@ class BackupManager(
         }
 
         // 3. Restore cached songs (lyrics and translatedLyrics)
+        val restoredLyricsMap = mutableMapOf<Long, Pair<String?, String?>>()
         if (json.has("cached_songs")) {
             val cachedSongsArray = json.getJSONArray("cached_songs")
             for (i in 0 until cachedSongsArray.length()) {
@@ -432,6 +433,7 @@ class BackupManager(
                     val lyrics = if (songJson.has("lyrics") && !songJson.isNull("lyrics")) songJson.getString("lyrics") else null
                     val translatedLyrics = if (songJson.has("translatedLyrics") && !songJson.isNull("translatedLyrics")) songJson.getString("translatedLyrics") else null
 
+                    restoredLyricsMap[newId] = Pair(lyrics, translatedLyrics)
                     audioDao.updateLyrics(newId, lyrics)
                     audioDao.updateTranslatedLyrics(newId, translatedLyrics)
                 }
@@ -461,6 +463,13 @@ class BackupManager(
 
                 if (localSong != null) {
                     var updated = localSong
+                    val cachedLyrics = restoredLyricsMap[updated.id]
+                    if (cachedLyrics != null) {
+                        updated = updated.copy(
+                            lyrics = cachedLyrics.first,
+                            translatedLyrics = cachedLyrics.second
+                        )
+                    }
                     if (songJson.has("playCount")) {
                         updated = updated.copy(playCount = songJson.getInt("playCount"))
                     }

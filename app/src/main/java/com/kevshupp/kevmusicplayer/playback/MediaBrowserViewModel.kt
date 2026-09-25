@@ -233,6 +233,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 })
 
                 restorePlaybackState()
+                refreshStatsFromDb()
                 scanFiles()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -1058,9 +1059,30 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     private var autoSyncJob: kotlinx.coroutines.Job? = null
 
-    fun triggerAutoSync(debounceMs: Long = 4000L) {
+    fun triggerAutoSync(
+        debounceMs: Long = 4000L,
+        trigger: com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger = com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.REALTIME
+    ) {
         val user = cloudUser.value ?: return
         if (!user.isAutoSyncEnabled) return
+
+        // Validate trigger against configured autoSyncMode
+        when (trigger) {
+            com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.REALTIME -> {
+                if (user.autoSyncMode != "realtime") return
+            }
+            com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.ON_EXIT -> {
+                if (user.autoSyncMode == "manual") return
+            }
+            com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.PERIODIC -> {
+                if (user.autoSyncMode != "daily" && user.autoSyncMode != "realtime") return
+            }
+        }
+
+        // Wi-Fi only check
+        if (user.syncWifiOnly && !com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.isWifiConnected(getApplication())) {
+            return
+        }
 
         autoSyncJob?.cancel()
         autoSyncJob = viewModelScope.launch(Dispatchers.IO) {
@@ -1081,6 +1103,30 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         if (enabled) {
             triggerAutoSync(debounceMs = 0L)
         }
+    }
+
+    fun setCloudAutoSyncMode(context: Context, mode: String) {
+        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.setAutoSyncMode(context, mode)
+    }
+
+    fun setCloudSyncWifiOnly(context: Context, wifiOnly: Boolean) {
+        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.setSyncWifiOnly(context, wifiOnly)
+    }
+
+    fun setCloudSyncIncludePlaylists(context: Context, include: Boolean) {
+        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.setIncludePlaylists(context, include)
+    }
+
+    fun setCloudSyncIncludeLyrics(context: Context, include: Boolean) {
+        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.setIncludeLyrics(context, include)
+    }
+
+    fun setCloudSyncIncludeStats(context: Context, include: Boolean) {
+        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.setIncludeStats(context, include)
+    }
+
+    fun setCloudSyncIncludeSettings(context: Context, include: Boolean) {
+        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.setIncludeSettings(context, include)
     }
 
     fun uploadCloudBackup(
@@ -1242,35 +1288,63 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun incrementSongPlayCount(id: Long) {
+        val now = System.currentTimeMillis()
+        val index = localAudioFiles.indexOfFirst { it.id == id }
+        if (index != -1) {
+            val currentSong = localAudioFiles[index]
+            localAudioFiles[index] = currentSong.copy(
+                playCount = currentSong.playCount + 1,
+                lastPlayed = now
+            )
+        }
+        
+        playlists.keys.toList().forEach { playlistName ->
+            val list = playlists[playlistName] ?: emptyList()
+            val pIndex = list.indexOfFirst { it.id == id }
+            if (pIndex != -1) {
+                val newList = list.toMutableList()
+                newList[pIndex] = newList[pIndex].copy(
+                    playCount = newList[pIndex].playCount + 1,
+                    lastPlayed = now
+                )
+                playlists[playlistName] = newList
+            }
+        }
+
+        updateSmartPlaylists()
+        triggerAutoSync(debounceMs = 30000L)
+
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val now = System.currentTimeMillis()
                 audioDao.incrementPlayCount(id, now)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun refreshStatsFromDb() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val lightweight = audioDao.getAllAudioFilesLightweight()
+                if (lightweight.isEmpty()) return@launch
+                val dbMap = lightweight.associateBy { it.id }
                 withContext(Dispatchers.Main) {
-                    val index = localAudioFiles.indexOfFirst { it.id == id }
-                    if (index != -1) {
-                        val currentSong = localAudioFiles[index]
-                        localAudioFiles[index] = currentSong.copy(
-                            playCount = currentSong.playCount + 1,
-                            lastPlayed = now
-                        )
-                    }
-                    
-                    playlists.keys.toList().forEach { playlistName ->
-                        val list = playlists[playlistName] ?: emptyList()
-                        val pIndex = list.indexOfFirst { it.id == id }
-                        if (pIndex != -1) {
-                            val newList = list.toMutableList()
-                            newList[pIndex] = newList[pIndex].copy(
-                                playCount = newList[pIndex].playCount + 1,
-                                lastPlayed = now
+                    var hasChanges = false
+                    for (i in localAudioFiles.indices) {
+                        val current = localAudioFiles[i]
+                        val dbEntry = dbMap[current.id]
+                        if (dbEntry != null && (dbEntry.playCount != current.playCount || dbEntry.lastPlayed != current.lastPlayed)) {
+                            localAudioFiles[i] = current.copy(
+                                playCount = dbEntry.playCount,
+                                lastPlayed = dbEntry.lastPlayed
                             )
-                            playlists[playlistName] = newList
+                            hasChanges = true
                         }
                     }
-
-                    updateSmartPlaylists()
-                    triggerAutoSync(debounceMs = 30000L)
+                    if (hasChanges) {
+                        updateSmartPlaylists()
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -1410,7 +1484,14 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         coverBytes: ByteArray? = null,
         onSuccess: () -> Unit,
         onError: (Exception) -> Unit
-    ) = tagEditorManager.updateSongMetadata(context, songId, title, artist, album, genre, coverBytes, onSuccess, onError)
+    ) = tagEditorManager.updateSongMetadata(
+        context, songId, title, artist, album, genre, coverBytes,
+        onSuccess = {
+            triggerAutoSync()
+            onSuccess()
+        },
+        onError = onError
+    )
 
     fun updateAlbumCover(
         context: Context,
@@ -1419,7 +1500,14 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         targetSongIds: List<Long>? = null,
         onSuccess: () -> Unit,
         onError: (Exception) -> Unit
-    ) = tagEditorManager.updateAlbumCover(context, albumName, coverBytes, targetSongIds, onSuccess, onError)
+    ) = tagEditorManager.updateAlbumCover(
+        context, albumName, coverBytes, targetSongIds,
+        onSuccess = {
+            triggerAutoSync()
+            onSuccess()
+        },
+        onError = onError
+    )
 
     fun updateAlbumMetadata(
         context: Context,
@@ -1428,7 +1516,13 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         newAlbumName: String,
         newArtist: String,
         onSuccess: () -> Unit
-    ) = tagEditorManager.updateAlbumMetadata(context, oldAlbumName, songs, newAlbumName, newArtist, onSuccess)
+    ) = tagEditorManager.updateAlbumMetadata(
+        context, oldAlbumName, songs, newAlbumName, newArtist,
+        onSuccess = {
+            triggerAutoSync()
+            onSuccess()
+        }
+    )
 
     fun updateAlbumMetadata(
         context: Context,
@@ -1438,7 +1532,14 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         coverBytes: ByteArray? = null,
         onSuccess: () -> Unit,
         onError: (Exception) -> Unit
-    ) = tagEditorManager.updateAlbumMetadata(context, oldAlbumName, newAlbumName, newArtist, coverBytes, onSuccess, onError)
+    ) = tagEditorManager.updateAlbumMetadata(
+        context, oldAlbumName, newAlbumName, newArtist, coverBytes,
+        onSuccess = {
+            triggerAutoSync()
+            onSuccess()
+        },
+        onError = onError
+    )
 
     fun renameSongFilesToMetadata(
         context: Context,

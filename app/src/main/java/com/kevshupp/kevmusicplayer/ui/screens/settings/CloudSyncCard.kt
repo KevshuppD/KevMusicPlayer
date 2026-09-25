@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -300,7 +301,7 @@ fun CloudSyncCard(
                     )
                 }
 
-                // Auto sync switch
+                // Auto sync main switch
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
@@ -313,7 +314,17 @@ fun CloudSyncCard(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = getLocalized("Sube tus cambios al editar listas o salir", "Uploads changes when editing playlists or closing"),
+                            text = if (user.isAutoSyncEnabled) {
+                                when (user.autoSyncMode) {
+                                    "realtime" -> getLocalized("Sincroniza en tiempo real y al salir", "Syncs in real-time and on exit")
+                                    "on_exit" -> getLocalized("Sincroniza solo al cerrar o salir", "Syncs only on close or exit")
+                                    "daily" -> getLocalized("Sincroniza periódicamente cada día", "Syncs periodically once a day")
+                                    "manual" -> getLocalized("Solo sincroniza manualmente", "Only syncs manually")
+                                    else -> getLocalized("Sincronización activada", "Auto sync enabled")
+                                }
+                            } else {
+                                getLocalized("Sincronización automática desactivada", "Auto sync disabled")
+                            },
                             fontSize = 11.sp,
                             color = settingsTextMutedColor()
                         )
@@ -325,6 +336,215 @@ fun CloudSyncCard(
                             viewModel.setCloudAutoSync(context, enabled)
                         }
                     )
+                }
+
+                // Advanced sync options when auto-sync is enabled
+                AnimatedVisibility(visible = user.isAutoSyncEnabled) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Modo de sincronización (Segmented chips)
+                        Text(
+                            text = getLocalized("Modo de sincronización", "Sync Mode"),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                        )
+
+                        val syncModes = listOf(
+                            Triple("realtime", getLocalized("Tiempo Real", "Real-Time"), Icons.Rounded.Sync),
+                            Triple("on_exit", getLocalized("Al Salir", "On Exit"), Icons.AutoMirrored.Rounded.ExitToApp),
+                            Triple("daily", getLocalized("Diario", "Daily"), Icons.Rounded.Today),
+                            Triple("manual", getLocalized("Manual", "Manual"), Icons.Rounded.TouchApp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            syncModes.forEach { (modeKey, modeTitle, modeIcon) ->
+                                val isSelected = user.autoSyncMode == modeKey
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (isSelected) {
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                    },
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { viewModel.setCloudAutoSyncMode(context, modeKey) }
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = modeIcon,
+                                            contentDescription = null,
+                                            tint = if (isSelected) MaterialTheme.colorScheme.primary else settingsTextMutedColor(),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = modeTitle,
+                                            fontSize = 10.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Wi-Fi Only Switch
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (user.syncWifiOnly) Icons.Rounded.Wifi else Icons.Rounded.WifiOff,
+                                    contentDescription = null,
+                                    tint = if (user.syncWifiOnly) MaterialTheme.colorScheme.primary else settingsTextMutedColor(),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = getLocalized("Solo con Wi-Fi", "Wi-Fi Only"),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = getLocalized("No usar datos móviles para subir copias", "Don't use mobile data for backups"),
+                                        fontSize = 10.sp,
+                                        color = settingsTextMutedColor()
+                                    )
+                                }
+                                Switch(
+                                    checked = user.syncWifiOnly,
+                                    onCheckedChange = { viewModel.setCloudSyncWifiOnly(context, it) }
+                                )
+                            }
+                        }
+
+                        // Granular content selection
+                        var isContentExpanded by remember { mutableStateOf(false) }
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { isContentExpanded = !isContentExpanded },
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Layers,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = getLocalized("Contenido a sincronizar", "Content to sync"),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(
+                                        imageVector = if (isContentExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                                        contentDescription = null,
+                                        tint = settingsTextMutedColor(),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
+                                AnimatedVisibility(visible = isContentExpanded) {
+                                    Column(
+                                        modifier = Modifier.padding(top = 10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        // Playlists & Favorites
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Rounded.QueueMusic, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(getLocalized("Playlists y Favoritos", "Playlists & Favorites"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                                            Checkbox(
+                                                checked = user.includePlaylists,
+                                                onCheckedChange = { viewModel.setCloudSyncIncludePlaylists(context, it) }
+                                            )
+                                        }
+
+                                        // Lyrics & Translations
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Rounded.Lyrics, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(getLocalized("Letras y Traducciones", "Lyrics & Translations"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                                            Checkbox(
+                                                checked = user.includeLyrics,
+                                                onCheckedChange = { viewModel.setCloudSyncIncludeLyrics(context, it) }
+                                            )
+                                        }
+
+                                        // Statistics & History
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Rounded.Leaderboard, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(getLocalized("Estadísticas e Historial", "Statistics & History"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                                            Checkbox(
+                                                checked = user.includeStats,
+                                                onCheckedChange = { viewModel.setCloudSyncIncludeStats(context, it) }
+                                            )
+                                        }
+
+                                        // Settings & Equalizer
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Rounded.Tune, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(getLocalized("Ajustes y Ecualizador", "Settings & Equalizer"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                                            Checkbox(
+                                                checked = user.includeSettings,
+                                                onCheckedChange = { viewModel.setCloudSyncIncludeSettings(context, it) }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Action buttons (Upload / Restore)
