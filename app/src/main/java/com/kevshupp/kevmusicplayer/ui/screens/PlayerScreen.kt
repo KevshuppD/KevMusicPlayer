@@ -179,6 +179,7 @@ fun PlayerScreen(
     }
 
     var showEditLyricsDialog by remember { mutableStateOf(false) }
+    var showShareClipDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showTagEditorDialog by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
@@ -1472,6 +1473,33 @@ fun PlayerScreen(
                         HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(bottom = 6.dp))
                     }
 
+                    // 0. Crear fragmento en video / Compartir historia
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                                .clickable {
+                                    showMoreOptions = false
+                                    showShareClipDialog = true
+                                }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.MovieFilter, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column {
+                                Text("Crear fragmento en video", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text("Exporta un clip con música y letra para historias", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    item {
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp))
+                    }
+
                     // 1. Guardar cola de reproducción
                     item {
                         Row(
@@ -2240,6 +2268,23 @@ fun PlayerScreen(
                 mediaId = playerState.currentSong?.mediaId,
                 context = context,
                 onDismiss = { showFileInfoDialog = false }
+            )
+        }
+
+        // Share Video Clip Story Dialog
+        if (showShareClipDialog && currentSongUriString != null) {
+            val songDur = if (player.duration > 0) player.duration else (currentSongFile?.duration ?: 0L)
+            ShareClipDialog(
+                songTitle = title,
+                artistName = artist,
+                albumTitle = playerState.currentSong?.mediaMetadata?.albumTitle?.toString(),
+                songDurationMs = songDur,
+                currentPositionMs = player.currentPosition,
+                audioUriString = currentSongUriString,
+                albumArtBitmap = artBytes,
+                lyrics = lyricsText,
+                translatedLyrics = translatedLyricLines ?: LyricsRepository.deserializeTranslations(currentSongFile?.translatedLyrics),
+                onDismiss = { showShareClipDialog = false }
             )
         }
     }

@@ -16,6 +16,7 @@ Este documento es la **Fuente Única de Verdad (Single Source of Truth)** para e
 6. **Mantenimiento y Diagnóstico:** Herramientas integradas para detectar canciones duplicadas por hash/metadatos, verificar integridad de archivos corruptos, filtrar audios cortos (audios de WhatsApp/tonos) y descargar carátulas faltantes en HD desde Deezer API.
 7. **KevMusic Wrapped (Historias Estilo Spotify Wrapped):** Resumen estadístico interactivo a pantalla completa con barras de progreso animadas, aura sonora, hábitos de escucha, arquetipos de personalidad y póster final exportable en PNG.
 8. **Personalización Estética Neo-Glow / Glassmorphism:** Temas visuales (*Cyberpunk Rosa, Cyberpunk Púrpura, Azul Petróleo, Turquesa, Obsidiana AMOLED y Monocromo*), soporte de transparencia Glassmorphism en barra de navegación y tarjetas, fondo ambiental dinámico basado en los colores de la carátula, visualizador animado (FFT) y selector de tasa de refresco a **120 Hz**.
+9. **Generador y Exportador de Clips de Video (Music Story / Reel):** Renderizado acelerado por hardware (`MediaCodec` H.264 + AAC + `MediaMuxer`) para exportar fragmentos de video (9:16 vertical o 1:1 cuadrado) con música, letras sincronizadas animadas, ondas de audio y carátula con vinilo girando directamente a WhatsApp, Instagram Stories, TikTok o galería.
 
 ---
 
@@ -85,6 +86,7 @@ com/kevshupp/kevmusicplayer/
 │       ├── PlaylistManager.kt           # Creación y persistencia de listas de reproducción
 │       ├── TagEditorManager.kt          # Edición física de etiquetas ID3 y metadatos
 │       ├── StorageToolsManager.kt       # Diagnóstico de duplicados, audios cortos e integridad
+│       ├── VideoClipGenerator.kt        # Generador de videos MP4 con audio, letra sincronizada y visualizador
 │       └── BackupManager.kt             # Exportación e importación de copias de seguridad locales
 │
 ├── widget/                              # Widgets del Sistema Android
@@ -103,6 +105,7 @@ com/kevshupp/kevmusicplayer/
     │   ├── BottomNavBar.kt              # Barra de navegación flotante y Mini-Reproductor Glassmorphism
     │   ├── LibraryComponents.kt         # Componentes reutilizables, rememberAlbumArt, ArtistImage y LruCache
     │   ├── dialogs/                     # Diálogos modales
+    │   │   ├── ShareClipDialog.kt       # Selector y generador interactivo de fragmentos en video con letras
     │   │   ├── UserProfileDialog.kt     # Perfil de usuario, cambio de foto y estado de la nube
     │   │   ├── TagEditorDialog.kt       # Editor avanzado de etiquetas de canciones
     │   │   ├── AlbumEditorDialog.kt     # Editor de álbumes y carátulas
@@ -208,6 +211,19 @@ sequenceDiagram
 ### F. Filosofía de Privacidad y Licencia
 - **Licencia:** Distribuido bajo la Licencia **MIT (Código Abierto)**.
 - **Privacidad Local-First:** Cero recopilación o venta de datos de telemetría a terceros. Todo el catálogo de canciones reside 100% en el dispositivo del usuario.
+
+### G. Generador de Historias en Video (Music Story / Reel / Dedicatorias)
+- **Motor de Renderizado Nativo:** Basado en `MediaCodec` (Codificador de video H.264 / AVC a 720p 30 FPS + Transcodificación de audio PCM a AAC 192 kbps estéreo a 44.1 kHz) e intercalado monótono de muestras en `MediaMuxer`.
+- **3 Estilos Visuales Auténticos:**
+  1. *Letras (Spotify Lyrics Card):* Tarjeta de vidrio esmerilado con tipografía bold, resaltado lumínico de la estrofa en reproducción y badge inferior de canción.
+  2. *Canvas (Apple Music Style):* Carátula principal en gran tamaño con sombra 3D, ondas de audio animadas reactivas y cita de la estrofa activa.
+  3. *Vinilo (Vinyl Vibes):* Disco de vinilo con surcos concéntricos realistas que gira en sincronía saliendo del estuche del álbum.
+- **Selección de Letras Flexible y Sincronizada:** Selección por toque de estrofas (inicio/fin) con límite inteligente de 60 segundos y salto directo a cualquier minuto de la pista.
+- **Subtítulos Bilingües / Traducción:** Renderizado automático de traducciones debajo de las líneas originales si la canción tiene traducción guardada.
+- **Dedicatorias y Mensajes Personalizados:**
+  - Insignia flotante superior en el video (`💌 [Mensaje / Dedicatoria]`).
+  - Formateo automático de texto personalizado al compartir mediante `Intent.ACTION_SEND` a WhatsApp, Instagram, Telegram o TikTok.
+- **Formatos:** 9:16 (Historias/Reels/TikTok) y 1:1 (Feed/Chats) con fondo de color ambiental orgánico extraído de la carátula (`androidx.palette.graphics.Palette`) o Negro Puro AMOLED.
 
 ---
 
