@@ -789,6 +789,22 @@ fun formatDuration(ms: Long): String {
     }
 }
 
+/**
+ * Library length of each song by media id. ExoPlayer only knows a track's duration once it has prepared it, so
+ * right after a skip the player would show 0:00 for a moment; the library already has the value.
+ */
+object KnownSongDurations {
+    @Volatile
+    var lookup: (String) -> Long = { 0L }
+}
+
+private fun playerDurationOrKnown(player: Player): Long {
+    val duration = player.duration
+    if (duration > 0L) return duration
+    val mediaId = player.currentMediaItem?.mediaId ?: return 0L
+    return KnownSongDurations.lookup(mediaId).coerceAtLeast(0L)
+}
+
 @Composable
 fun rememberPlayerState(player: Player?): PlayerStateInfo {
     val state = remember(player) { PlayerStateInfo(player) }
@@ -816,7 +832,7 @@ fun rememberPlayerState(player: Player?): PlayerStateInfo {
         if (player == null || !isPlaying) return@LaunchedEffect
         while (true) {
             state.position = player.currentPosition
-            state.duration = player.duration.coerceAtLeast(0L)
+            state.duration = playerDurationOrKnown(player)
             delay(500)
         }
     }
@@ -837,7 +853,7 @@ class PlayerStateInfo(player: Player?) {
         internal set
     var position by mutableLongStateOf(player?.currentPosition ?: 0L)
         internal set
-    var duration by mutableLongStateOf(player?.duration?.coerceAtLeast(0L) ?: 0L)
+    var duration by mutableLongStateOf(player?.let { playerDurationOrKnown(it) } ?: 0L)
         internal set
     var shuffleModeEnabled by mutableStateOf(player?.shuffleModeEnabled ?: false)
         internal set
@@ -852,7 +868,7 @@ class PlayerStateInfo(player: Player?) {
         isPlaying = player.isPlaying
         currentSong = player.currentMediaItem
         position = player.currentPosition
-        duration = player.duration.coerceAtLeast(0L)
+        duration = playerDurationOrKnown(player)
         shuffleModeEnabled = player.shuffleModeEnabled
         mediaItemCount = player.mediaItemCount
         currentMediaItemIndex = player.currentMediaItemIndex

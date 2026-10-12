@@ -181,6 +181,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }.flow.cachedIn(viewModelScope)
 
     init {
+        // Lets the player UI show a song's length before ExoPlayer has prepared it
+        com.kevshupp.kevmusicplayer.ui.screens.KnownSongDurations.lookup = { mediaId ->
+            audioFileMap[mediaId]?.duration ?: 0L
+        }
         // Force jaudiotagger to run in Android mode (bypasses java.awt classes)
         try {
             org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
@@ -2139,6 +2143,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     override fun onCleared() {
         super.onCleared()
+        com.kevshupp.kevmusicplayer.ui.screens.KnownSongDurations.lookup = { 0L }
         backupPrefsFiles.forEach { name ->
             getApplication<Application>().getSharedPreferences(name, Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(backupPrefsChangeListener)
