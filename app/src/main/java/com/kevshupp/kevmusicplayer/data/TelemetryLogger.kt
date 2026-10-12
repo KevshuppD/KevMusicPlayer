@@ -12,6 +12,30 @@ object TelemetryLogger {
     private const val LOG_FILE_NAME = "telemetry_errors.log"
     private const val MAX_LOG_SIZE_BYTES = 250 * 1024L // 250 KB max
 
+    // All file access happens on this single background thread, in call order, so logging from the
+    // main thread (player callbacks, UI) never blocks on disk I/O
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "TelemetryLogger").apply {
+            isDaemon = true
+            priority = Thread.MIN_PRIORITY
+        }
+    }
+    private val timestampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+
+    // Only ever called from the writer thread (or synchronously from the crash handler)
+    private fun formatTimestamp(timeMs: Long): String = synchronized(timestampFormat) {
+        timestampFormat.format(Date(timeMs))
+    }
+
+    private fun enqueue(context: Context, timeMs: Long, body: String) {
+        val appContext = context.applicationContext ?: context
+        try {
+            writer.execute { appendToFile(appContext, "[${formatTimestamp(timeMs)}] $body") }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun isEnabled(context: Context): Boolean {
         val prefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
         return prefs.getBoolean("telemetry_enabled", true) // Default to true for diagnostics
@@ -53,14 +77,17 @@ object TelemetryLogger {
         }
     }
 
-    fun logError(context: Context, category: String, message: String, throwable: Throwable? = null) {
+    /**
+     * @param synchronous write before returning. Only for the crash handler, where the process is about to die
+     * and a queued write would be lost.
+     */
+    fun logError(context: Context, category: String, message: String, throwable: Throwable? = null, synchronous: Boolean = false) {
         android.util.Log.e("TelemetryLogger", "[$category] $message", throwable)
         if (!isEnabled(context)) return
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-        val timestamp = sdf.format(Date())
-        
+        val now = System.currentTimeMillis()
+
         val logLine = StringBuilder()
-        logLine.append("[$timestamp] [$category] [ERROR] $message\n")
+        logLine.append("[$category] [ERROR] $message\n")
         if (throwable != null) {
             var current: Throwable? = throwable
             while (current != null) {
@@ -75,7 +102,11 @@ object TelemetryLogger {
             }
         }
         logLine.append("\n")
-        appendToFile(context, logLine.toString())
+        if (synchronous) {
+            appendToFile(context, "[${formatTimestamp(now)}] $logLine")
+        } else {
+            enqueue(context, now, logLine.toString())
+        }
     }
 
     fun logInfo(category: String, message: String) {
@@ -89,9 +120,7 @@ object TelemetryLogger {
     fun logInfo(context: Context, category: String, message: String) {
         android.util.Log.i("TelemetryLogger", "[$category] $message")
         if (!isEnabled(context)) return
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-        val timestamp = sdf.format(Date())
-        appendToFile(context, "[$timestamp] [$category] [INFO] $message\n")
+        enqueue(context, System.currentTimeMillis(), "[$category] [INFO] $message\n")
     }
 
     fun logWarn(category: String, message: String) {
@@ -105,12 +134,20 @@ object TelemetryLogger {
     fun logWarn(context: Context, category: String, message: String) {
         android.util.Log.w("TelemetryLogger", "[$category] $message")
         if (!isEnabled(context)) return
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-        val timestamp = sdf.format(Date())
-        appendToFile(context, "[$timestamp] [$category] [WARN] $message\n")
+        enqueue(context, System.currentTimeMillis(), "[$category] [WARN] $message\n")
+    }
+
+    // Waits (briefly) for queued lines so readers see everything logged so far
+    private fun flushPendingWrites() {
+        try {
+            writer.submit {}.get(2, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            // Reading slightly stale logs is fine
+        }
     }
 
     fun getLogs(context: Context): String {
+        flushPendingWrites()
         return try {
             val file = File(context.filesDir, LOG_FILE_NAME)
             if (file.exists()) file.readText() else ""
@@ -121,6 +158,7 @@ object TelemetryLogger {
     }
 
     fun clearLogs(context: Context) {
+        flushPendingWrites()
         try {
             val file = File(context.filesDir, LOG_FILE_NAME)
             if (file.exists()) {

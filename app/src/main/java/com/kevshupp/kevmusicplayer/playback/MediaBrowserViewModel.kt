@@ -194,8 +194,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 if (allFiles.isNotEmpty()) {
                     localAudioFiles.clear()
                     localAudioFiles.addAll(allFiles)
-                    loadPlaylists()
-                    updateSmartPlaylists()
+                    loadPlaylists() // also refreshes the smart playlists
                 }
 
                 // Pre-warm the list thumbnail cache in background for initial batch of songs
@@ -328,48 +327,27 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         browserFuture = null
     }
 
-    private var saveStateJob: kotlinx.coroutines.Job? = null
-
+    // PlaybackService persists the queue, the current song and the position (it also runs in the background).
+    // The ViewModel only persists its own shuffle mode, so the two never write the same keys.
     fun savePlaybackState() {
         if (ignoreSavePlaybackState) return
         val b = browser.value ?: return
-        val currentItem = b.currentMediaItem
-        val id = currentItem?.mediaId?.toLongOrNull() ?: -1L
-        val position = b.currentPosition
-        val activeIndex = b.currentMediaItemIndex
         val shuffleModeEnabled = isShuffleActive.value || b.shuffleModeEnabled
-        
-        val itemCount = b.mediaItemCount
-        val mediaIds = ArrayList<String>(itemCount)
-        for (i in 0 until itemCount) {
-            val item = b.getMediaItemAt(i)
-            mediaIds.add(item.mediaId)
-        }
-
-        saveStateJob?.cancel()
-        saveStateJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            kotlinx.coroutines.delay(300) // Debounce rapid playback events
-            val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
-            val editor = prefs.edit()
-                .putBoolean("last_shuffle_enabled", shuffleModeEnabled)
-            if (id != -1L) {
-                val mediaIdsString = mediaIds.joinToString(",")
-                editor.putLong("last_song_id", id)
-                    .putLong("last_position", position)
-                    .putInt("last_active_index", activeIndex)
-                    .putString("last_queue_ids", mediaIdsString)
-            }
-            editor.apply()
+        val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+        if (prefs.getBoolean("last_shuffle_enabled", false) != shuffleModeEnabled) {
+            prefs.edit().putBoolean("last_shuffle_enabled", shuffleModeEnabled).apply()
         }
     }
 
     fun restorePlaybackState() {
         val b = browser.value ?: return
-        if (b.currentMediaItem != null || b.mediaItemCount > 0) return
-
         val prefs = getApplication<Application>().getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
+        // The shuffle mode is the app's own (the queue is reordered physically), so it is restored here
+        // even when the service already rebuilt the queue
         val lastShuffleEnabled = prefs.getBoolean("last_shuffle_enabled", false)
         isShuffleActive.value = lastShuffleEnabled
+        if (b.currentMediaItem != null || b.mediaItemCount > 0) return
+
         b.shuffleModeEnabled = false
 
         val lastSongId = prefs.getLong("last_song_id", -1L)
@@ -815,8 +793,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         localAudioFiles.clear()
                         localAudioFiles.addAll(outcome.files)
                         com.kevshupp.kevmusicplayer.ui.screens.clearNoArtCache()
-                        loadPlaylists()
-                        updateSmartPlaylists()
+                        loadPlaylists() // also refreshes the smart playlists
                     }
                 }
             } catch (e: Exception) {
@@ -1109,8 +1086,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     localAudioFiles.clear()
                     localAudioFiles.addAll(updatedFiles)
                     clearPerSongOverlays()
-                    loadPlaylists() // Reload playlists state instantly!
-                    updateSmartPlaylists() // Reload smart playlists state instantly!
+                    loadPlaylists() // Reload playlists and smart playlists state instantly!
 
                     ignoreSavePlaybackState = true
 
@@ -1184,10 +1160,58 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     private var autoSyncJob: kotlinx.coroutines.Job? = null
 
+    // "Something changed since the last upload" flag, persisted so it survives the process being killed.
+    // Without it, every time the app was minimized the whole backup was uploaded again.
+    private val cloudSyncStatePrefs by lazy {
+        getApplication<Application>().getSharedPreferences("cloud_sync_state", Context.MODE_PRIVATE)
+    }
+    @Volatile
+    private var cloudChangeCounter = 0
+
+    private fun markCloudChangesPending() {
+        cloudChangeCounter++
+        if (!cloudSyncStatePrefs.getBoolean("pending_changes", false)) {
+            cloudSyncStatePrefs.edit().putBoolean("pending_changes", true).apply()
+        }
+    }
+
+    // Defaults to true so the first run after an update still syncs once
+    private fun hasPendingCloudChanges(): Boolean = cloudSyncStatePrefs.getBoolean("pending_changes", true)
+
+    private fun clearPendingCloudChanges(counterAtUpload: Int) {
+        // Keep the flag if something else changed while the upload was running
+        if (cloudChangeCounter == counterAtUpload) {
+            cloudSyncStatePrefs.edit().putBoolean("pending_changes", false).apply()
+        }
+    }
+
+    // Settings, equalizer and playlists are part of the backup but are edited all over the UI,
+    // so changes are detected at the source. Kept in a field: SharedPreferences holds listeners weakly.
+    private val backupPrefsChangeListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        // Bookkeeping keys that are not user data; the sync timestamp in particular is written by every upload
+        val isBookkeeping = key != null && (key == "cloud_last_sync_timestamp" || key.startsWith("cached_"))
+        if (!isBookkeeping) {
+            markCloudChangesPending()
+        }
+    }
+    private val backupPrefsFiles = listOf("settings_prefs", "equalizer_prefs", "playlists_prefs")
+
+    init {
+        backupPrefsFiles.forEach { name ->
+            application.getSharedPreferences(name, Context.MODE_PRIVATE)
+                .registerOnSharedPreferenceChangeListener(backupPrefsChangeListener)
+        }
+    }
+
     fun triggerAutoSync(
         debounceMs: Long = 4000L,
         trigger: com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger = com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.REALTIME
     ) {
+        // Every REALTIME call reports a change, whatever the configured mode ends up doing with it
+        if (trigger == com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.REALTIME) {
+            markCloudChangesPending()
+        }
+
         val user = cloudUser.value ?: return
         if (!user.isAutoSyncEnabled) return
 
@@ -1198,6 +1222,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             }
             com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.ON_EXIT -> {
                 if (user.autoSyncMode == "manual") return
+                // Nothing new to upload since the last successful sync
+                if (!hasPendingCloudChanges()) return
+                // "daily" means at most one automatic upload every 24 hours
+                if (user.autoSyncMode == "daily" &&
+                    System.currentTimeMillis() - user.lastSyncTimestamp < 24L * 60 * 60 * 1000
+                ) return
             }
             com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.PERIODIC -> {
                 if (user.autoSyncMode != "daily" && user.autoSyncMode != "realtime") return
@@ -1215,8 +1245,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 kotlinx.coroutines.delay(debounceMs)
             }
             try {
+                val counterAtUpload = cloudChangeCounter
                 val cloudBackupMgr = com.kevshupp.kevmusicplayer.data.cloud.CloudBackupManager(getApplication())
-                cloudBackupMgr.uploadBackupToCloud(user)
+                if (cloudBackupMgr.uploadBackupToCloud(user).isSuccess) {
+                    clearPendingCloudChanges(counterAtUpload)
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -1264,9 +1297,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             return
         }
         viewModelScope.launch {
+            val counterAtUpload = cloudChangeCounter
             val cloudBackupMgr = com.kevshupp.kevmusicplayer.data.cloud.CloudBackupManager(context)
             val result = cloudBackupMgr.uploadBackupToCloud(user)
             result.onSuccess { timestamp ->
+                clearPendingCloudChanges(counterAtUpload)
                 withContext(Dispatchers.Main) { onSuccess(timestamp) }
             }.onFailure { err ->
                 withContext(Dispatchers.Main) { onError(err.localizedMessage ?: "Error al subir copia de seguridad") }
@@ -1303,8 +1338,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     localAudioFiles.clear()
                     localAudioFiles.addAll(updatedFiles)
                     clearPerSongOverlays()
-                    loadPlaylists()
-                    updateSmartPlaylists()
+                    loadPlaylists() // also refreshes the smart playlists
 
                     ignoreSavePlaybackState = true
                     val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
@@ -1422,7 +1456,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             statsVersion.intValue++
         }
 
-        updateSmartPlaylists()
+        playlistManager.updateSmartPlaylists(statsOnly = true)
         triggerAutoSync(debounceMs = 30000L)
     }
 
@@ -1448,7 +1482,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                     if (hasChanges) {
                         statsVersion.intValue++
-                        updateSmartPlaylists()
+                        // Plays registered by the service while the app was in the background still have to reach the cloud
+                        markCloudChangesPending()
+                        playlistManager.updateSmartPlaylists(statsOnly = true)
                     }
                 }
             } catch (e: Exception) {
@@ -1988,6 +2024,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     override fun onCleared() {
         super.onCleared()
+        backupPrefsFiles.forEach { name ->
+            getApplication<Application>().getSharedPreferences(name, Context.MODE_PRIVATE)
+                .unregisterOnSharedPreferenceChangeListener(backupPrefsChangeListener)
+        }
         browser.value?.release()
         browserFuture?.let { MediaBrowser.releaseFuture(it) }
         browser.value = null

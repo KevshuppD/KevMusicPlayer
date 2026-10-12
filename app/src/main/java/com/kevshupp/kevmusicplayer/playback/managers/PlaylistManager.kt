@@ -49,15 +49,26 @@ class PlaylistManager(
     }
 
 
-    fun updateSmartPlaylists() {
+    private var smartPlaylistsJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * @param statsOnly true when only listening stats changed (e.g. a song was played). Random mixes are
+     * then kept as they are instead of being reshuffled on every track change.
+     */
+    fun updateSmartPlaylists(statsOnly: Boolean = false) {
         val localFilesCopy = ArrayList(songsWithStats())
-        scope.launch {
+        // Snapshot the Compose state here, on the caller's thread, instead of reading it from the IO dispatcher
+        val configs = smartPlaylistConfigs.toList()
+        val previous = smartPlaylists.toMap()
+        smartPlaylistsJob?.cancel()
+        smartPlaylistsJob = scope.launch {
             val updatedMap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val tempMap = mutableMapOf<String, List<AudioFile>>()
-                val keepRecommendations = smartPlaylists.filterKeys { it.startsWith("Recomendaciones") }
+                val keepRecommendations = previous.filterKeys { it.startsWith("Recomendaciones") }
                 tempMap.putAll(keepRecommendations)
+                val existingIds by lazy(LazyThreadSafetyMode.NONE) { localFilesCopy.mapTo(HashSet()) { it.id } }
 
-                smartPlaylistConfigs.forEach { config ->
+                configs.forEach { config ->
                     val list = if (config.isAdvanced && config.advancedRule != null) {
                         localFilesCopy.filter { config.advancedRule.evaluate(application, it) }
                             .take(config.limit)
@@ -91,8 +102,13 @@ class PlaylistManager(
                                     .take(config.limit)
                             }
                             SmartPlaylistRule.RANDOM_MIX -> {
-                                localFilesCopy.shuffled()
-                                    .take(config.limit)
+                                val current = if (statsOnly) previous[config.name]?.filter { it.id in existingIds } else null
+                                if (!current.isNullOrEmpty()) {
+                                    current
+                                } else {
+                                    localFilesCopy.shuffled()
+                                        .take(config.limit)
+                                }
                             }
                         }
                     }

@@ -26,7 +26,8 @@ class KevMusicPlayerApplication : Application(), ImageLoaderFactory {
                     this,
                     "Global_Crash_${thread.name}",
                     "App crashed due to uncaught exception: ${throwable.localizedMessage ?: throwable.message}",
-                    throwable
+                    throwable,
+                    synchronous = true
                 )
             } catch (e: Exception) {
                 e.printStackTrace()

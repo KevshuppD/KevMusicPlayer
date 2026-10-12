@@ -312,6 +312,13 @@ class PlaybackService : MediaLibraryService() {
                 savePlaybackState(player)
             }
 
+            override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+                // Queue edits (add, remove, reorder) don't fire any of the other callbacks
+                if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+                    savePlaybackState(player)
+                }
+            }
+
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 if (audioSessionId != 0) {
                     TelemetryLogger.logInfo(
@@ -556,31 +563,35 @@ class PlaybackService : MediaLibraryService() {
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
     }
 
+    private var saveStateJob: kotlinx.coroutines.Job? = null
+
+    // The service is the only writer of the queue/position keys (it is alive in foreground and background).
+    // The shuffle flag belongs to the ViewModel, which owns the app's own shuffle mode.
     private fun savePlaybackState(player: Player) {
-        val currentItem = player.currentMediaItem
-        val id = currentItem?.mediaId?.toLongOrNull() ?: -1L
-        val position = player.currentPosition
-        val activeIndex = player.currentMediaItemIndex
-        val shuffleModeEnabled = player.shuffleModeEnabled
+        saveStateJob?.cancel()
+        saveStateJob = serviceScope.launch {
+            kotlinx.coroutines.delay(300) // Debounce bursts of player events into a single write
+            val currentItem = player.currentMediaItem
+            val id = currentItem?.mediaId?.toLongOrNull() ?: -1L
+            if (id == -1L) return@launch
+            val position = player.currentPosition
+            val activeIndex = player.currentMediaItemIndex
 
-        val mediaIds = ArrayList<String>(player.mediaItemCount)
-        for (i in 0 until player.mediaItemCount) {
-            val item = player.getMediaItemAt(i)
-            mediaIds.add(item.mediaId)
-        }
+            val mediaIds = ArrayList<String>(player.mediaItemCount)
+            for (i in 0 until player.mediaItemCount) {
+                val item = player.getMediaItemAt(i)
+                mediaIds.add(item.mediaId)
+            }
 
-        serviceScope.launch(Dispatchers.IO) {
-            val prefs = PreferenceConstants.getPlaybackPrefs(this@PlaybackService)
-            val editor = prefs.edit()
-                .putBoolean(PreferenceConstants.KEY_LAST_SHUFFLE_ENABLED, shuffleModeEnabled)
-            if (id != -1L) {
+            withContext(Dispatchers.IO) {
                 val mediaIdsString = mediaIds.joinToString(",")
-                editor.putLong(PreferenceConstants.KEY_LAST_SONG_ID, id)
+                PreferenceConstants.getPlaybackPrefs(this@PlaybackService).edit()
+                    .putLong(PreferenceConstants.KEY_LAST_SONG_ID, id)
                     .putLong(PreferenceConstants.KEY_LAST_POSITION, position)
                     .putInt(PreferenceConstants.KEY_LAST_ACTIVE_INDEX, activeIndex)
                     .putString(PreferenceConstants.KEY_LAST_QUEUE_IDS, mediaIdsString)
+                    .apply()
             }
-            editor.apply()
         }
     }
 
@@ -589,8 +600,9 @@ class PlaybackService : MediaLibraryService() {
         isRestoring = true
         try {
             val prefs = PreferenceConstants.getPlaybackPrefs(this)
-            val lastShuffleEnabled = prefs.getBoolean(PreferenceConstants.KEY_LAST_SHUFFLE_ENABLED, false)
-            player.shuffleModeEnabled = lastShuffleEnabled
+            // The saved shuffle flag is the app's own mode: the queue was already stored in shuffled order,
+            // so ExoPlayer's shuffle must stay off or the order would be scrambled a second time
+            player.shuffleModeEnabled = false
 
             val lastSongId = prefs.getLong(PreferenceConstants.KEY_LAST_SONG_ID, -1L)
             val lastPosition = prefs.getLong(PreferenceConstants.KEY_LAST_POSITION, 0L)
@@ -600,7 +612,8 @@ class PlaybackService : MediaLibraryService() {
             val (mediaItems, targetIndex, targetPosition) = withContext(Dispatchers.IO) {
                 val database = AppDatabase.getDatabase(this@PlaybackService)
                 val audioDao = database.audioDao()
-                val localAudioFiles = audioDao.getAllAudioFiles()
+                // Lyrics are not needed to rebuild the queue
+                val localAudioFiles = audioDao.getAllAudioFilesLightweight()
                 val songsMap = localAudioFiles.associateBy { it.id }
 
                 val items = mutableListOf<MediaItem>()
@@ -668,7 +681,8 @@ class PlaybackService : MediaLibraryService() {
                 }
 
                 if (items.isEmpty() && localAudioFiles.isNotEmpty()) {
-                    val shuffledFiles = localAudioFiles.shuffled()
+                    // Same cap the app uses for its queues, to avoid IPC TransactionTooLargeException
+                    val shuffledFiles = localAudioFiles.shuffled().take(1500)
                     shuffledFiles.forEach { song ->
                         val trackUri = Uri.parse(song.uriString)
                         val mediaItem = MediaItem.Builder()
@@ -763,7 +777,6 @@ class PlaybackService : MediaLibraryService() {
                 val id = currentItem?.mediaId?.toLongOrNull() ?: -1L
                 val position = player.currentPosition
                 val activeIndex = player.currentMediaItemIndex
-                val shuffleModeEnabled = player.shuffleModeEnabled
 
                 val mediaIds = ArrayList<String>(player.mediaItemCount)
                 for (i in 0 until player.mediaItemCount) {
@@ -772,7 +785,6 @@ class PlaybackService : MediaLibraryService() {
                 }
 
                 val editor = prefs.edit()
-                    .putBoolean(PreferenceConstants.KEY_LAST_SHUFFLE_ENABLED, shuffleModeEnabled)
                 if (id != -1L) {
                     val mediaIdsString = mediaIds.joinToString(",")
                     editor.putLong(PreferenceConstants.KEY_LAST_SONG_ID, id)

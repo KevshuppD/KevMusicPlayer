@@ -852,10 +852,30 @@ fun PlayerScreen(
                             }
                         }
 
-                        LaunchedEffect(pagerState.currentPage) {
-                            if (!pagerState.isScrollInProgress && pagerState.currentPage != playerState.currentMediaItemIndex && pagerState.currentPage in 0 until playerState.mediaItemCount) {
-                                player.seekTo(pagerState.currentPage, 0)
-                                player.play()
+                        // Swiping the cover changes the song. The page changes while the finger is still moving,
+                        // so the seek has to wait for the scroll to settle; and only a user drag counts, so the
+                        // pager following the player (auto-advance, new queue) never seeks back.
+                        var userSwipedPager by remember { mutableStateOf(false) }
+                        LaunchedEffect(pagerState) {
+                            pagerState.interactionSource.interactions.collect { interaction ->
+                                if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) {
+                                    userSwipedPager = true
+                                }
+                            }
+                        }
+                        LaunchedEffect(pagerState, player) {
+                            androidx.compose.runtime.snapshotFlow { pagerState.isScrollInProgress }.collect { scrolling ->
+                                if (!scrolling && userSwipedPager) {
+                                    userSwipedPager = false
+                                    val page = pagerState.currentPage
+                                    if (page != player.currentMediaItemIndex && page in 0 until player.mediaItemCount) {
+                                        player.seekTo(page, 0)
+                                        if (player.playbackState == Player.STATE_IDLE) {
+                                            player.prepare()
+                                        }
+                                        player.play()
+                                    }
+                                }
                             }
                         }
 

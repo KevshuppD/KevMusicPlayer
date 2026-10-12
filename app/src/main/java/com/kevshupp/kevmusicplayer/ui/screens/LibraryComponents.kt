@@ -791,33 +791,64 @@ fun formatDuration(ms: Long): String {
 
 @Composable
 fun rememberPlayerState(player: Player?): PlayerStateInfo {
-    var isPlaying by remember { mutableStateOf(player?.isPlaying ?: false) }
-    var currentSong by remember { mutableStateOf(player?.currentMediaItem) }
-    var position by remember { mutableLongStateOf(player?.currentPosition ?: 0L) }
-    var duration by remember { mutableLongStateOf(player?.duration ?: 0L) }
-    var shuffleModeEnabled by remember { mutableStateOf(player?.shuffleModeEnabled ?: false) }
-    var mediaItemCount by remember { mutableStateOf(player?.mediaItemCount ?: 0) }
-    var currentMediaItemIndex by remember { mutableStateOf(player?.currentMediaItemIndex ?: 0) }
-    var playlistVersion by remember { mutableStateOf(0) }
+    val state = remember(player) { PlayerStateInfo(player) }
 
     DisposableEffect(player) {
         if (player == null) return@DisposableEffect onDispose {}
 
         val listener = object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
-                isPlaying = player.isPlaying
-                currentSong = player.currentMediaItem
-                position = player.currentPosition
-                duration = player.duration.coerceAtLeast(0L)
-                shuffleModeEnabled = player.shuffleModeEnabled
-                mediaItemCount = player.mediaItemCount
-                currentMediaItemIndex = player.currentMediaItemIndex
+                state.syncFrom(player)
                 if (events.contains(Player.EVENT_TIMELINE_CHANGED)) {
-                    playlistVersion++
+                    state.playlistVersion++
                 }
             }
         }
         player.addListener(listener)
+        state.syncFrom(player)
+        onDispose {
+            player.removeListener(listener)
+        }
+    }
+
+    val isPlaying = state.isPlaying
+    LaunchedEffect(player, isPlaying) {
+        if (player == null || !isPlaying) return@LaunchedEffect
+        while (true) {
+            state.position = player.currentPosition
+            state.duration = player.duration.coerceAtLeast(0L)
+            delay(500)
+        }
+    }
+
+    return state
+}
+
+/**
+ * Observable snapshot of the player. Every field is its own Compose state, so a composable only
+ * recomposes for the fields it actually reads: the position ticking every 500 ms no longer
+ * recomposes everything that merely holds a PlayerStateInfo.
+ */
+@androidx.compose.runtime.Stable
+class PlayerStateInfo(player: Player?) {
+    var isPlaying by mutableStateOf(player?.isPlaying ?: false)
+        internal set
+    var currentSong by mutableStateOf(player?.currentMediaItem)
+        internal set
+    var position by mutableLongStateOf(player?.currentPosition ?: 0L)
+        internal set
+    var duration by mutableLongStateOf(player?.duration?.coerceAtLeast(0L) ?: 0L)
+        internal set
+    var shuffleModeEnabled by mutableStateOf(player?.shuffleModeEnabled ?: false)
+        internal set
+    var mediaItemCount by mutableStateOf(player?.mediaItemCount ?: 0)
+        internal set
+    var currentMediaItemIndex by mutableStateOf(player?.currentMediaItemIndex ?: 0)
+        internal set
+    var playlistVersion by mutableStateOf(0)
+        internal set
+
+    internal fun syncFrom(player: Player) {
         isPlaying = player.isPlaying
         currentSong = player.currentMediaItem
         position = player.currentPosition
@@ -825,33 +856,8 @@ fun rememberPlayerState(player: Player?): PlayerStateInfo {
         shuffleModeEnabled = player.shuffleModeEnabled
         mediaItemCount = player.mediaItemCount
         currentMediaItemIndex = player.currentMediaItemIndex
-        onDispose {
-            player.removeListener(listener)
-        }
     }
-
-    LaunchedEffect(player, isPlaying) {
-        if (player == null || !isPlaying) return@LaunchedEffect
-        while (true) {
-            position = player.currentPosition
-            duration = player.duration.coerceAtLeast(0L)
-            delay(500)
-        }
-    }
-
-    return PlayerStateInfo(isPlaying, currentSong, position, duration, shuffleModeEnabled, mediaItemCount, currentMediaItemIndex, playlistVersion)
 }
-
-data class PlayerStateInfo(
-    val isPlaying: Boolean,
-    val currentSong: MediaItem?,
-    val position: Long,
-    val duration: Long,
-    val shuffleModeEnabled: Boolean,
-    val mediaItemCount: Int,
-    val currentMediaItemIndex: Int,
-    val playlistVersion: Int
-)
 
 // ---------------- ALBUM ART CACHE & ASYNC LOADER ----------------
 private val defaultCacheBudgetKb = ((Runtime.getRuntime().maxMemory() / 1024) / 8).toInt().coerceIn(16 * 1024, 48 * 1024)
