@@ -665,7 +665,8 @@ class TagEditorManager(
 
                                     if (!renameCompleted) {
                                         try {
-                                            val renamed = oldFile.renameTo(newFile)
+                                            // renameTo silently replaces an existing file: never rename onto another song
+                                            val renamed = !newFile.exists() && oldFile.renameTo(newFile)
                                             if (renamed) {
                                                 renameCompleted = true
                                                 val values = ContentValues().apply {
@@ -688,7 +689,7 @@ class TagEditorManager(
                                             if (oldLrc.exists() && oldLrc.isFile) {
                                                 val newLrc = File(oldFile.parentFile, "$newBaseName.$ext")
                                                 try {
-                                                    oldLrc.renameTo(newLrc)
+                                                    if (!newLrc.exists()) oldLrc.renameTo(newLrc)
                                                     MediaScannerConnection.scanFile(context, arrayOf(newLrc.absolutePath), null, null)
                                                 } catch (e: Exception) {
                                                     e.printStackTrace()

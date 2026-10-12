@@ -283,59 +283,28 @@ fun getMimeTypeFromBytes(bytes: ByteArray?): String {
 
 fun createJaudiotaggerArtwork(coverBytes: ByteArray): org.jaudiotagger.tag.images.Artwork? {
     if (coverBytes.isEmpty()) return null
-    val mimeType = getMimeTypeFromBytes(coverBytes)
 
-    return try {
-        val artwork = org.jaudiotagger.tag.images.ArtworkFactory.getNew()
-        artwork.binaryData = coverBytes
-        artwork.mimeType = mimeType
-        artwork.description = ""
-        artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
-
-        if (artwork is org.jaudiotagger.tag.images.AndroidArtwork) {
-            try {
-                artwork.setImageFromData()
-            } catch (t: Throwable) {
-                android.util.Log.w("createArtwork", "setImageFromData failed", t)
-            }
+    // The library's own Android artwork throws UnsupportedOperationException in setImageFromData(), which
+    // FLAC (and Ogg) tags call while building the picture block: those formats never got their cover embedded.
+    // The app's AndroidArtwork carries the same data and reports the image as ready.
+    val artwork = AndroidArtwork()
+    artwork.binaryData = coverBytes
+    artwork.mimeType = getMimeTypeFromBytes(coverBytes)
+    artwork.description = ""
+    artwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
+    artwork.width = 800
+    artwork.height = 800
+    try {
+        val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, options)
+        if (options.outWidth > 0 && options.outHeight > 0) {
+            artwork.width = options.outWidth
+            artwork.height = options.outHeight
         }
-
-        try {
-            val options = android.graphics.BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-            android.graphics.BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size, options)
-            if (options.outWidth > 0 && options.outHeight > 0) {
-                artwork.width = options.outWidth
-                artwork.height = options.outHeight
-            } else {
-                artwork.width = 800
-                artwork.height = 800
-            }
-        } catch (e: Throwable) {
-            artwork.width = 800
-            artwork.height = 800
-        }
-
-        artwork
     } catch (e: Throwable) {
-        android.util.Log.e("createArtwork", "Failed to create Artwork via ArtworkFactory", e)
-        try {
-            val androidArtwork = org.jaudiotagger.tag.images.AndroidArtwork()
-            androidArtwork.binaryData = coverBytes
-            androidArtwork.mimeType = mimeType
-            androidArtwork.description = ""
-            androidArtwork.pictureType = org.jaudiotagger.tag.reference.PictureTypes.DEFAULT_ID
-            try {
-                androidArtwork.setImageFromData()
-            } catch (t: Throwable) {}
-            androidArtwork.width = 800
-            androidArtwork.height = 800
-            androidArtwork
-        } catch (ex: Throwable) {
-            null
-        }
+        // Keep the default size
     }
+    return artwork
 }
 
 class SafeMp4FileReader : org.jaudiotagger.audio.mp4.Mp4FileReader() {
@@ -557,6 +526,100 @@ fun invalidateMediaStoreAlbumArt(context: android.content.Context, songId: Long,
     }
 }
 
+// Serializes every physical tag write. Two writers on the same song (an album cover and a song edit launched
+// together) used to read a file the other one was halfway through rewriting, and saved that truncated copy back.
+private val audioFileWriteLock = Any()
+
+/**
+ * Replaces the audio file at [destPath] with [newContent] without ever leaving a partial file behind.
+ * The new content is copied to a hidden sibling, verified and renamed over the original, so a reader never sees
+ * a truncated song (ExoPlayer keeps playing the old file it has open). When the rename is not possible it falls
+ * back to an in-place copy that restores the original if it cannot be completed.
+ */
+fun replaceAudioFileSafely(context: android.content.Context, newContent: File, destPath: String, uri: Uri): Boolean {
+    val expectedSize = newContent.length()
+    if (expectedSize <= 0L) return false
+    val destFile = File(destPath)
+
+    val sibling = File(destFile.parentFile, ".kmp_write_${destFile.name}")
+    try {
+        if (sibling.exists()) sibling.delete()
+        newContent.inputStream().use { input ->
+            java.io.FileOutputStream(sibling).use { output ->
+                input.copyTo(output)
+                output.fd.sync()
+            }
+        }
+        if (sibling.length() == expectedSize && sibling.renameTo(destFile) && destFile.length() == expectedSize) {
+            return true
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("MetadataWrite", "Atomic replace failed for $destPath, falling back to in-place copy", e)
+    } finally {
+        try { if (sibling.exists()) sibling.delete() } catch (e: Exception) {}
+    }
+
+    // In-place fallback. Overwriting destroys the original, so it is saved first and put back if the copy
+    // fails (a full SD card used to leave the song cut at whatever had been written).
+    val backup = File(context.cacheDir, "kmp_backup_${System.currentTimeMillis()}_${destFile.name}")
+    try {
+        val originalSize = destFile.length()
+        val freeBytes = destFile.parentFile?.usableSpace ?: 0L
+        if (freeBytes + originalSize < expectedSize) {
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context, "MetadataWrite",
+                "Not enough space to rewrite $destPath (needs $expectedSize bytes, $freeBytes free). File left untouched"
+            )
+            return false
+        }
+        destFile.inputStream().use { input -> backup.outputStream().use { output -> input.copyTo(output) } }
+        if (backup.length() != originalSize) return false
+
+        if (copyOverFile(context, newContent, destFile, uri)) return true
+
+        val restored = copyOverFile(context, backup, destFile, uri)
+        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+            context, "MetadataWrite",
+            "Rewrite failed for $destPath (needed $expectedSize bytes, ${destFile.parentFile?.usableSpace} free). Original restored: $restored"
+        )
+        if (!restored) {
+            // Last resort: keep the only complete copy of the song instead of deleting it with the temp files
+            val rescued = File(context.getExternalFilesDir(null) ?: context.filesDir, "rescued_${destFile.name}")
+            try { backup.copyTo(rescued, overwrite = true) } catch (e: Exception) {}
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context, "MetadataWrite", "Original of $destPath saved at ${rescued.absolutePath}"
+            )
+        }
+        return false
+    } catch (e: Exception) {
+        android.util.Log.e("MetadataWrite", "In-place replace failed for $destPath", e)
+        return false
+    } finally {
+        try { backup.delete() } catch (e: Exception) {}
+    }
+}
+
+private fun copyOverFile(context: android.content.Context, source: File, destFile: File, uri: Uri): Boolean {
+    val expectedSize = source.length()
+    try {
+        source.inputStream().use { input ->
+            java.io.FileOutputStream(destFile).use { output ->
+                input.copyTo(output)
+                output.fd.sync()
+            }
+        }
+    } catch (e: Exception) {
+        try {
+            context.contentResolver.openOutputStream(uri, "rwt")?.use { output ->
+                source.inputStream().use { input -> input.copyTo(output) }
+            }
+        } catch (e2: Exception) {
+            android.util.Log.w("MetadataWrite", "In-place copy failed for ${destFile.absolutePath}", e2)
+        }
+    }
+    return destFile.length() == expectedSize
+}
+
 fun writeMp3TagsWithMp3Agic(
     context: android.content.Context,
     songId: Long,
@@ -580,7 +643,7 @@ fun writeMp3TagsWithMp3Agic(
     var tempSaveFile: File? = null
     var tempSourceFile: File? = null
 
-    return try {
+    return synchronized(audioFileWriteLock) { try {
         val origFile = File(filePath)
         val sourceFile = if (origFile.exists() && origFile.canRead()) {
             origFile
@@ -631,30 +694,21 @@ fun writeMp3TagsWithMp3Agic(
             return false
         }
 
-        var writtenDirectly = false
-        try {
-            val destFile = File(filePath)
-            tempSaveFile.inputStream().use { input ->
-                destFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
-            writtenDirectly = true
-            android.util.Log.d("Mp3Agic", "Direct physical write succeeded for $filePath")
-        } catch (e: Exception) {
-            android.util.Log.w("Mp3Agic", "Direct physical write failed, trying ContentResolver fallback", e)
+        // Only the tag may change: the rewritten copy must carry exactly the same audio frames
+        val savedFile = com.mpatric.mp3agic.Mp3File(tempSaveFile.absolutePath)
+        val originalAudioBytes = mp3file.endOffset - mp3file.startOffset
+        val savedAudioBytes = savedFile.endOffset - savedFile.startOffset
+        if (savedFile.frameCount != mp3file.frameCount || savedAudioBytes != originalAudioBytes) {
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context, "MetadataWrite",
+                "Aborted MP3 write for songId $songId: audio changed (frames ${mp3file.frameCount} -> ${savedFile.frameCount}, bytes $originalAudioBytes -> $savedAudioBytes)"
+            )
+            return false
         }
 
-        if (!writtenDirectly) {
-            context.contentResolver.openOutputStream(uri, "rwt")?.use { output ->
-                tempSaveFile.inputStream().use { input ->
-                    input.copyTo(output)
-                }
-            } ?: run {
-                android.util.Log.e("Mp3Agic", "Fallback openOutputStream returned null for $uri")
-                return false
-            }
-            android.util.Log.d("Mp3Agic", "ContentResolver fallback copy succeeded for $uri")
+        if (!replaceAudioFileSafely(context, tempSaveFile, filePath, uri)) {
+            android.util.Log.e("Mp3Agic", "Could not write the updated MP3 back to $filePath")
+            return false
         }
 
         android.media.MediaScannerConnection.scanFile(
@@ -671,7 +725,7 @@ fun writeMp3TagsWithMp3Agic(
     } finally {
         try { tempSaveFile?.delete() } catch (e: Exception) {}
         try { tempSourceFile?.delete() } catch (e: Exception) {}
-    }
+    } }
 }
 
 fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, uriString: String?, block: (org.jaudiotagger.audio.AudioFile) -> Unit): Boolean {
@@ -692,7 +746,7 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
         )
     }
     var tempFile: File? = null
-    return try {
+    return synchronized(audioFileWriteLock) { try {
         // 1. Copy source file to temp file using the same extension so jaudiotagger can detect format
         val extension = File(physicalPath).extension
         val suffix = if (extension.isNotEmpty()) ".$extension" else ""
@@ -714,6 +768,13 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
         
         val sourceFile = File(physicalPath)
         val originalSize = if (sourceFile.exists()) sourceFile.length() else 0L
+        if (originalSize > 0L && tempFile.length() != originalSize) {
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context, "MetadataWrite",
+                "Aborted write for songId $songId: incomplete working copy (${tempFile.length()} of $originalSize bytes)"
+            )
+            return false
+        }
 
         // 2. Open and modify tag in temp file (running in Android mode)
         try {
@@ -722,9 +783,20 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
             android.util.Log.e("MetadataWrite", "Failed to set jaudiotagger android mode", t)
         }
         val audioFile = safeReadAudioFile(tempFile)
+        val originalTrackLength = audioFile.audioHeader.trackLength
         block(audioFile)
         AudioFileIO.write(audioFile)
         android.util.Log.d("MetadataWrite", "Successfully wrote tags to temp file.")
+
+        // Only the tag may change: the rewritten copy must still decode to the same length
+        val writtenTrackLength = safeReadAudioFile(tempFile).audioHeader.trackLength
+        if (kotlin.math.abs(writtenTrackLength - originalTrackLength) > 1) {
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context, "MetadataWrite",
+                "Aborted write for songId $songId: track length changed (${originalTrackLength}s -> ${writtenTrackLength}s)"
+            )
+            return false
+        }
 
         // Safety Guard: Verify temp file is not empty and hasn't lost audio payload!
         val tempSize = tempFile.length()
@@ -738,37 +810,14 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
         }
         
         // 3. Write temp file back to original source safely
-        var writtenDirectly = false
-        try {
-            val destFile = File(physicalPath)
-            tempFile.inputStream().use { input ->
-                destFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
-            writtenDirectly = true
-            android.util.Log.d("MetadataWrite", "Successfully copied temp back directly to physical path: $physicalPath")
-        } catch (e: Exception) {
-            android.util.Log.w("MetadataWrite", "Failed direct physical write, trying fallback", e)
+        if (!replaceAudioFileSafely(context, tempFile, physicalPath, uri)) {
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
+                context, "MetadataWrite",
+                "Could not write the updated file back for songId $songId (path: $physicalPath)"
+            )
+            return false
         }
-        
-        if (!writtenDirectly) {
-            // Fallback to ContentResolver write-truncate
-            context.contentResolver.openOutputStream(uri, "rwt")?.use { output ->
-                tempFile.inputStream().use { input ->
-                    input.copyTo(output)
-                }
-            } ?: run {
-                android.util.Log.e("MetadataWrite", "Fallback openOutputStream returned null")
-                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                    context, "MetadataWrite", 
-                    "Fallback openOutputStream returned null for songId $songId (uri: $uri)"
-                )
-                return false
-            }
-            android.util.Log.d("MetadataWrite", "Successfully copied temp back via ContentResolver fallback")
-        }
-        
+
         // 4. Force system to scan media
         android.media.MediaScannerConnection.scanFile(
             context,
@@ -787,7 +836,7 @@ fun writeMetadataWithTempFile(context: android.content.Context, songId: Long, ur
         } catch (e: Exception) {
             // ignore
         }
-    }
+    } }
 }
 
 class AndroidArtwork : org.jaudiotagger.tag.images.Artwork {

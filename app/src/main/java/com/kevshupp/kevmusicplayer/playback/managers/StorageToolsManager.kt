@@ -184,7 +184,8 @@ class StorageToolsManager(
                                 var moveCompleted = false
 
                                 try {
-                                    val renamed = oldFile.renameTo(newFile)
+                                    // renameTo silently replaces an existing file: never move onto another song
+                                    val renamed = !newFile.exists() && oldFile.renameTo(newFile)
                                     if (renamed) {
                                         moveCompleted = true
                                         val values = ContentValues().apply {

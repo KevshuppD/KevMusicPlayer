@@ -28,6 +28,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import com.kevshupp.kevmusicplayer.data.LyricsRepository
+import com.kevshupp.kevmusicplayer.data.OrphanedSong
+import com.kevshupp.kevmusicplayer.data.SongIdentity
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import java.io.File
@@ -40,7 +42,12 @@ import android.content.Intent
 import androidx.compose.runtime.getValue
 import com.kevshupp.kevmusicplayer.ui.screens.stripAccents
 
-private class ScanOutcome(val files: List<AudioFile>, val dbChanged: Boolean)
+private class ScanOutcome(
+    val files: List<AudioFile>,
+    val dbChanged: Boolean,
+    // Old MediaStore id -> new id of the songs that were re-indexed by the system
+    val idRemap: Map<Long, Long> = emptyMap()
+)
 
 /** Live listening stats of a song, kept outside the song list so a play doesn't invalidate the whole library. */
 data class PlayStats(val playCount: Int, val lastPlayed: Long)
@@ -652,16 +659,38 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                     
                     // 2. Map scanned files to database entities, preserving custom edited lyrics and metadata
-                    // Index for re-matching files whose MediaStore id changed, built only if such a file shows up
+                    // MediaStore gives a file a new id when it re-indexes a volume. A scanned file with an unknown
+                    // id is matched to the old row of the same song (only rows whose own id is gone, each used
+                    // once), or to a song archived by an earlier scan, and everything keyed by the old id follows.
+                    val scannedIdSet = filteredScanned.mapTo(HashSet()) { it.id }
                     val existingByTitle by lazy(LazyThreadSafetyMode.NONE) {
-                        existingEntities.values.groupBy { it.title.trim().lowercase() }
+                        existingEntities.values.filter { it.id !in scannedIdSet }.groupBy { it.title.trim().lowercase() }
                     }
+                    val storedOrphans = SongIdentity.loadOrphans(app)
+                    val orphansByTitle by lazy(LazyThreadSafetyMode.NONE) {
+                        storedOrphans.groupBy { it.title.trim().lowercase() }
+                    }
+                    val claimedOldIds = HashSet<Long>()
+                    val usedOrphanIds = HashSet<Long>()
+                    val idRemap = HashMap<Long, Long>()
                     val entities = filteredScanned.map { file ->
                         val sameIdExisting = existingEntities[file.id]
-                        val existing = sameIdExisting ?: existingByTitle[file.title.trim().lowercase()]?.find {
-                            it.title.trim().equals(file.title.trim(), ignoreCase = true) &&
-                            (it.artist.trim().equals(file.artist.trim(), ignoreCase = true) || it.artist.isBlank() || file.artist.isBlank()) &&
-                            Math.abs(it.duration - file.duration) < 4000
+                        val titleKey = file.title.trim().lowercase()
+                        val existing = sameIdExisting ?: existingByTitle[titleKey]?.filter {
+                            it.id !in claimedOldIds &&
+                                SongIdentity.sameSong(it.title, it.artist, it.duration, file.title, file.artist, file.duration)
+                        }?.maxByOrNull { SongIdentity.matchScore(it.folderPath, it.album, file.folderPath, file.album) }
+                        if (sameIdExisting == null && existing != null) {
+                            claimedOldIds.add(existing.id)
+                            idRemap[existing.id] = file.id
+                        }
+                        val orphan = if (existing != null) null else orphansByTitle[titleKey]?.filter {
+                            it.oldId !in usedOrphanIds && it.oldId !in scannedIdSet &&
+                                SongIdentity.sameSong(it.title, it.artist, it.duration, file.title, file.artist, file.duration)
+                        }?.maxByOrNull { SongIdentity.matchScore(it.folderPath, it.album, file.folderPath, file.album) }
+                        if (orphan != null) {
+                            usedOrphanIds.add(orphan.oldId)
+                            idRemap[orphan.oldId] = file.id
                         }
                         val merged = if (existing != null && existing.dateModified == file.dateModified) {
                             // File has not been modified on disk. Preserve user's database metadata edits!
@@ -726,6 +755,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                                 replayGain = existing.replayGain,
                                 track = finalTrack
                             )
+                        } else if (orphan != null) {
+                            // The song was archived when its old id vanished: give it its data back
+                            file.copy(
+                                playCount = orphan.playCount,
+                                lastPlayed = orphan.lastPlayed,
+                                replayGain = orphan.replayGain ?: file.replayGain,
+                                lyrics = orphan.lyrics,
+                                translatedLyrics = orphan.translatedLyrics
+                            )
                         } else {
                             // New file from MediaStore (fast indexed metadata)
                             file
@@ -752,6 +790,28 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     // Clean up old files that were deleted from device storage
                     val toDelete = existingEntities.keys.filter { it !in scannedIds }
                     val dbChanged = toInsert.isNotEmpty() || toUpdate.isNotEmpty() || toDelete.isNotEmpty()
+
+                    // Songs that vanished without a replacement (e.g. the SD card was unmounted) are archived
+                    // before their rows are deleted, so they recover their data if they come back
+                    val vanishedIds = toDelete.filter { it !in idRemap }
+                    val newOrphans = if (vanishedIds.isEmpty()) emptyList() else {
+                        val playlistIds = SongIdentity.playlistSongIds(app)
+                        val now = System.currentTimeMillis()
+                        vanishedIds.mapNotNull { id ->
+                            val row = existingEntities[id] ?: return@mapNotNull null
+                            val lyrics = audioDao.getLyricsById(id)
+                            val translated = audioDao.getTranslatedLyricsById(id)
+                            val worthKeeping = row.playCount > 0 || !lyrics.isNullOrBlank() ||
+                                !translated.isNullOrBlank() || id in playlistIds
+                            if (!worthKeeping) null else OrphanedSong(
+                                oldId = id, title = row.title, artist = row.artist, album = row.album,
+                                duration = row.duration, folderPath = row.folderPath, playCount = row.playCount,
+                                lastPlayed = row.lastPlayed, replayGain = row.replayGain, lyrics = lyrics,
+                                translatedLyrics = translated, removedAt = now
+                            )
+                        }
+                    }
+
                     if (dbChanged) {
                         database.withTransaction {
                             toDelete.chunked(900).forEach { audioDao.deleteByIds(it) }
@@ -777,6 +837,20 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             }
                         }
                     }
+                    if (usedOrphanIds.isNotEmpty() || newOrphans.isNotEmpty()) {
+                        val newOrphanIds = newOrphans.mapTo(HashSet()) { it.oldId }
+                        SongIdentity.saveOrphans(
+                            app,
+                            storedOrphans.filter { it.oldId !in usedOrphanIds && it.oldId !in newOrphanIds } + newOrphans
+                        )
+                    }
+                    if (idRemap.isNotEmpty()) {
+                        SongIdentity.applyIdRemap(app, idRemap)
+                        com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                            app, "LibraryScan",
+                            "MediaStore re-indexed ${idRemap.size} songs: playlists, lyrics and queue moved to the new ids"
+                        )
+                    }
                     if (scanSignature != null) {
                         scanPrefs.edit().putString("last_scan_signature", scanSignature).apply()
                     }
@@ -785,13 +859,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     val listFiles = entities.map {
                         if (it.lyrics != null || it.translatedLyrics != null) it.copy(lyrics = null, translatedLyrics = null) else it
                     }
-                    ScanOutcome(listFiles, dbChanged)
+                    ScanOutcome(listFiles, dbChanged, idRemap)
                 }
 
                 if (outcome != null) {
                     if (outcome.dbChanged || !hasSameSongs(localAudioFiles, outcome.files)) {
                         localAudioFiles.clear()
                         localAudioFiles.addAll(outcome.files)
+                        if (outcome.idRemap.isNotEmpty()) {
+                            remapLiveQueue(outcome.idRemap, outcome.files)
+                        }
                         com.kevshupp.kevmusicplayer.ui.screens.clearNoArtCache()
                         loadPlaylists() // also refreshes the smart playlists
                     }
@@ -806,6 +883,44 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 )
             } finally {
                 isScanning.value = false
+            }
+        }
+    }
+
+    // The queue loaded in the player still points at the old content uris of the re-indexed songs
+    private fun remapLiveQueue(idRemap: Map<Long, Long>, songs: List<AudioFile>) {
+        for (oldId in idRemap.keys) {
+            playStatsOverrides.remove(oldId)
+            loadedLyrics.remove(oldId)
+        }
+        val b = browser.value ?: return
+        val songsById = songs.associateBy { it.id }
+        for (i in 0 until b.mediaItemCount) {
+            val oldId = b.getMediaItemAt(i).mediaId.toLongOrNull() ?: continue
+            val song = songsById[idRemap[oldId] ?: continue] ?: continue
+            // The song being heard keeps playing from the file it already has open
+            if (i == b.currentMediaItemIndex && b.isPlaying) continue
+            val trackUri = Uri.parse(song.uriString)
+            val newItem = MediaItem.Builder()
+                .setMediaId(song.id.toString())
+                .setUri(trackUri)
+                .setRequestMetadata(MediaItem.RequestMetadata.Builder().setMediaUri(trackUri).build())
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(song.title)
+                        .setArtist(song.artist)
+                        .setAlbumTitle(song.album)
+                        .setIsPlayable(true)
+                        .setIsBrowsable(false)
+                        .build()
+                )
+                .build()
+            if (i == b.currentMediaItemIndex) {
+                val position = b.currentPosition
+                b.replaceMediaItem(i, newItem)
+                b.seekTo(i, position)
+            } else {
+                b.replaceMediaItem(i, newItem)
             }
         }
     }

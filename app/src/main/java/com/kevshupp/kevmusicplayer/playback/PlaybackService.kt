@@ -65,6 +65,7 @@ class PlaybackService : MediaLibraryService() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var playWhenRestored = false
     private var isRestoring = false
+    private var missingFileStreak = 0
     private var skipToNextWhenRestored = false
     private var skipToPrevWhenRestored = false
     private var playerListener: Player.Listener? = null
@@ -98,6 +99,7 @@ class PlaybackService : MediaLibraryService() {
 
     companion object {
         const val CHANNEL_ID = "playback_channel"
+        private const val MAX_MISSING_FILE_STREAK = 10
     }
 
     override fun onCreate() {
@@ -262,6 +264,7 @@ class PlaybackService : MediaLibraryService() {
                     Player.STATE_ENDED -> "STATE_ENDED"
                     else -> "UNKNOWN ($state)"
                 }
+                if (state == Player.STATE_READY) missingFileStreak = 0
                 TelemetryLogger.logInfo(
                     this@PlaybackService,
                     "Playback_StateChanged",
@@ -365,6 +368,32 @@ class PlaybackService : MediaLibraryService() {
                         } catch (e: Exception) {
                             Log.w("PlaybackService", "Soft recovery failed, skipping to next track: ${e.message}")
                         }
+                    }
+
+                    if (error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND) {
+                        // The file is gone (moved, deleted, or MediaStore re-indexed the card with new ids):
+                        // drop it from the queue so it is not retried, and warn once instead of once per song
+                        missingFileStreak++
+                        val deadIndex = player.currentMediaItemIndex
+                        if (deadIndex in 0 until player.mediaItemCount) {
+                            player.removeMediaItem(deadIndex)
+                        }
+                        if (missingFileStreak == 1) {
+                            Toast.makeText(this@PlaybackService, msg, Toast.LENGTH_LONG).show()
+                        }
+                        if (player.mediaItemCount > 0 && missingFileStreak < MAX_MISSING_FILE_STREAK) {
+                            player.prepare()
+                            player.play()
+                        } else {
+                            val staleMsg = if (targetLang == "es") {
+                                "Las canciones de la cola ya no existen. Vuelve a escanear la biblioteca."
+                            } else {
+                                "The queued songs no longer exist. Rescan your library."
+                            }
+                            Toast.makeText(this@PlaybackService, staleMsg, Toast.LENGTH_LONG).show()
+                            player.pause()
+                        }
+                        return@launch
                     }
 
                     Toast.makeText(this@PlaybackService, msg, Toast.LENGTH_LONG).show()

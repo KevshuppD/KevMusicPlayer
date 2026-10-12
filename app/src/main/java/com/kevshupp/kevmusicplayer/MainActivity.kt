@@ -471,12 +471,14 @@ fun AppNavigation() {
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         if (isDownloading) {
+                            // The indicator re-reads its lambda after the download ends and the state is null again
+                            val currentProgress = downloadProgress ?: 0f
                             Text(
-                                text = "Descargando actualización... ${(downloadProgress!! * 100).toInt()}%",
+                                text = "Descargando actualización... ${(currentProgress * 100).toInt()}%",
                                 color = Color.White.copy(alpha = 0.7f)
                             )
                             androidx.compose.material3.LinearProgressIndicator(
-                                progress = { downloadProgress!! },
+                                progress = { currentProgress },
                                 color = MaterialTheme.colorScheme.primary,
                                 trackColor = Color.White.copy(alpha = 0.1f),
                                 modifier = Modifier.fillMaxWidth()
