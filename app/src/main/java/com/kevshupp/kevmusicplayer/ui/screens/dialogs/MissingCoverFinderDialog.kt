@@ -1304,31 +1304,19 @@ private fun checkSongHasCover(context: Context, uriString: String): Boolean {
             }
         }
 
-        // Check folder cover (.covers hidden dir or legacy cover file)
+        // Check the cover saved for this song's album (.covers hidden dir or internal app covers directory)
+        if (com.kevshupp.kevmusicplayer.playback.findSavedCoverFile(context, uriString, physicalPath) != null) {
+            return true
+        }
+
+        // Check legacy loose cover file next to the audio file
         if (!physicalPath.isNullOrBlank()) {
-            val audioFile = File(physicalPath)
-            val parentDir = audioFile.parentFile
+            val parentDir = File(physicalPath).parentFile
             if (parentDir != null && parentDir.exists() && parentDir.isDirectory) {
-                val hiddenDir = File(parentDir, ".covers")
-                if (hiddenDir.exists() && hiddenDir.isDirectory) {
-                    val hiddenFiles = hiddenDir.listFiles { f -> f.isFile && f.length() > 0 && !f.name.startsWith(".") }
-                    if (!hiddenFiles.isNullOrEmpty()) {
-                        return true
-                    }
-                }
                 val coverNames = listOf("cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg")
                 if (coverNames.map { File(parentDir, it) }.any { it.exists() && it.isFile && it.length() > 0 }) {
                     return true
                 }
-            }
-        }
-
-        // Check internal app covers directory
-        val internalDir = File(context.filesDir, "covers")
-        if (internalDir.exists() && internalDir.isDirectory) {
-            val internalFiles = internalDir.listFiles { f -> f.isFile && f.length() > 0 }
-            if (!internalFiles.isNullOrEmpty()) {
-                return true
             }
         }
     } catch (e: Exception) {

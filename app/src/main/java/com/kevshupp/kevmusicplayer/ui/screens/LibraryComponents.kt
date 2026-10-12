@@ -194,7 +194,7 @@ fun SongListItem(
                     .background(getGradientForString(song.title)),
                 contentAlignment = Alignment.Center
             ) {
-                val artBytes = rememberAlbumArt(song.uriString)
+                val artBytes = rememberAlbumArt(song.uriString, thumbnail = true)
                 if (artBytes != null) {
                     androidx.compose.foundation.Image(
                         bitmap = artBytes.asImageBitmap(),
@@ -630,7 +630,7 @@ fun MiniPlayer(
                         .background(getGradientForString(title)),
                     contentAlignment = Alignment.Center
                 ) {
-                    val artBytes = rememberAlbumArt(currentSongUriString)
+                    val artBytes = rememberAlbumArt(currentSongUriString, thumbnail = true)
                     SubcomposeAsyncImage(
                         model = artBytes,
                         contentDescription = null,
@@ -862,7 +862,35 @@ val albumArtCache = object : LruCache<String, android.graphics.Bitmap>(defaultCa
     }
 }
 
+// Small bitmaps for list rows and mini players, so scrolling doesn't fill the main cache with full-size covers
+private val albumArtThumbCache = object : LruCache<String, android.graphics.Bitmap>((defaultCacheBudgetKb / 3).coerceIn(8 * 1024, 16 * 1024)) {
+    override fun sizeOf(key: String, bitmap: android.graphics.Bitmap): Int {
+        return bitmap.byteCount / 1024
+    }
+}
+
 var albumArtVersion by androidx.compose.runtime.mutableStateOf(0)
+
+// Songs known to have no cover, so the extraction tiers don't re-run every time they scroll into view.
+// Lives only in memory: nothing is written to disk for a missing cover.
+private val noArtUris: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+@Volatile
+private var derivedArtCachesVersion = 0
+
+// Thumbnails and "no cover" entries are derived data: drop them whenever covers are invalidated
+private fun syncDerivedArtCaches() {
+    val version = albumArtVersion
+    if (version != derivedArtCachesVersion) {
+        derivedArtCachesVersion = version
+        albumArtThumbCache.evictAll()
+        noArtUris.clear()
+    }
+}
+
+fun clearNoArtCache() {
+    noArtUris.clear()
+}
 
 fun updateAlbumArtCacheSize(maxSizeItems: Int) {
     try {
@@ -938,6 +966,10 @@ fun preloadAlbumArt(context: android.content.Context, uriString: String) {
     loadAlbumArtBitmap(context, uriString)
 }
 
+fun preloadAlbumArtThumbnail(context: android.content.Context, uriString: String) {
+    loadAlbumArtThumbnail(context, uriString)
+}
+
 private var cachedArtResolution: Int = -1
 private fun getArtResolution(context: android.content.Context): Int {
     if (cachedArtResolution == -1) {
@@ -948,6 +980,15 @@ private fun getArtResolution(context: android.content.Context): Int {
         }
     }
     return cachedArtResolution
+}
+
+private var cachedThumbResolution: Int = -1
+private fun getThumbResolution(context: android.content.Context): Int {
+    if (cachedThumbResolution == -1) {
+        // Enough pixels for a ~64dp list thumbnail on this screen
+        cachedThumbResolution = (64 * context.resources.displayMetrics.density).toInt().coerceIn(96, 256)
+    }
+    return minOf(cachedThumbResolution, getArtResolution(context))
 }
 
 fun getDiskCacheFile(context: android.content.Context, uriString: String, res: Int): java.io.File {
@@ -981,6 +1022,16 @@ private fun saveBitmapToDiskCache(context: android.content.Context, file: java.i
     }
 }
 
+// Reads a cached cover, deleting a leftover 0-byte file on the spot so the real sources get retried
+private fun readDiskCachedArt(diskFile: java.io.File, res: Int): android.graphics.Bitmap? {
+    if (!diskFile.exists() || !diskFile.isFile) return null
+    if (diskFile.length() == 0L) {
+        diskFile.delete()
+        return null
+    }
+    return decodeSampledBitmapFromFile(diskFile.absolutePath, res, res)
+}
+
 fun clearDiskAlbumArtCache(context: android.content.Context) {
     try {
         val dir = java.io.File(context.cacheDir, "album_art_thumbnails")
@@ -988,6 +1039,8 @@ fun clearDiskAlbumArtCache(context: android.content.Context) {
             dir.listFiles()?.forEach { it.delete() }
         }
     } catch (e: Exception) {}
+    albumArtThumbCache.evictAll()
+    noArtUris.clear()
 }
 
 fun deleteDiskAlbumArtCacheForUri(context: android.content.Context, uriString: String) {
@@ -997,7 +1050,13 @@ fun deleteDiskAlbumArtCacheForUri(context: android.content.Context, uriString: S
         if (diskFile.exists()) {
             diskFile.delete()
         }
+        val thumbFile = getDiskCacheFile(context, uriString, getThumbResolution(context))
+        if (thumbFile.exists()) {
+            thumbFile.delete()
+        }
     } catch (e: Exception) {}
+    albumArtThumbCache.remove(uriString)
+    noArtUris.remove(uriString)
 }
 
 fun getDiskAlbumArtCacheSizeBytes(context: android.content.Context): Long {
@@ -1018,41 +1077,31 @@ fun loadAlbumArtBitmapSync(context: android.content.Context, uriString: String):
     if (cachedRam != null) return cachedRam
     val res = getArtResolution(context)
 
-    val diskFile = getDiskCacheFile(context, uriString, res)
-    if (diskFile.exists() && diskFile.isFile) {
-        if (diskFile.length() == 0L) {
-            diskFile.delete()
-            return null
-        }
-        val bmp = decodeSampledBitmapFromFile(diskFile.absolutePath, res, res)
-        if (bmp != null) {
-            albumArtCache.put(uriString, bmp)
-            return bmp
-        }
+    val bmp = readDiskCachedArt(getDiskCacheFile(context, uriString, res), res)
+    if (bmp != null) {
+        albumArtCache.put(uriString, bmp)
     }
-    return null
+    return bmp
 }
 
-fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): android.graphics.Bitmap? {
-    val cachedRam = albumArtCache.get(uriString)
-    if (cachedRam != null) return cachedRam
+private class ArtDecodeResult(
+    val bitmap: android.graphics.Bitmap?,
+    // True when the audio file itself could be reached, i.e. a null bitmap really means "no cover"
+    val sourceReadable: Boolean
+)
 
-    val res = getArtResolution(context)
+private fun decodeAlbumArtFromSources(context: android.content.Context, uriString: String, res: Int): ArtDecodeResult {
+    var decodedResult: android.graphics.Bitmap? = null
 
-    val diskFile = getDiskCacheFile(context, uriString, res)
-    if (diskFile.exists() && diskFile.isFile) {
-        if (diskFile.length() == 0L) {
-            diskFile.delete()
-        } else {
-            val bmp = decodeSampledBitmapFromFile(diskFile.absolutePath, res, res)
-            if (bmp != null) {
-                albumArtCache.put(uriString, bmp)
-                return bmp
-            }
+    // Resolved at most once and shared by every tier that needs it
+    val physicalPath: String? by lazy(LazyThreadSafetyMode.NONE) {
+        try {
+            val songId = uriString.substringAfterLast("/").toLongOrNull()
+            getPhysicalPath(context, songId ?: 0L, uriString)
+        } catch (e: Exception) {
+            null
         }
     }
-
-    var decodedResult: android.graphics.Bitmap? = null
 
     // Tier 1: Hardware/Native MediaStore Thumbnail (Android 10+ / API 29+)
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
@@ -1067,14 +1116,13 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
     // Tier 2: Try reading directly from physical path with MediaMetadataRetriever
     if (decodedResult == null) {
         try {
-            val songId = uriString.substringAfterLast("/").toLongOrNull()
-            val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
-            if (!physicalPath.isNullOrBlank()) {
-                val file = java.io.File(physicalPath)
+            val path = physicalPath
+            if (!path.isNullOrBlank()) {
+                val file = java.io.File(path)
                 if (file.isFile) {
                     val retriever = android.media.MediaMetadataRetriever()
                     try {
-                        retriever.setDataSource(physicalPath)
+                        retriever.setDataSource(path)
                         val picture = retriever.embeddedPicture
                         if (picture != null) {
                             decodedResult = decodeSampledBitmap(picture, res, res)
@@ -1115,51 +1163,27 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
         }
     }
 
-    // Tier 4: Fallback to hidden .covers folder or app internal covers directory
+    // Tier 4: Fallback to the cover saved for this song's album (hidden .covers folder or app internal covers directory)
     if (decodedResult == null) {
         try {
-            val songId = uriString.substringAfterLast("/").toLongOrNull()
-            val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
-            if (!physicalPath.isNullOrBlank()) {
-                val audioFile = java.io.File(physicalPath)
-                val parentDir = audioFile.parentFile
-                if (parentDir != null && parentDir.exists() && parentDir.isDirectory) {
-                    // 1. Check hidden .covers directory (contains .nomedia to protect gallery)
-                    val hiddenDir = java.io.File(parentDir, ".covers")
-                    if (hiddenDir.exists() && hiddenDir.isDirectory) {
-                        val hiddenFiles = hiddenDir.listFiles { f ->
-                            f.isFile && f.length() > 0 && !f.name.startsWith(".") &&
-                            (f.name.endsWith(".jpg", ignoreCase = true) || f.name.endsWith(".png", ignoreCase = true) || f.name.endsWith(".webp", ignoreCase = true))
-                        }
-                        val matchingCover = hiddenFiles?.firstOrNull()
-                        if (matchingCover != null) {
-                            decodedResult = decodeSampledBitmapFromFile(matchingCover.absolutePath, res, res)
-                        }
-                    }
-
-                    // 2. Fallback to legacy loose cover file if present
-                    if (decodedResult == null) {
-                        val coverNames = listOf(
-                            "cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "artwork.jpg",
-                            "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg", "Artwork.jpg",
-                            "cover.png", "folder.png", "album.png", "front.png", "Cover.png", "Folder.png"
-                        )
-                        val foundCover = coverNames.map { java.io.File(parentDir, it) }.firstOrNull { it.exists() && it.isFile && it.length() > 0 }
-                        if (foundCover != null) {
-                            decodedResult = decodeSampledBitmapFromFile(foundCover.absolutePath, res, res)
-                        }
-                    }
-                }
+            val path = physicalPath
+            val savedCover = com.kevshupp.kevmusicplayer.playback.findSavedCoverFile(context, uriString, path)
+            if (savedCover != null) {
+                decodedResult = decodeSampledBitmapFromFile(savedCover.absolutePath, res, res)
             }
 
-            // 3. Check app internal private covers directory
-            if (decodedResult == null) {
-                val internalDir = java.io.File(context.filesDir, "covers")
-                if (internalDir.exists() && internalDir.isDirectory) {
-                    val internalFiles = internalDir.listFiles { f -> f.isFile && f.length() > 0 }
-                    val matchingInternal = internalFiles?.firstOrNull()
-                    if (matchingInternal != null) {
-                        decodedResult = decodeSampledBitmapFromFile(matchingInternal.absolutePath, res, res)
+            // Legacy loose cover file next to the audio file, if present
+            if (decodedResult == null && !path.isNullOrBlank()) {
+                val parentDir = java.io.File(path).parentFile
+                if (parentDir != null && parentDir.exists() && parentDir.isDirectory) {
+                    val coverNames = listOf(
+                        "cover.jpg", "folder.jpg", "album.jpg", "front.jpg", "artwork.jpg",
+                        "Cover.jpg", "Folder.jpg", "Album.jpg", "Front.jpg", "Artwork.jpg",
+                        "cover.png", "folder.png", "album.png", "front.png", "Cover.png", "Folder.png"
+                    )
+                    val foundCover = coverNames.map { java.io.File(parentDir, it) }.firstOrNull { it.exists() && it.isFile && it.length() > 0 }
+                    if (foundCover != null) {
+                        decodedResult = decodeSampledBitmapFromFile(foundCover.absolutePath, res, res)
                     }
                 }
             }
@@ -1169,10 +1193,9 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
     // Tier 5: Jaudiotagger tag parsing fallback for physical audio files
     if (decodedResult == null) {
         try {
-            val songId = uriString.substringAfterLast("/").toLongOrNull()
-            val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
-            if (!physicalPath.isNullOrBlank()) {
-                val file = java.io.File(physicalPath)
+            val path = physicalPath
+            if (!path.isNullOrBlank()) {
+                val file = java.io.File(path)
                 if (file.exists() && file.isFile) {
                     val audioFile = org.jaudiotagger.audio.AudioFileIO.read(file)
                     val tag = audioFile.tag
@@ -1185,29 +1208,129 @@ fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): and
         } catch (e: Exception) {}
     }
 
+    if (decodedResult != null) return ArtDecodeResult(decodedResult, true)
+
+    val sourceReadable = try {
+        val path = physicalPath
+        !path.isNullOrBlank() && java.io.File(path).let { it.isFile && it.canRead() }
+    } catch (e: Exception) {
+        false
+    }
+    return ArtDecodeResult(null, sourceReadable)
+}
+
+fun loadAlbumArtBitmap(context: android.content.Context, uriString: String): android.graphics.Bitmap? {
+    val cachedRam = albumArtCache.get(uriString)
+    if (cachedRam != null) return cachedRam
+    syncDerivedArtCaches()
+
+    val res = getArtResolution(context)
+
+    val diskFile = getDiskCacheFile(context, uriString, res)
+    val diskBmp = readDiskCachedArt(diskFile, res)
+    if (diskBmp != null) {
+        albumArtCache.put(uriString, diskBmp)
+        return diskBmp
+    }
+
+    if (noArtUris.contains(uriString)) return null
+
+    val decoded = decodeAlbumArtFromSources(context, uriString, res)
+    val decodedResult = decoded.bitmap
     if (decodedResult != null) {
         albumArtCache.put(uriString, decodedResult)
         saveBitmapToDiskCache(context, diskFile, decodedResult)
         return decodedResult
     } else {
+        if (decoded.sourceReadable) noArtUris.add(uriString)
         return null
     }
 }
 
+private fun scaleDownToThumb(source: android.graphics.Bitmap, thumbRes: Int): android.graphics.Bitmap {
+    val shortestSide = minOf(source.width, source.height)
+    if (shortestSide <= thumbRes) return source
+    val scale = thumbRes.toFloat() / shortestSide
+    val width = (source.width * scale).toInt().coerceAtLeast(1)
+    val height = (source.height * scale).toInt().coerceAtLeast(1)
+    return android.graphics.Bitmap.createScaledBitmap(source, width, height, true)
+}
+
+fun peekAlbumArtThumbnail(uriString: String): android.graphics.Bitmap? {
+    syncDerivedArtCaches()
+    return albumArtThumbCache.get(uriString)
+}
+
+/**
+ * Loads a small version of the cover for list rows and mini players. Reuses the full-size cover when it
+ * is already cached, and only falls back to the extraction tiers when nothing is cached yet.
+ */
+fun loadAlbumArtThumbnail(context: android.content.Context, uriString: String): android.graphics.Bitmap? {
+    syncDerivedArtCaches()
+    val cachedThumb = albumArtThumbCache.get(uriString)
+    if (cachedThumb != null) return cachedThumb
+
+    val thumbRes = getThumbResolution(context)
+    val thumbFile = getDiskCacheFile(context, uriString, thumbRes)
+    val diskThumb = readDiskCachedArt(thumbFile, thumbRes)
+    if (diskThumb != null) {
+        albumArtThumbCache.put(uriString, diskThumb)
+        return diskThumb
+    }
+
+    var source: android.graphics.Bitmap? = albumArtCache.get(uriString)?.takeIf { !it.isRecycled }
+    if (source == null) {
+        val fullRes = getArtResolution(context)
+        if (fullRes != thumbRes) {
+            source = readDiskCachedArt(getDiskCacheFile(context, uriString, fullRes), thumbRes)
+        }
+    }
+    if (source == null) {
+        if (noArtUris.contains(uriString)) return null
+        val decoded = decodeAlbumArtFromSources(context, uriString, thumbRes)
+        source = decoded.bitmap
+        if (source == null) {
+            if (decoded.sourceReadable) noArtUris.add(uriString)
+            return null
+        }
+    }
+
+    var thumb = try {
+        scaleDownToThumb(source, thumbRes)
+    } catch (t: Throwable) {
+        source
+    }
+    if (thumb.config != android.graphics.Bitmap.Config.RGB_565) {
+        // Covers are opaque, so the 16-bit config halves the memory of each thumbnail
+        thumb = try {
+            thumb.copy(android.graphics.Bitmap.Config.RGB_565, false) ?: thumb
+        } catch (t: Throwable) {
+            thumb
+        }
+    }
+    albumArtThumbCache.put(uriString, thumb)
+    saveBitmapToDiskCache(context, thumbFile, thumb)
+    return thumb
+}
+
+/**
+ * @param thumbnail pass true for small surfaces (list rows, mini players) to load a list-sized bitmap
+ * instead of the full-resolution cover.
+ */
 @Composable
-fun rememberAlbumArt(uriString: String?): android.graphics.Bitmap? {
+fun rememberAlbumArt(uriString: String?, thumbnail: Boolean = false): android.graphics.Bitmap? {
     if (uriString == null) return null
     val context = LocalContext.current
     val version = albumArtVersion
 
-    var bitmap by remember(uriString, version) {
-        mutableStateOf(albumArtCache.get(uriString))
+    var bitmap by remember(uriString, version, thumbnail) {
+        mutableStateOf(if (thumbnail) peekAlbumArtThumbnail(uriString) else albumArtCache.get(uriString))
     }
 
-    LaunchedEffect(uriString, version) {
+    LaunchedEffect(uriString, version, thumbnail) {
         if (bitmap == null) {
             val loadedBmp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                loadAlbumArtBitmap(context, uriString)
+                if (thumbnail) loadAlbumArtThumbnail(context, uriString) else loadAlbumArtBitmap(context, uriString)
             }
             if (loadedBmp != null) {
                 bitmap = loadedBmp
@@ -2050,7 +2173,7 @@ fun SongOptionsBottomSheet(
                         .background(getGradientForString(song.title)),
                     contentAlignment = Alignment.Center
                 ) {
-                    val artBytes = rememberAlbumArt(song.uriString)
+                    val artBytes = rememberAlbumArt(song.uriString, thumbnail = true)
                     SubcomposeAsyncImage(
                         model = artBytes,
                         contentDescription = null,

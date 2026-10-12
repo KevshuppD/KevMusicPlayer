@@ -6,6 +6,13 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
+/** Minimal projection used to match a song against its saved cover file name. */
+data class CoverLookupInfo(
+    val artist: String,
+    val album: String,
+    val title: String
+)
+
 @Dao
 interface AudioDao {
     @Query("SELECT * FROM audio_files ORDER BY title ASC")
@@ -43,6 +50,37 @@ interface AudioDao {
 
     @Query("DELETE FROM audio_files WHERE id NOT IN (:ids)")
     suspend fun keepOnlyIds(ids: List<Long>)
+
+    @Query("DELETE FROM audio_files WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
+    // Updates only the columns that come from a library scan, leaving lyrics, stats and ReplayGain untouched
+    @Query("UPDATE audio_files SET title = :title, artist = :artist, album = :album, genre = :genre, duration = :duration, uriString = :uriString, folderPath = :folderPath, folderName = :folderName, dateAdded = :dateAdded, year = :year, dateModified = :dateModified, track = :track WHERE id = :id")
+    suspend fun updateScannedMetadata(
+        id: Long,
+        title: String,
+        artist: String,
+        album: String,
+        genre: String,
+        duration: Long,
+        uriString: String,
+        folderPath: String,
+        folderName: String,
+        dateAdded: Long,
+        year: String,
+        dateModified: Long,
+        track: Int
+    )
+
+    @Query("UPDATE audio_files SET replayGain = :replayGain WHERE id = :id")
+    suspend fun updateReplayGain(id: Long, replayGain: Float)
+
+    @Query("SELECT COUNT(*) FROM audio_files WHERE lyrics IS NOT NULL AND TRIM(lyrics) != ''")
+    suspend fun countSongsWithLyrics(): Int
+
+    // Blocking variant for the album art loader, which already runs on a background thread
+    @Query("SELECT artist, album, title FROM audio_files WHERE id = :id LIMIT 1")
+    fun getCoverLookupInfoBlocking(id: Long): CoverLookupInfo?
 
     @Query("UPDATE audio_files SET lyrics = :lyrics WHERE id = :id")
     suspend fun updateLyrics(id: Long, lyrics: String?)

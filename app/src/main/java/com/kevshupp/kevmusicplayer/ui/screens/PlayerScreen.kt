@@ -203,7 +203,7 @@ fun PlayerScreen(
 
     val currentSongFile = remember(playerState.currentSong?.mediaId) {
         derivedStateOf {
-            viewModel?.localAudioFiles?.find { it.id.toString() == playerState.currentSong?.mediaId }
+            viewModel?.songWithLyrics(playerState.currentSong?.mediaId)
         }
     }.value
     val lyricsText = currentSongFile?.lyrics
@@ -237,13 +237,21 @@ fun PlayerScreen(
     LaunchedEffect(playerState.currentSong?.mediaId, currentSongFile?.id) {
         val songId = playerState.currentSong?.mediaId
         if (songId != null && currentSongFile != null) {
-            val hasLyrics = !currentSongFile.lyrics.isNullOrBlank()
+            // Lyrics are loaded on demand: wait for this song's stored lyrics before deciding to search online,
+            // so a saved lyric is never replaced by an automatic download
+            val storedLyrics = if (viewModel != null) {
+                viewModel.ensureLyricsLoaded(currentSongFile.id).lyrics
+            } else {
+                currentSongFile.lyrics
+            }
+            val hasLyrics = !storedLyrics.isNullOrBlank()
             if (!hasLyrics) {
                 isAutoSearchingLyrics = true
                 kotlinx.coroutines.delay(600)
                 try {
                     val fetched = LyricsRepository.fetchLyricsFromLrcLib(currentSongFile.artist, currentSongFile.title)
-                    if (!fetched.isNullOrEmpty()) {
+                    val stillMissing = viewModel?.loadedLyrics?.get(currentSongFile.id)?.lyrics.isNullOrBlank()
+                    if (!fetched.isNullOrEmpty() && stillMissing) {
                         viewModel?.updateSongLyrics(currentSongFile.id, fetched)
                     }
                 } catch (e: Exception) {
@@ -2037,7 +2045,7 @@ fun PlayerScreen(
                                 contentType = { _, _ -> "queue_song_item" }
                             ) { index, song ->
                                 val isCurrent = index == playerState.currentMediaItemIndex || (playerState.currentSong?.mediaId == song.id.toString() && queueSongs.indexOfFirst { it.id.toString() == playerState.currentSong?.mediaId } == index)
-                                val songArtBytes = rememberAlbumArt(song.uriString)
+                                val songArtBytes = rememberAlbumArt(song.uriString, thumbnail = true)
 
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),

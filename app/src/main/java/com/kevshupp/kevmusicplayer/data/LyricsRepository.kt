@@ -88,7 +88,11 @@ object LyricsRepository {
         return pattern.containsMatchIn(lrcText)
     }
 
-    suspend fun searchLyricsOptionsFromLrcLib(artist: String, title: String): List<LrcLibSearchResult> {
+    suspend fun searchLyricsOptionsFromLrcLib(
+        artist: String,
+        title: String,
+        errorFlag: java.util.concurrent.atomic.AtomicBoolean? = null
+    ): List<LrcLibSearchResult> {
         return withContext(Dispatchers.IO) {
             val list = mutableListOf<LrcLibSearchResult>()
             val cleanedTitle = cleanSearchTerm(title)
@@ -120,6 +124,7 @@ object LyricsRepository {
 
                 try {
                     client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) errorFlag?.set(true)
                         if (response.isSuccessful) {
                             val body = response.body?.string() ?: return@use
                             val jsonArray = JSONArray(body)
@@ -156,6 +161,7 @@ object LyricsRepository {
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     lastException = e
+                    errorFlag?.set(true)
                 }
 
                 if (list.isNotEmpty()) break
@@ -170,6 +176,7 @@ object LyricsRepository {
                         .url("https://lrclib.net/api/search?track_name=$encTrack&artist_name=$encArtist")
                         .build()
                     client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) errorFlag?.set(true)
                         if (response.isSuccessful) {
                             val body = response.body?.string() ?: ""
                             val jsonArray = JSONArray(body)
@@ -206,6 +213,7 @@ object LyricsRepository {
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     lastException = e
+                    errorFlag?.set(true)
                 }
             }
 
@@ -225,7 +233,65 @@ object LyricsRepository {
         }
     }
 
-    suspend fun fetchLyricsFromLrcLib(artist: String, title: String): String? {
+    // Remembers songs LrcLib had no lyrics for, so automatic lookups don't hit the network on every play
+    private const val LYRICS_MISS_PREFS = "lyrics_miss_cache"
+    private const val LYRICS_MISS_TTL_MS = 7L * 24 * 60 * 60 * 1000
+    private val recentLyricsMisses = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun lyricsMissKey(artist: String, title: String): String =
+        "${artist.trim().lowercase()}|${title.trim().lowercase()}"
+
+    private fun lyricsMissPrefs(): android.content.SharedPreferences? = try {
+        KevMusicPlayerApplication.instance.getSharedPreferences(LYRICS_MISS_PREFS, android.content.Context.MODE_PRIVATE)
+    } catch (t: Throwable) {
+        null
+    }
+
+    private fun isRecentLyricsMiss(key: String): Boolean {
+        var timestamp = recentLyricsMisses[key] ?: 0L
+        if (timestamp == 0L) {
+            timestamp = lyricsMissPrefs()?.getLong(key, 0L) ?: 0L
+            if (timestamp > 0L) recentLyricsMisses[key] = timestamp
+        }
+        return timestamp > 0L && System.currentTimeMillis() - timestamp < LYRICS_MISS_TTL_MS
+    }
+
+    private fun recordLyricsMiss(key: String) {
+        val now = System.currentTimeMillis()
+        recentLyricsMisses[key] = now
+        lyricsMissPrefs()?.edit()?.putLong(key, now)?.apply()
+    }
+
+    private fun clearLyricsMiss(key: String) {
+        if (recentLyricsMisses.remove(key) != null) {
+            lyricsMissPrefs()?.edit()?.remove(key)?.apply()
+        }
+    }
+
+    /**
+     * @param useMissCache when true, a song that LrcLib recently had no lyrics for is skipped without
+     * touching the network. Pass false for lookups the user explicitly asked for.
+     */
+    suspend fun fetchLyricsFromLrcLib(artist: String, title: String, useMissCache: Boolean = true): String? {
+        val missKey = lyricsMissKey(artist, title)
+        if (useMissCache && isRecentLyricsMiss(missKey)) return null
+
+        val hadError = java.util.concurrent.atomic.AtomicBoolean(false)
+        val result = fetchLyricsFromLrcLibUncached(artist, title, hadError)
+        if (!result.isNullOrEmpty()) {
+            clearLyricsMiss(missKey)
+        } else if (!hadError.get()) {
+            // Only a clean "not found" counts as a miss; network failures must be retried next time
+            recordLyricsMiss(missKey)
+        }
+        return result
+    }
+
+    private suspend fun fetchLyricsFromLrcLibUncached(
+        artist: String,
+        title: String,
+        hadError: java.util.concurrent.atomic.AtomicBoolean
+    ): String? {
         return withContext(Dispatchers.IO) {
             val cleanedTitle = cleanSearchTerm(title)
             val cleanedArtist = cleanSearchTerm(artist)
@@ -252,15 +318,18 @@ object LyricsRepository {
                                     return@withContext plainLyrics
                                 }
                             }
+                        } else if (response.code != 404) {
+                            hadError.set(true)
                         }
                     }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
+                    hadError.set(true)
                 }
             }
 
             // Pass 2: Search with searchLyricsOptionsFromLrcLib
-            val results = searchLyricsOptionsFromLrcLib(artist, title)
+            val results = searchLyricsOptionsFromLrcLib(artist, title, hadError)
             if (results.isNotEmpty()) {
                 val syncedMatch = results.firstOrNull { !it.syncedLyrics.isNullOrBlank() }
                 if (syncedMatch != null) return@withContext syncedMatch.syncedLyrics

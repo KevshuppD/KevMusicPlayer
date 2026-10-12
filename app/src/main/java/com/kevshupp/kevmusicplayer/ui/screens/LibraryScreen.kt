@@ -322,7 +322,8 @@ fun LibraryScreen(
                             ?: viewModel?.playlists?.get(sv.playlistName) ?: emptyList()
                     }
                     is SubView.HistoryDetail -> {
-                        filteredFiles.filter { it.lastPlayed > 0L }
+                        filteredFiles.map { viewModel?.withStats(it) ?: it }
+                            .filter { it.lastPlayed > 0L }
                             .sortedByDescending { it.lastPlayed }
                     }
                     else -> emptyList()
@@ -885,7 +886,9 @@ fun LibraryScreen(
                     is SubView.HistoryDetail -> if (systemLang == "es") "Historial" else "History"
                     is SubView.RecentlyAddedDetail -> if (systemLang == "es") "Nuevas" else "New Added"
                 }
-                 val subSongs = remember(filteredFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy) {
+                 // Play stats live outside the song list, so only the history view needs to follow them
+                 val historyStatsVersion = if (subView is SubView.HistoryDetail) viewModel?.statsVersion?.intValue ?: 0 else 0
+                 val subSongs = remember(filteredFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy, historyStatsVersion) {
                     val baseList = when (subView) {
                         is SubView.AlbumDetail -> {
                             filteredFiles.filter { it.album == subView.albumName }
@@ -902,7 +905,8 @@ fun LibraryScreen(
                                 ?: viewModel?.playlists?.get(subView.playlistName) ?: emptyList()
                         }
                         is SubView.HistoryDetail -> {
-                            filteredFiles.filter { it.lastPlayed > 0L }
+                            filteredFiles.map { viewModel?.withStats(it) ?: it }
+                                .filter { it.lastPlayed > 0L }
                                 .sortedByDescending { it.lastPlayed }
                         }
                         is SubView.RecentlyAddedDetail -> {
@@ -2076,7 +2080,7 @@ fun LibraryScreen(
     MusicInsightsScreen(
         visible = showInsights,
         onDismiss = { showInsights = false },
-        audioFiles = audioFiles,
+        audioFiles = if (showInsights) viewModel?.audioFilesWithStats ?: audioFiles else audioFiles,
         getLocalized = getLocalized,
         onPlaySongs = { songs, startIndex ->
             val first = songs.getOrNull(startIndex) ?: songs.firstOrNull()

@@ -14,8 +14,8 @@ android {
         applicationId = "com.kevshupp.kevmusicplayer"
         minSdk = 33
         targetSdk = 37
-        versionCode = 43
-        versionName = "1.2.39"
+        versionCode = 44
+        versionName = "1.2.40"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

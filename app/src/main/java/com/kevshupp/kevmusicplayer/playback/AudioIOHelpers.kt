@@ -404,6 +404,45 @@ fun writeMetadataWithTagLib(context: android.content.Context, physicalPath: Stri
     return false
 }
 
+/** File name used for a cover saved by [saveFolderCoverArt]; the loader uses the same name to find it again. */
+fun folderCoverFileName(artist: String?, albumOrTitle: String?): String {
+    val cleanArtist = artist?.replace(Regex("[\\\\/:*?\"<>|]"), "_")?.trim() ?: ""
+    val cleanAlbumOrTitle = albumOrTitle?.replace(Regex("[\\\\/:*?\"<>|]"), "_")?.trim() ?: ""
+    return when {
+        cleanArtist.isNotBlank() && cleanAlbumOrTitle.isNotBlank() -> "cover_${cleanArtist}_$cleanAlbumOrTitle.jpg"
+        cleanAlbumOrTitle.isNotBlank() -> "cover_$cleanAlbumOrTitle.jpg"
+        cleanArtist.isNotBlank() -> "cover_$cleanArtist.jpg"
+        else -> "cover.jpg"
+    }
+}
+
+/**
+ * Finds the cover saved for this specific song's album, in the hidden '.covers' folder next to the audio
+ * file or in the app's private covers directory. Only a file saved for the same artist/album matches, so
+ * a song without art never borrows another album's cover. Must be called off the main thread.
+ */
+fun findSavedCoverFile(context: android.content.Context, uriString: String, physicalPath: String?): File? {
+    val songId = uriString.substringAfterLast("/").toLongOrNull() ?: return null
+    val info = try {
+        com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(context).audioDao().getCoverLookupInfoBlocking(songId)
+    } catch (e: Exception) {
+        null
+    } ?: return null
+    val coverFileName = folderCoverFileName(info.artist, info.album.ifBlank { info.title })
+
+    if (!physicalPath.isNullOrBlank()) {
+        val parentDir = File(physicalPath).parentFile
+        if (parentDir != null) {
+            val hiddenCover = File(File(parentDir, ".covers"), coverFileName)
+            if (hiddenCover.isFile && hiddenCover.length() > 0) return hiddenCover
+        }
+    }
+
+    val internalCover = File(File(context.filesDir, "covers"), coverFileName)
+    if (internalCover.isFile && internalCover.length() > 0) return internalCover
+    return null
+}
+
 fun saveFolderCoverArt(
     context: android.content.Context,
     physicalPathOrFolder: String,
@@ -422,14 +461,7 @@ fun saveFolderCoverArt(
             }
         }
         
-        val cleanArtist = artist?.replace(Regex("[\\\\/:*?\"<>|]"), "_")?.trim() ?: ""
-        val cleanAlbumOrTitle = albumOrTitle?.replace(Regex("[\\\\/:*?\"<>|]"), "_")?.trim() ?: ""
-        val coverFileName = when {
-            cleanArtist.isNotBlank() && cleanAlbumOrTitle.isNotBlank() -> "cover_${cleanArtist}_$cleanAlbumOrTitle.jpg"
-            cleanAlbumOrTitle.isNotBlank() -> "cover_$cleanAlbumOrTitle.jpg"
-            cleanArtist.isNotBlank() -> "cover_$cleanArtist.jpg"
-            else -> "cover.jpg"
-        }
+        val coverFileName = folderCoverFileName(artist, albumOrTitle)
 
         // 1. Save in app internal private storage (100% hidden and invisible to gallery apps)
         try {

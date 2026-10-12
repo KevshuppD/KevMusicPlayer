@@ -413,7 +413,7 @@ fun SongSearchResultItem(
     onSongClick: (AudioFile, List<AudioFile>) -> Unit,
     queue: List<AudioFile>
 ) {
-    val artBytes = rememberAlbumArt(song.uriString)
+    val artBytes = rememberAlbumArt(song.uriString, thumbnail = true)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -485,7 +485,7 @@ fun AlbumSearchResultItem(
     artUriString: String?,
     onClick: () -> Unit
 ) {
-    val artBytes = rememberAlbumArt(artUriString)
+    val artBytes = rememberAlbumArt(artUriString, thumbnail = true)
     Row(
         modifier = Modifier
             .fillMaxWidth()

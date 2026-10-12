@@ -24,7 +24,9 @@ class BatchLyricsManager(
     private val audioDao: AudioDao,
     private val localAudioFiles: SnapshotStateList<AudioFile>,
     private val coroutineScope: CoroutineScope,
-    private val onPlaylistsReloadNeeded: () -> Unit
+    // The song list no longer carries lyrics, so the owner is told what changed in the database instead
+    private val onLyricsSaved: (songId: Long, lyrics: String) -> Unit,
+    private val onAllLyricsDeleted: () -> Unit
 ) {
     val isDownloadingAllLyrics = mutableStateOf(false)
     val isDeletingAllLyrics = mutableStateOf(false)
@@ -88,7 +90,8 @@ class BatchLyricsManager(
                         notificationManager.notify(notificationId, builder.build())
                     }
 
-                    val dbHasSynced = !song.lyrics.isNullOrBlank() && LyricsRepository.isLrcSynced(song.lyrics)
+                    val dbLyrics = song.lyrics ?: audioDao.getLyricsById(song.id)
+                    val dbHasSynced = !dbLyrics.isNullOrBlank() && LyricsRepository.isLrcSynced(dbLyrics)
 
                     if (dbHasSynced) {
                         skippedCount++
@@ -102,10 +105,11 @@ class BatchLyricsManager(
                             skippedCount++
                         } else {
                             try {
-                                val fetched = LyricsRepository.fetchLyricsFromLrcLib(song.artist, song.title)
+                                // Explicit user request: always ask LrcLib, even for songs it recently had nothing for
+                                val fetched = LyricsRepository.fetchLyricsFromLrcLib(song.artist, song.title, useMissCache = false)
                                 if (!fetched.isNullOrEmpty()) {
                                     val fetchedIsSynced = LyricsRepository.isLrcSynced(fetched)
-                                    if (fetchedIsSynced || song.lyrics.isNullOrBlank()) {
+                                    if (fetchedIsSynced || dbLyrics.isNullOrBlank()) {
                                         audioDao.updateLyrics(song.id, fetched)
                                         pendingListUpdates[song.id] = fetched
                                         saveLyricsPhysical(context, song.id, song.title, song.folderPath, fetched)
@@ -128,18 +132,13 @@ class BatchLyricsManager(
                         val batch = pendingListUpdates.toMap()
                         pendingListUpdates.clear()
                         withContext(Dispatchers.Main) {
-                            batch.forEach { (songId, lyricsText) ->
-                                val listIndex = localAudioFiles.indexOfFirst { it.id == songId }
-                                if (listIndex != -1) {
-                                    localAudioFiles[listIndex] = localAudioFiles[listIndex].copy(lyrics = lyricsText)
-                                }
-                            }
+                            batch.forEach { (songId, lyricsText) -> onLyricsSaved(songId, lyricsText) }
                         }
                     }
                 }
 
                 notificationManager.cancel(notificationId)
-                val totalWithLyricsNow = localAudioFiles.count { !it.lyrics.isNullOrBlank() }
+                val totalWithLyricsNow = audioDao.countSongsWithLyrics()
                 downloadAllLyricsSuccessCount.value = downloadedSuccessCount
 
                 val summaryText = getLocalized(
@@ -166,12 +165,7 @@ class BatchLyricsManager(
                     val batch = pendingListUpdates.toMap()
                     pendingListUpdates.clear()
                     withContext(Dispatchers.Main) {
-                        batch.forEach { (songId, lyricsText) ->
-                            val listIndex = localAudioFiles.indexOfFirst { it.id == songId }
-                            if (listIndex != -1) {
-                                localAudioFiles[listIndex] = localAudioFiles[listIndex].copy(lyrics = lyricsText)
-                            }
-                        }
+                        batch.forEach { (songId, lyricsText) -> onLyricsSaved(songId, lyricsText) }
                     }
                 }
                 notificationManager.cancel(notificationId)
@@ -243,12 +237,7 @@ class BatchLyricsManager(
                     }
                 }
 
-                localAudioFiles.indices.forEach { index ->
-                    val file = localAudioFiles[index]
-                    localAudioFiles[index] = file.copy(lyrics = null, translatedLyrics = null)
-                }
-
-                onPlaylistsReloadNeeded()
+                onAllLyricsDeleted()
 
                 withContext(Dispatchers.Main) {
                     isDeletingAllLyrics.value = false

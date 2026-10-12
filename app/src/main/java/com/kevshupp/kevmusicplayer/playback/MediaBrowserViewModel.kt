@@ -16,6 +16,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaBrowser
 import androidx.media3.session.SessionToken
+import androidx.room.withTransaction
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.data.AudioScanner
 import com.kevshupp.kevmusicplayer.data.AppDatabase
@@ -39,6 +40,14 @@ import android.content.Intent
 import androidx.compose.runtime.getValue
 import com.kevshupp.kevmusicplayer.ui.screens.stripAccents
 
+private class ScanOutcome(val files: List<AudioFile>, val dbChanged: Boolean)
+
+/** Live listening stats of a song, kept outside the song list so a play doesn't invalidate the whole library. */
+data class PlayStats(val playCount: Int, val lastPlayed: Long)
+
+/** Lyrics of a song loaded on demand from the database; the song list itself never carries them. */
+data class SongLyrics(val lyrics: String?, val translatedLyrics: String?)
+
 class MediaBrowserViewModel(application: Application) : AndroidViewModel(application) {
     private var initialDbLoadJob: kotlinx.coroutines.Job? = null
     private var browserFuture: ListenableFuture<MediaBrowser>? = null
@@ -52,6 +61,53 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             song.id to "${song.title.stripAccents()} ${song.artist.stripAccents()} ${song.album.stripAccents()} ${song.genre.stripAccents()}"
         }
     }
+
+    // Play counts that changed since the list was loaded. Screens that rank by listening stats read
+    // audioFilesWithStats; everything else keeps reading localAudioFiles, which stays stable while playing.
+    val playStatsOverrides = androidx.compose.runtime.mutableStateMapOf<Long, PlayStats>()
+    val statsVersion = androidx.compose.runtime.mutableIntStateOf(0)
+
+    fun withStats(song: AudioFile): AudioFile {
+        val stats = playStatsOverrides[song.id] ?: return song
+        return if (stats.playCount == song.playCount && stats.lastPlayed == song.lastPlayed) song
+        else song.copy(playCount = stats.playCount, lastPlayed = stats.lastPlayed)
+    }
+
+    val audioFilesWithStats: List<AudioFile> by androidx.compose.runtime.derivedStateOf {
+        if (playStatsOverrides.isEmpty()) localAudioFiles.toList() else localAudioFiles.map { withStats(it) }
+    }
+
+    // Lyrics of the songs played this session, loaded on demand from SQLite
+    val loadedLyrics = androidx.compose.runtime.mutableStateMapOf<Long, SongLyrics>()
+
+    /** Returns the stored lyrics of a song, reading them from SQLite the first time they are needed. */
+    suspend fun ensureLyricsLoaded(id: Long): SongLyrics {
+        loadedLyrics[id]?.let { return it }
+        val fromDb = withContext(Dispatchers.IO) {
+            SongLyrics(audioDao.getLyricsById(id), audioDao.getTranslatedLyricsById(id))
+        }
+        // Keep anything saved while the query was running
+        return loadedLyrics[id] ?: fromDb.also { loadedLyrics[id] = it }
+    }
+
+    fun songWithLyrics(mediaId: String?): AudioFile? {
+        val song = audioFileMap[mediaId ?: return null] ?: return null
+        val lyrics = loadedLyrics[song.id] ?: return song
+        return song.copy(lyrics = lyrics.lyrics, translatedLyrics = lyrics.translatedLyrics)
+    }
+
+    // Songs whose sidecar/embedded lyrics were already checked, or that LrcLib already answered for, this session
+    private val localLyricsCheckedIds = HashSet<Long>()
+    private val onlineLyricsFoundIds = HashSet<Long>()
+
+    private fun clearPerSongOverlays() {
+        playStatsOverrides.clear()
+        statsVersion.intValue++
+        loadedLyrics.clear()
+        localLyricsCheckedIds.clear()
+        onlineLyricsFoundIds.clear()
+    }
+
     val enabledTabs = mutableStateOf(run {
         val prefs = application.getSharedPreferences("playback_prefs", android.content.Context.MODE_PRIVATE)
         val saved = prefs.getString("enabled_tabs", null)
@@ -82,7 +138,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         audioDao = audioDao,
         localAudioFiles = localAudioFiles,
         coroutineScope = viewModelScope,
-        onPlaylistsReloadNeeded = { loadPlaylists() }
+        onLyricsSaved = { songId, lyrics ->
+            // Only songs already loaded this session are kept in memory; the rest are read from SQLite when played
+            loadedLyrics[songId]?.let { loadedLyrics[songId] = it.copy(lyrics = lyrics) }
+        },
+        onAllLyricsDeleted = {
+            loadedLyrics.clear()
+            localLyricsCheckedIds.clear()
+            onlineLyricsFoundIds.clear()
+        }
     )
     val isDownloadingAllLyrics get() = batchLyricsManager.isDownloadingAllLyrics
     val isDeletingAllLyrics get() = batchLyricsManager.isDeletingAllLyrics
@@ -134,13 +198,13 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     updateSmartPlaylists()
                 }
 
-                // Pre-warm disk thumbnail cache in background for initial batch of songs
+                // Pre-warm the list thumbnail cache in background for initial batch of songs
                 val appCtx = getApplication<android.app.Application>()
                 val itemsToPrewarm = localAudioFiles.take(150).map { it.uriString }
                 viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                     for (uriStr in itemsToPrewarm) {
                         try {
-                            com.kevshupp.kevmusicplayer.ui.screens.preloadAlbumArt(appCtx, uriStr)
+                            com.kevshupp.kevmusicplayer.ui.screens.preloadAlbumArtThumbnail(appCtx, uriStr)
                         } catch (e: Exception) {}
                     }
                 }
@@ -432,7 +496,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         val mediaId = mediaItem.mediaId
                         if (mediaId.isNotBlank()) {
                             urisToPreload.add("content://media/external/audio/media/$mediaId")
-                            val audioFile = localAudioFiles.find { it.id.toString() == mediaId }
+                            val audioFile = audioFileMap[mediaId]
                             if (audioFile != null && audioFile.uriString.isNotBlank()) {
                                 urisToPreload.add(audioFile.uriString)
                             }
@@ -478,35 +542,21 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     kotlinx.coroutines.delay(100)
                     attempts++
                 }
-                val song = localAudioFiles.find { it.id == id } ?: return@launch
-                
-                // 0. If lyrics or translated lyrics are not yet loaded in RAM, load them from SQLite DB
-                var currentSongLyrics = song.lyrics
-                var currentSongTranslation = song.translatedLyrics
-                if (currentSongLyrics == null || currentSongTranslation == null) {
-                    val (dbLyrics, dbTranslation) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        val l = if (currentSongLyrics == null) audioDao.getLyricsById(id) else currentSongLyrics
-                        val t = if (currentSongTranslation == null) audioDao.getTranslatedLyricsById(id) else currentSongTranslation
-                        l to t
-                    }
-                    if (dbLyrics != currentSongLyrics || dbTranslation != currentSongTranslation) {
-                        currentSongLyrics = dbLyrics
-                        currentSongTranslation = dbTranslation
-                        val index = localAudioFiles.indexOfFirst { it.id == id }
-                        if (index != -1) {
-                            localAudioFiles[index] = localAudioFiles[index].copy(
-                                lyrics = dbLyrics,
-                                translatedLyrics = dbTranslation
-                            )
-                        }
-                    }
-                }
+                val song = audioFileMap[id.toString()] ?: return@launch
 
-                // 1. Check local/embedded sources first (LRC file next to it or embedded tag) on Dispatchers.IO
-                val localLyrics = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                // 0. Lyrics are kept out of the song list: load this song's from SQLite the first time it plays
+                val loaded = ensureLyricsLoaded(id)
+                val currentSongLyrics = loaded.lyrics
+                var currentSongTranslation = loaded.translatedLyrics
+                val dbIsSynced = LyricsRepository.isLrcSynced(currentSongLyrics)
+
+                // 1. Check local/embedded sources (LRC file next to it or embedded tag) on Dispatchers.IO.
+                // Skipped when there is nothing to gain: synced lyrics already stored, or already checked this session.
+                val alreadyCheckedLocal = !localLyricsCheckedIds.add(id)
+                val localLyrics = if (alreadyCheckedLocal || dbIsSynced) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     readLocalLrcOrEmbedded(context, song)
                 }
-                val localTranslation = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val localTranslation = if (alreadyCheckedLocal || !currentSongTranslation.isNullOrBlank()) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     readLocalTranslatedLrcOrEmbedded(context, song)
                 }
                 if (!localTranslation.isNullOrBlank() && currentSongTranslation != localTranslation) {
@@ -516,10 +566,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
                 if (!localLyrics.isNullOrBlank()) {
                     val localIsSynced = LyricsRepository.isLrcSynced(localLyrics)
-                    val dbIsSynced = LyricsRepository.isLrcSynced(currentSongLyrics)
-                    
+
                     // If local is synced, or if DB is empty, use local lyrics!
-                    if (localIsSynced || (currentSongLyrics.isNullOrBlank() && !localIsSynced)) {
+                    if (localIsSynced || currentSongLyrics.isNullOrBlank()) {
                         if (currentSongLyrics != localLyrics) {
                             updateSongLyrics(id, localLyrics)
                         }
@@ -530,16 +579,21 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
 
                 // 2. If currently stored DB lyrics are already synchronized, do not fetch online
-                if (LyricsRepository.isLrcSynced(currentSongLyrics)) {
+                if (dbIsSynced) {
                     return@launch
                 }
 
-                // 3. If currently stored/local lyrics are either blank or unsynced, fetch from LrcLib!
+                // 3. If currently stored/local lyrics are either blank or unsynced, fetch from LrcLib,
+                // unless it already answered for this song in this session (not-found answers are remembered by the repository)
+                if (id in onlineLyricsFoundIds) {
+                    return@launch
+                }
                 val fetched = LyricsRepository.fetchLyricsFromLrcLib(song.artist, song.title)
                 if (!fetched.isNullOrEmpty()) {
+                    onlineLyricsFoundIds.add(id)
                     val fetchedIsSynced = LyricsRepository.isLrcSynced(fetched)
                     // If fetched lyrics are synced, or we currently have nothing, update!
-                    if (fetchedIsSynced || song.lyrics.isNullOrBlank()) {
+                    if (fetchedIsSynced || currentSongLyrics.isNullOrBlank()) {
                         updateSongLyrics(id, fetched)
                     }
                 }
@@ -561,9 +615,26 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             try {
                 initialDbLoadJob?.join()
-                val updatedFilesList = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    // 0. Fetch existing cached entities first to bypass slow disk I/O on unchanged files
-                    val existingEntities = audioDao.getAllAudioFiles().associateBy { it.id }
+                val isLocalEmpty = localAudioFiles.isEmpty()
+                val outcome = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val app = getApplication<android.app.Application>()
+                    val prefs = app.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+                    val excludedJson = prefs.getString("excluded_folders", "[]") ?: "[]"
+                    val selectedMusicFolder = prefs.getString("music_folder_path", null)
+
+                    // Automatic scans are skipped entirely while MediaStore and the folder filters are unchanged
+                    // since the last completed scan. Manual scans always run.
+                    val scanPrefs = app.getSharedPreferences("scan_prefs", android.content.Context.MODE_PRIVATE)
+                    val scanSignature = computeScanSignature(app, selectedMusicFolder, excludedJson)
+                    if (!isManual && !isLocalEmpty && scanSignature != null &&
+                        scanSignature == scanPrefs.getString("last_scan_signature", null)
+                    ) {
+                        return@withContext null
+                    }
+
+                    // 0. Fetch existing cached entities first to bypass slow disk I/O on unchanged files.
+                    // Lyrics stay in SQLite: they are never rewritten by a scan, so there is no need to load them.
+                    val existingEntities = audioDao.getAllAudioFilesLightweight().associateBy { it.id }
 
                     // 1. Perform background MediaStore scanning, passing the existing cache map
                     val scannedFiles = audioScanner.scanAudioFiles(existingEntities)
@@ -573,8 +644,6 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
 
                     // Exclude folders filtering
-                    val prefs = getApplication<android.app.Application>().getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
-                    val excludedJson = prefs.getString("excluded_folders", "[]") ?: "[]"
                     val excludedFolders = try {
                         val jsonArray = org.json.JSONArray(excludedJson)
                         (0 until jsonArray.length()).map { jsonArray.getString(it) }
@@ -587,8 +656,6 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         emptyList<String>()
                     }
 
-                    val selectedMusicFolder = prefs.getString("music_folder_path", null)
-
                     val filteredScanned = scannedFiles.filter { file ->
                         val isInsideSelected = if (selectedMusicFolder != null) {
                             file.folderPath.startsWith(selectedMusicFolder)
@@ -600,8 +667,6 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         }
                     }
                     
-                    // Note: We use localAudioFiles.isEmpty() check. To read it safely on IO, we can pass its size or empty status
-                    val isLocalEmpty = localAudioFiles.isEmpty()
                     if (filteredScanned.isEmpty() && !isManual && !isLocalEmpty) {
                         // Automatic scan returned empty, but we already have songs cached in memory.
                         // Keep the cache intact and display the saved songs so the user is never met with an empty screen!
@@ -609,13 +674,18 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                     
                     // 2. Map scanned files to database entities, preserving custom edited lyrics and metadata
+                    // Index for re-matching files whose MediaStore id changed, built only if such a file shows up
+                    val existingByTitle by lazy(LazyThreadSafetyMode.NONE) {
+                        existingEntities.values.groupBy { it.title.trim().lowercase() }
+                    }
                     val entities = filteredScanned.map { file ->
-                        val existing = existingEntities[file.id] ?: existingEntities.values.find {
+                        val sameIdExisting = existingEntities[file.id]
+                        val existing = sameIdExisting ?: existingByTitle[file.title.trim().lowercase()]?.find {
                             it.title.trim().equals(file.title.trim(), ignoreCase = true) &&
                             (it.artist.trim().equals(file.artist.trim(), ignoreCase = true) || it.artist.isBlank() || file.artist.isBlank()) &&
                             Math.abs(it.duration - file.duration) < 4000
                         }
-                        if (existing != null && existing.dateModified == file.dateModified) {
+                        val merged = if (existing != null && existing.dateModified == file.dateModified) {
                             // File has not been modified on disk. Preserve user's database metadata edits!
                             file.copy(
                                 title = existing.title,
@@ -682,28 +752,72 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             // New file from MediaStore (fast indexed metadata)
                             file
                         }
+                        if (sameIdExisting == null && existing != null) {
+                            // The file got a new MediaStore id: carry its lyrics over from the old row
+                            merged.copy(
+                                lyrics = audioDao.getLyricsById(existing.id),
+                                translatedLyrics = audioDao.getTranslatedLyricsById(existing.id)
+                            )
+                        } else {
+                            merged
+                        }
                     }
                     
-                    // 3. Write to Room database (single transaction cache sync)
+                    // 3. Write only the differences to Room, in a single transaction
+                    val scannedIds = HashSet<Long>(entities.size * 2)
+                    entities.forEach { scannedIds.add(it.id) }
+                    val toInsert = entities.filter { it.id !in existingEntities }
+                    val toUpdate = entities.filter { entity ->
+                        val previous = existingEntities[entity.id]
+                        previous != null && previous != entity
+                    }
                     // Clean up old files that were deleted from device storage
-                    val scannedIds = filteredScanned.map { it.id }
-                    if (scannedIds.isNotEmpty()) {
-                        audioDao.keepOnlyIds(scannedIds)
-                        audioDao.insertAll(entities)
-                    } else {
-                        audioDao.deleteAll()
+                    val toDelete = existingEntities.keys.filter { it !in scannedIds }
+                    val dbChanged = toInsert.isNotEmpty() || toUpdate.isNotEmpty() || toDelete.isNotEmpty()
+                    if (dbChanged) {
+                        database.withTransaction {
+                            toDelete.chunked(900).forEach { audioDao.deleteByIds(it) }
+                            if (toInsert.isNotEmpty()) {
+                                audioDao.insertAll(toInsert)
+                            }
+                            toUpdate.forEach { entity ->
+                                audioDao.updateScannedMetadata(
+                                    id = entity.id,
+                                    title = entity.title,
+                                    artist = entity.artist,
+                                    album = entity.album,
+                                    genre = entity.genre,
+                                    duration = entity.duration,
+                                    uriString = entity.uriString,
+                                    folderPath = entity.folderPath,
+                                    folderName = entity.folderName,
+                                    dateAdded = entity.dateAdded,
+                                    year = entity.year,
+                                    dateModified = entity.dateModified,
+                                    track = entity.track
+                                )
+                            }
+                        }
                     }
-                    
-                    entities
+                    if (scanSignature != null) {
+                        scanPrefs.edit().putString("last_scan_signature", scanSignature).apply()
+                    }
+
+                    // The in-memory list never carries lyrics
+                    val listFiles = entities.map {
+                        if (it.lyrics != null || it.translatedLyrics != null) it.copy(lyrics = null, translatedLyrics = null) else it
+                    }
+                    ScanOutcome(listFiles, dbChanged)
                 }
 
-                if (updatedFilesList != null) {
-                    if (localAudioFiles != updatedFilesList) {
+                if (outcome != null) {
+                    if (outcome.dbChanged || !hasSameSongs(localAudioFiles, outcome.files)) {
                         localAudioFiles.clear()
-                        localAudioFiles.addAll(updatedFilesList)
+                        localAudioFiles.addAll(outcome.files)
+                        com.kevshupp.kevmusicplayer.ui.screens.clearNoArtCache()
+                        loadPlaylists()
+                        updateSmartPlaylists()
                     }
-                    loadPlaylists()
-                    updateSmartPlaylists()
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -716,6 +830,27 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             } finally {
                 isScanning.value = false
             }
+        }
+    }
+
+    // Changes whenever MediaStore content or the folder filters change; null if it cannot be determined
+    private fun computeScanSignature(context: Context, musicFolder: String?, excludedJson: String): String? {
+        return try {
+            val version = android.provider.MediaStore.getVersion(context)
+            val generation = android.provider.MediaStore.getGeneration(context, android.provider.MediaStore.VOLUME_EXTERNAL)
+            "$version|$generation|${musicFolder.orEmpty()}|$excludedJson"
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // Order-insensitive comparison that ignores play stats, which live in playStatsOverrides
+    private fun hasSameSongs(current: List<AudioFile>, scanned: List<AudioFile>): Boolean {
+        if (current.size != scanned.size) return false
+        val currentById = current.associateBy { it.id }
+        return scanned.all { song ->
+            val known = currentById[song.id] ?: return@all false
+            known.copy(playCount = song.playCount, lastPlayed = song.lastPlayed) == song
         }
     }
 
@@ -856,11 +991,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             try {
                 audioDao.updateLyrics(id, newLyrics)
                 audioDao.updateTranslatedLyrics(id, null)
-                val index = localAudioFiles.indexOfFirst { it.id == id }
-                if (index != -1) {
-                    val file = localAudioFiles[index]
-                    localAudioFiles[index] = file.copy(lyrics = newLyrics, translatedLyrics = null)
-                    
+                loadedLyrics[id] = SongLyrics(newLyrics, null)
+                val file = audioFileMap[id.toString()]
+                if (file != null) {
                     // Physically write lyrics inside the song metadata and LRC file next to it!
                     if (!newLyrics.isNullOrBlank()) {
                         withContext(Dispatchers.IO) {
@@ -868,7 +1001,6 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         }
                     }
                 }
-                loadPlaylists() // Sync playlists cache
                 triggerAutoSync()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -884,12 +1016,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             try {
                 audioDao.updateTranslatedLyrics(id, null)
-                val index = localAudioFiles.indexOfFirst { it.id == id }
-                if (index != -1) {
-                    val file = localAudioFiles[index]
-                    localAudioFiles[index] = file.copy(translatedLyrics = null)
-                }
-                loadPlaylists() // Sync playlists cache
+                loadedLyrics[id]?.let { loadedLyrics[id] = it.copy(translatedLyrics = null) }
                 triggerAutoSync()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -901,18 +1028,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             try {
                 audioDao.updateTranslatedLyrics(id, newTranslatedLyrics)
-                val index = localAudioFiles.indexOfFirst { it.id == id }
-                if (index != -1) {
-                    val file = localAudioFiles[index]
-                    localAudioFiles[index] = file.copy(translatedLyrics = newTranslatedLyrics)
-                    
+                loadedLyrics[id]?.let { loadedLyrics[id] = it.copy(translatedLyrics = newTranslatedLyrics) }
+                val file = audioFileMap[id.toString()]
+                if (file != null) {
                     if (!newTranslatedLyrics.isNullOrBlank()) {
                         withContext(Dispatchers.IO) {
                             saveTranslatedLyricsPhysical(getApplication(), id, file.title, file.folderPath, newTranslatedLyrics)
                         }
                     }
                 }
-                loadPlaylists() // Sync playlists cache
                 triggerAutoSync()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -968,7 +1092,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val result = backupManager.importBackup(context, inputStream)
-                val updatedFiles = audioDao.getAllAudioFiles()
+                val updatedFiles = audioDao.getAllAudioFilesLightweight()
 
                 withContext(Dispatchers.Main) {
                     if (result.importedLanguage != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -984,6 +1108,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                     localAudioFiles.clear()
                     localAudioFiles.addAll(updatedFiles)
+                    clearPerSongOverlays()
                     loadPlaylists() // Reload playlists state instantly!
                     updateSmartPlaylists() // Reload smart playlists state instantly!
 
@@ -1162,7 +1287,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             val cloudBackupMgr = com.kevshupp.kevmusicplayer.data.cloud.CloudBackupManager(context)
             val result = cloudBackupMgr.restoreBackupFromCloud(user)
             result.onSuccess { importResult ->
-                val updatedFiles = audioDao.getAllAudioFiles()
+                val updatedFiles = audioDao.getAllAudioFilesLightweight()
                 withContext(Dispatchers.Main) {
                     if (importResult.importedLanguage != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                         try {
@@ -1177,6 +1302,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                     localAudioFiles.clear()
                     localAudioFiles.addAll(updatedFiles)
+                    clearPerSongOverlays()
                     loadPlaylists()
                     updateSmartPlaylists()
 
@@ -1288,39 +1414,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun incrementSongPlayCount(id: Long) {
-        val now = System.currentTimeMillis()
-        val index = localAudioFiles.indexOfFirst { it.id == id }
-        if (index != -1) {
-            val currentSong = localAudioFiles[index]
-            localAudioFiles[index] = currentSong.copy(
-                playCount = currentSong.playCount + 1,
-                lastPlayed = now
-            )
-        }
-        
-        playlists.keys.toList().forEach { playlistName ->
-            val list = playlists[playlistName] ?: emptyList()
-            val pIndex = list.indexOfFirst { it.id == id }
-            if (pIndex != -1) {
-                val newList = list.toMutableList()
-                newList[pIndex] = newList[pIndex].copy(
-                    playCount = newList[pIndex].playCount + 1,
-                    lastPlayed = now
-                )
-                playlists[playlistName] = newList
-            }
+        // PlaybackService is the one that persists the play in Room (it also runs while the app is in the
+        // background). Here we only mirror it in memory, without touching the song list.
+        val base = playStatsOverrides[id]?.playCount ?: audioFileMap[id.toString()]?.playCount
+        if (base != null) {
+            playStatsOverrides[id] = PlayStats(base + 1, System.currentTimeMillis())
+            statsVersion.intValue++
         }
 
         updateSmartPlaylists()
         triggerAutoSync(debounceMs = 30000L)
-
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                audioDao.incrementPlayCount(id, now)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
     }
 
     fun refreshStatsFromDb() {
@@ -1331,18 +1434,20 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 val dbMap = lightweight.associateBy { it.id }
                 withContext(Dispatchers.Main) {
                     var hasChanges = false
-                    for (i in localAudioFiles.indices) {
-                        val current = localAudioFiles[i]
-                        val dbEntry = dbMap[current.id]
-                        if (dbEntry != null && (dbEntry.playCount != current.playCount || dbEntry.lastPlayed != current.lastPlayed)) {
-                            localAudioFiles[i] = current.copy(
-                                playCount = dbEntry.playCount,
-                                lastPlayed = dbEntry.lastPlayed
-                            )
+                    for (current in localAudioFiles) {
+                        val dbEntry = dbMap[current.id] ?: continue
+                        val known = playStatsOverrides[current.id]
+                        val knownCount = known?.playCount ?: current.playCount
+                        val knownLastPlayed = known?.lastPlayed ?: current.lastPlayed
+                        // The play count is the source of truth; lastPlayed alone differs by a few ms between
+                        // the in-memory mirror and the service, which is not worth a refresh
+                        if (dbEntry.playCount != knownCount || (known == null && dbEntry.lastPlayed != knownLastPlayed)) {
+                            playStatsOverrides[current.id] = PlayStats(dbEntry.playCount, dbEntry.lastPlayed)
                             hasChanges = true
                         }
                     }
                     if (hasChanges) {
+                        statsVersion.intValue++
                         updateSmartPlaylists()
                     }
                 }
@@ -1353,7 +1458,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     // Playlists system
-    val playlistManager = com.kevshupp.kevmusicplayer.playback.managers.PlaylistManager(application, localAudioFiles, viewModelScope)
+    val playlistManager = com.kevshupp.kevmusicplayer.playback.managers.PlaylistManager(
+        application = application,
+        localAudioFiles = localAudioFiles,
+        scope = viewModelScope,
+        songsWithStats = { audioFilesWithStats }
+    )
     val playlists get() = playlistManager.playlists
     val playlistCovers get() = playlistManager.playlistCovers
     val smartPlaylists get() = playlistManager.smartPlaylists

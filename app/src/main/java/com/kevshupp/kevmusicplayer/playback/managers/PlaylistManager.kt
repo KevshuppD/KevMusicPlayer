@@ -17,7 +17,9 @@ import java.io.File
 class PlaylistManager(
     private val application: Application,
     private val localAudioFiles: SnapshotStateList<AudioFile>,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    // Songs with up-to-date play counts, for the smart playlists that rank by listening stats
+    private val songsWithStats: () -> List<AudioFile> = { localAudioFiles }
 ) {
     val playlists = mutableStateMapOf<String, List<AudioFile>>()
     val playlistCovers = mutableStateMapOf<String, String>()
@@ -48,7 +50,7 @@ class PlaylistManager(
 
 
     fun updateSmartPlaylists() {
-        val localFilesCopy = ArrayList(localAudioFiles)
+        val localFilesCopy = ArrayList(songsWithStats())
         scope.launch {
             val updatedMap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val tempMap = mutableMapOf<String, List<AudioFile>>()

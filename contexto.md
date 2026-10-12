@@ -37,14 +37,14 @@ graph TD
 - **Lenguaje:** 100% Kotlin (Coroutines, Flow, StateFlow).
 - **UI Framework:** Jetpack Compose con Material 3 (`androidx.compose.material3`), Compose Animation, Compose Foundation, Compose Runtime.
 - **Reproducción Multimedia:** `androidx.media3` (`media3-exoplayer`, `media3-session`, `media3-ui`, `media3-common`).
-- **Base de Datos Local:** Android Room (`androidx.room:room-runtime`, `androidx.room:room-ktx`, KSP) en versión 10.
+- **Base de Datos Local:** Android Room (`androidx.room:room-runtime`, `androidx.room:room-ktx`, KSP) en versión 11.
 - **Backend y Nube:**
   - **Firebase Auth:** Autenticación con Google (`GoogleAuthProvider` + `GoogleSignInOptions`).
   - **Cloud Firestore:** Almacenamiento NoSQL de respaldos en la nube bajo `users/<userId>/backups/latest`.
   - **Firebase Storage / Google Services:** Integrados vía `google-services.json`.
 - **Carga y Caché de Imágenes:** Coil Compose (`io.coil-kt:coil-compose`) + `LruCache` en memoria y almacenamiento WebP en disco.
-- **Manipulación de Etiquetas:** `jaudiotagger` (`org.jaudiotagger:jaudiotagger:3.0.1`) y `mp3agic` (`com.mpatric:mp3agic:0.9.2`).
-- **Consumo de APIs REST:** `OkHttp 4.12.0` y `kotlinx.serialization` (Deezer API, LrcLib API).
+- **Manipulación de Etiquetas:** `jaudiotagger` (`org.jaudiotagger:jaudiotagger:3.0.1`) y `mp3agic` (`com.mpatric:mp3agic:0.9.1`).
+- **Consumo de APIs REST:** `OkHttp 4.10.0` y `kotlinx.serialization` (Deezer API, LrcLib API).
 
 ---
 
@@ -60,7 +60,7 @@ com/kevshupp/kevmusicplayer/
 ├── data/                               # Capa de Datos y Modelos
 │   ├── AudioFile.kt                     # Entidad Room de canción local
 │   ├── AudioDao.kt                      # DAO de Room para operaciones CRUD de biblioteca
-│   ├── AppDatabase.kt                   # Base de datos SQLite Room (Versión 10)
+│   ├── AppDatabase.kt                   # Base de datos SQLite Room (Versión 11)
 │   ├── AudioScanner.kt                  # Escaneo inteligente de MediaStore
 │   ├── CoverArtRepository.kt            # Búsqueda y descarga de carátulas en HD (Deezer API 1000x1000)
 │   ├── ArtistImageHelper.kt             # Búsqueda, caché y filtrado estricto de fotos de artistas (Deezer API)
@@ -193,9 +193,12 @@ sequenceDiagram
   4. Extracción de `MediaMetadataRetriever` sobre ruta física / descriptores.
   5. Imágenes en subcarpeta oculta `.covers/` y almacenamiento interno de la app.
   6. Análisis y extracción ID3/APIC/FLAC/MP4 vía Jaudiotagger sobre el archivo físico.
+- **Coincidencia estricta de carátulas guardadas:** Una canción solo usa una carátula de `.covers/` o de `filesDir/covers/` si el nombre del archivo coincide con su artista y álbum (`folderCoverFileName()` + `findSavedCoverFile()` en `AudioIOHelpers.kt`, consultando Room). Nunca se toma "el primer archivo del directorio": una canción sin arte no debe heredar la carátula de otro álbum.
+- **Miniaturas para listas:** `rememberAlbumArt(uri, thumbnail = true)` carga un bitmap de ~64dp (RGB_565) en una caché LRU propia y con su propio archivo WebP en disco. Se usa en filas de lista, búsqueda, cola y mini-reproductores; el reproductor, las cuadrículas de álbumes y el Wrapped usan la carátula completa. La caché sigue siendo por canción (no por álbum) porque el editor permite una carátula distinta por pista.
+- **Caché negativa solo en memoria:** Las canciones sin carátula se recuerdan en un `Set` en RAM para no repetir los niveles de extracción al hacer scroll. Solo se registra si el archivo de audio era legible, y se vacía al incrementar `albumArtVersion`, al invalidar una carátula o cuando un escaneo detecta cambios. No se escribe nada en disco.
 - **Proveedor Exclusivo de Carátulas Faltantes:** **Deezer API** (`api.deezer.com/search/album` y `api.deezer.com/search/track`) como fuente primaria y directa para carátulas en ultra alta definición (**1000x1000** `cover_xl`).
 
-### C. Sistema de Fotos de Artistas ([ArtistImageHelper.kt](file:///home/kevin/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/ArtistImageHelper.kt))
+### C. Sistema de Fotos de Artistas ([ArtistImageHelper.kt](file:///home/kevshupp/Escritorio/Proyectos/kevmusicplayer/app/src/main/java/com/kevshupp/kevmusicplayer/data/ArtistImageHelper.kt))
 - **Sanitización y Nombres Deterministas:** Nombres con caracteres Unicode y acentos (*Rosalía, Bad Bunny, Mägo de Oz, AC/DC*) se normalizan con *slug* seguro + hash MD5 (`slug_hash.jpg`), garantizando nombres de archivo válidos y sin colisiones.
 - **Filtrado Estricto de Placeholders:** Exclusión automática de imágenes genéricas y placeholders vacíos de Deezer (hash MD5 nulo `d41d8cd98f00b204e9800998ecf8427e`, `/images/artist//`, `default-artist`).
 - **User-Agent de Navegador:** Se utiliza un User-Agent estándar para evitar limitaciones de tasa de peticiones (Rate Limiting).
@@ -203,6 +206,14 @@ sequenceDiagram
 ### D. Rendimiento de Reproducción y Salto de Pistas
 - **Salto Manual Instantáneo:** Al pulsar "Siguiente" o "Anterior", `VolumeFadeHelper.performManualSkip()` ejecuta la transición de inmediato sin bucles lentos de desvanecimiento artificial.
 - **Protección de AudioFX:** `PlaybackService` valida que `audioEffectsManager.currentAudioSessionId != sessionId` antes de reconfigurar los efectos de sonido DSP en transiciones de pista, evitando recreaciones nativas síncronas que bloqueen el audio.
+
+### D.2. Estado en Memoria de la Biblioteca (`MediaBrowserViewModel`)
+- **`localAudioFiles` es estable durante la reproducción:** La lista nunca lleva letras ni estadísticas "vivas". Reproducir una canción **no** debe modificarla, porque de ella derivan el índice de búsqueda, el orden y las agrupaciones de toda la biblioteca.
+- **Estadísticas:** Los cambios de `playCount`/`lastPlayed` van a `playStatsOverrides` (mapa id → `PlayStats`). Lo que ordena o muestra estadísticas (Inicio, Wrapped, Historial, listas inteligentes) lee `audioFilesWithStats` o `withStats(song)`.
+- **Única escritura de reproducciones:** Solo `PlaybackService` ejecuta `incrementPlayCount()` en Room. El ViewModel solo refleja el cambio en memoria; escribirlo también ahí cuenta doble.
+- **Letras bajo demanda:** Las letras viven en SQLite y se cargan por canción en `loadedLyrics` con `ensureLyricsLoaded(id)`; el reproductor usa `songWithLyrics(mediaId)`. Antes de cualquier descarga automática hay que esperar a la letra guardada para no sobrescribirla.
+- **Escrituras parciales en Room:** No reescribir filas completas con `insertAll` (REPLACE) desde datos en memoria: borraría letras y pisaría estadísticas. Usar actualizaciones por columna (`updateScannedMetadata`, `updateReplayGain`, `updateLyrics`).
+- **Búsqueda de letras en línea:** `LyricsRepository.fetchLyricsFromLrcLib()` recuerda 7 días (`lyrics_miss_cache`) las canciones para las que LrcLib no tiene letra; los errores de red no cuentan como "no encontrada". La descarga masiva pasa `useMissCache = false`.
 
 ### E. KevMusic Wrapped Interactivo
 - **Formato Historias (Stories):** Modal interactivo con 7 diapositivas a pantalla completa con barras de progreso animadas en la cabecera.
@@ -247,7 +258,7 @@ sequenceDiagram
 ## 7. Automatización de Compilación y Publicación (CI/CD)
 
 ### Script de Publicación Local
-Ubicado en `/home/kevin/Escritorio/publicar_release.sh` (con alias `release` en `~/.bashrc`):
+Ubicado en `/home/kevshupp/Escritorio/publicar_release.sh` (con alias `release` en `~/.bashrc`):
 1. Solicita el mensaje del cambio y el tipo de versión (*patch*, *minor* o *major*).
 2. Incrementa automáticamente el `versionCode` (+1) y `versionName` en `app/build.gradle.kts`.
 3. Realiza el commit, genera el tag de Git y ejecuta `git push origin main --tags`.
@@ -270,7 +281,11 @@ Ubicado en `/home/kevin/Escritorio/publicar_release.sh` (con alias `release` en 
 6. **Debouncing de Estado de Reproducción (`savePlaybackState`):** Aplica un debounce de 300 ms en `saveStateJob` para evitar escrituras masivas consecutivas en SharedPreferences durante eventos de reproducción rápida.
 7. **Cero Bloqueo de Hilo Principal en Widget Glance (`updateWidgetState`):** La generación y redimensionado de carátulas para el widget del sistema ocurre 100% en `Dispatchers.IO` reutilizando el caché de memoria.
 8. **Compilador Compose Optimizado en Debug:** Configurado `composeCompiler { includeSourceInformation = false }` en `build.gradle.kts` para eliminar metadatos pesados de depuración en el árbol composable, logrando 120 FPS constantes tanto en Debug como en Release.
-9. **Filtrado Inteligente en Escaneo de Inicio:** `scanFiles()` realiza un `join()` en la carga inicial y solo actualiza el estado de la UI si existen discrepancias reales con la base de datos local (`localAudioFiles != updatedFilesList`), eliminando parpadeos de 0 cuadros al abrir la app.
-10. **Sincronización Dual de Estadísticas (Foreground + Background):** `PlaybackService` registra de forma autónoma `incrementPlayCount()` en SQLite Room ante cada transición de pista en segundo plano/bloqueo de pantalla, mientras que `MediaBrowserViewModel` actualiza la memoria en 0 ms e invoca `refreshStatsFromDb()` al reanudar la app, garantizando que "Lo que más escuchas", "Historial" y "KevMusic Wrapped" siempre reflejen las reproducciones reales sin importar si la app estaba minimizada.
+9. **Escaneo Incremental y Omitible:** `scanFiles()` realiza un `join()` en la carga inicial. Los escaneos automáticos se omiten si la firma de MediaStore (`getVersion` + `getGeneration`) y los filtros de carpetas no cambiaron desde el último escaneo completado (`scan_prefs`); los manuales siempre se ejecutan. Cuando escanea, lee las entidades en modo ligero (sin letras), escribe en una transacción solo las filas nuevas, modificadas o borradas, y solo reemplaza la lista en memoria si hubo cambios reales (`hasSameSongs`), eliminando parpadeos al abrir la app.
+10. **Estadísticas con una sola escritura (Foreground + Background):** `PlaybackService` es el único que registra `incrementPlayCount()` en SQLite Room ante cada transición de pista. `MediaBrowserViewModel` refleja la reproducción en `playStatsOverrides` en 0 ms sin tocar `localAudioFiles`, e invoca `refreshStatsFromDb()` al reanudar la app, garantizando que "Lo que más escuchas", "Historial" y "KevMusic Wrapped" reflejen las reproducciones reales sin recalcular toda la biblioteca en cada cambio de pista.
 11. **Indexación Exacta de Duración y Búsqueda VBR (`Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING`):** Configurado `DefaultExtractorsFactory` con indexación de tramas MP3 y búsqueda CBR habilitada en `DefaultMediaSourceFactory`, evitando que canciones VBR o sin cabecera Xing válida sean calculadas erróneamente con duraciones cortas (ej. 30 segundos) o cortadas antes de tiempo por el reproductor.
 12. **Sincronización Personalizada en la Nube (Google Cloud Sync):** Control granular sobre frecuencia y disparadores de sincronización (`realtime` en tiempo real y al salir, `on_exit` al cerrar/minimizar la app, `daily` una vez al día, `manual` solo a petición), ahorro de datos móviles con filtro `syncWifiOnly` y selección específica de elementos a respaldar (Playlists y Favoritos, Letras y Traducciones, Estadísticas e Historial, Ajustes y Ecualizador).
+13. **Miniaturas de Carátula para Listas:** Las filas de lista y los mini-reproductores cargan bitmaps de ~64dp en una caché LRU separada (`rememberAlbumArt(uri, thumbnail = true)`), en lugar de carátulas de 500 px, multiplicando las carátulas que caben en memoria durante el scroll. El pre-calentado de inicio también usa miniaturas.
+14. **Caché Negativa de Carátulas y Ruta Física Única:** Las canciones sin carátula no repiten los niveles de extracción en cada scroll, y `getPhysicalPath()` se resuelve una sola vez por carga.
+15. **Letras Bajo Demanda:** Ni el arranque ni el escaneo cargan las letras en RAM; se leen de SQLite solo para la canción en reproducción. Los archivos `.lrc`/tags se leen como máximo una vez por canción y sesión, y nunca si ya hay letra sincronizada guardada.
+16. **Memoria de "Letra No Encontrada":** Las canciones sin letra en LrcLib no vuelven a consultar la red en cada reproducción durante 7 días.

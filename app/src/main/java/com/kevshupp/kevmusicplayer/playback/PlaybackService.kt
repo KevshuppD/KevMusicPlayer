@@ -984,8 +984,7 @@ class PlaybackService : MediaLibraryService() {
 
                     try {
                         val finalGain = gain ?: 0f
-                        val updatedSong = song.copy(replayGain = finalGain)
-                        database.audioDao().insertAll(listOf(updatedSong))
+                        database.audioDao().updateReplayGain(song.id, finalGain)
                         gain = finalGain
                     } catch (e: Exception) {
                         e.printStackTrace()

@@ -81,7 +81,7 @@ fun HomeScreen(
     // 1. Recently Played
     val recentlyPlayed by remember(audioFiles) {
         derivedStateOf {
-            audioFiles.filter { it.lastPlayed > 0L }
+            (viewModel?.audioFilesWithStats ?: audioFiles).filter { it.lastPlayed > 0L }
                 .sortedByDescending { it.lastPlayed }
                 .take(10)
         }
@@ -90,7 +90,7 @@ fun HomeScreen(
     // 2. Most Played
     val mostPlayed by remember(audioFiles) {
         derivedStateOf {
-            audioFiles.filter { it.playCount > 0 }
+            (viewModel?.audioFilesWithStats ?: audioFiles).filter { it.playCount > 0 }
                 .sortedByDescending { it.playCount }
                 .take(10)
         }
@@ -405,7 +405,7 @@ fun HomeScreen(
     MusicInsightsScreen(
         visible = showInsights,
         onDismiss = { showInsights = false },
-        audioFiles = audioFiles,
+        audioFiles = if (showInsights) viewModel?.audioFilesWithStats ?: audioFiles else audioFiles,
         getLocalized = getLocalized,
         onPlaySongs = { songs, startIndex ->
             val first = songs.getOrNull(startIndex) ?: songs.firstOrNull()

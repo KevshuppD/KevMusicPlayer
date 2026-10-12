@@ -122,7 +122,7 @@ fun BottomNavBar(
                                             .background(getGradientForString(title)),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        val artBytes = rememberAlbumArt(currentSongUriString)
+                                        val artBytes = rememberAlbumArt(currentSongUriString, thumbnail = true)
                                         SubcomposeAsyncImage(
                                             model = artBytes,
                                             contentDescription = null,
