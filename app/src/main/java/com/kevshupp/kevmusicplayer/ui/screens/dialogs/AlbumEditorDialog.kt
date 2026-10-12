@@ -65,7 +65,7 @@ fun AlbumEditorDialog(
     val performSearch: (String) -> Unit = { query ->
         scope.launch {
             isSearchingCover = true
-            coverSearchStatus = getLocalized("Buscando portadas de álbum en Deezer e iTunes...", "Searching album covers on Deezer & iTunes...")
+            coverSearchStatus = getLocalized("Buscando portadas de álbum en Deezer...", "Searching album covers on Deezer...")
             val results = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(
                 query = query,
                 type = com.kevshupp.kevmusicplayer.data.CoverSearchType.ALBUM
@@ -259,7 +259,7 @@ fun AlbumEditorDialog(
                         OutlinedTextField(
                             value = coverSearchQuery,
                             onValueChange = { coverSearchQuery = it },
-                            label = { Text(getLocalized("Buscar en Deezer / iTunes", "Search on Deezer / iTunes"), color = Color.White.copy(alpha = 0.5f)) },
+                            label = { Text(getLocalized("Buscar en Deezer", "Search on Deezer"), color = Color.White.copy(alpha = 0.5f)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             trailingIcon = {

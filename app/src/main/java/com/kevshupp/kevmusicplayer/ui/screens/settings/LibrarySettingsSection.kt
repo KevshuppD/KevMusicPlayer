@@ -93,9 +93,6 @@ fun LibrarySettingsSection(
     var useSameFolderForBackup by remember {
         mutableStateOf(settingsPrefs.getBoolean("use_same_folder_for_backup", false))
     }
-    var preferredCoverProvider by remember {
-        mutableStateOf(settingsPrefs.getString("preferred_cover_provider", "deezer") ?: "deezer")
-    }
 
     var showExportCustomDialog by remember { mutableStateOf(false) }
     var exportSettings by remember { mutableStateOf(true) }
@@ -917,59 +914,6 @@ fun LibrarySettingsSection(
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Preferred Cover Provider Selector
-            Text(
-                text = getLocalized("Proveedor preferido para descargas automáticas:", "Preferred provider for auto-downloads:"),
-                fontSize = 11.sp,
-                color = Color.White.copy(alpha = 0.6f)
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                FilterChip(
-                    selected = preferredCoverProvider == "deezer",
-                    onClick = {
-                        preferredCoverProvider = "deezer"
-                        settingsPrefs.edit().putString("preferred_cover_provider", "deezer").apply()
-                    },
-                    label = { Text(getLocalized("⚡ Deezer (HD)", "⚡ Deezer (HD)"), fontSize = 11.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
-                        selectedLabelColor = MaterialTheme.colorScheme.primary
-                    )
-                )
-                FilterChip(
-                    selected = preferredCoverProvider == "itunes",
-                    onClick = {
-                        preferredCoverProvider = "itunes"
-                        settingsPrefs.edit().putString("preferred_cover_provider", "itunes").apply()
-                    },
-                    label = { Text(getLocalized("🍎 iTunes", "🍎 iTunes"), fontSize = 11.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
-                        selectedLabelColor = MaterialTheme.colorScheme.primary
-                    )
-                )
-                FilterChip(
-                    selected = preferredCoverProvider == "both",
-                    onClick = {
-                        preferredCoverProvider = "both"
-                        settingsPrefs.edit().putString("preferred_cover_provider", "both").apply()
-                    },
-                    label = { Text(getLocalized("🌐 Ambos", "🌐 Both"), fontSize = 11.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
-                        selectedLabelColor = MaterialTheme.colorScheme.primary
-                    )
                 )
             }
 

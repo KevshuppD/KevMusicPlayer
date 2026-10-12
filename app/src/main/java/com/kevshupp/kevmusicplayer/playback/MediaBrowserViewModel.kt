@@ -929,6 +929,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    // "Maximum queue size" from Performance settings. 1500 is the ceiling that keeps the queue under the IPC limit
+    private fun queueSizeLimit(): Int {
+        return getApplication<Application>().getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
+            .getInt("ipc_queue_limit", 1500).coerceIn(100, 1500)
+    }
+
     // Changes whenever MediaStore content or the folder filters change; null if it cannot be determined
     private fun computeScanSignature(context: Context, musicFolder: String?, excludedJson: String): String? {
         return try {
@@ -969,7 +975,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         val fullIndex = fullQueue.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
         
         // Limit queue size to 1500 items to avoid IPC TransactionTooLargeException
-        val queueLimit = 1500
+        val queueLimit = queueSizeLimit()
         val (queue, index) = if (fullQueue.size > queueLimit) {
             val half = queueLimit / 2
             val start = (fullIndex - half).coerceAtLeast(0)
@@ -1032,7 +1038,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             fullQueue.shuffled(random)
         }
 
-        val queueLimit = 1500
+        val queueLimit = queueSizeLimit()
         val queue = if (shuffledList.size > queueLimit) {
             shuffledList.take(queueLimit)
         } else {

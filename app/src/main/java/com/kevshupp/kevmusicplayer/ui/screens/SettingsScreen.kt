@@ -441,7 +441,7 @@ fun SettingsScreen(
             ),
             SettingSearchItem(
                 title = getLocalized("Descarga de Carátulas", "Cover Artwork Provider"),
-                description = getLocalized("Proveedor preferido de portadas (Deezer, Spotify, iTunes)", "Preferred artwork provider (Deezer, Spotify, iTunes)"),
+                description = getLocalized("Portadas faltantes en HD desde Deezer", "Missing HD artwork from Deezer"),
                 categoryKey = "library",
                 icon = Icons.Rounded.Image
             ),

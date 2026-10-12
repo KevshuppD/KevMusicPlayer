@@ -33,7 +33,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.SubcomposeAsyncImage
 import com.kevshupp.kevmusicplayer.data.AudioFile
-import com.kevshupp.kevmusicplayer.data.ITunesCoverSearchResult
+import com.kevshupp.kevmusicplayer.data.CoverSearchResult
 import com.kevshupp.kevmusicplayer.data.LyricsRepository
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 import com.kevshupp.kevmusicplayer.playback.getPhysicalPath
@@ -81,7 +81,7 @@ fun MissingCoverFinderDialog(
     var activeSearchTargetSong by remember { mutableStateOf<AudioFile?>(null) }
     var onlineSearchQuery by remember { mutableStateOf("") }
     var isSearchingOnline by remember { mutableStateOf(false) }
-    var onlineSearchResults by remember { mutableStateOf<List<ITunesCoverSearchResult>>(emptyList()) }
+    var onlineSearchResults by remember { mutableStateOf<List<CoverSearchResult>>(emptyList()) }
     var onlineSearchStatus by remember { mutableStateOf("") }
 
     // Local file picker state
@@ -565,9 +565,9 @@ fun MissingCoverFinderDialog(
                                         getLocalized("Auto-descarga de Canciones", "Batch Download Songs")
                                     }
                                     val subText = if (selectedTab == 0) {
-                                        getLocalized("Descarga portadas para $count álbumes desde iTunes", "Download covers for $count albums from iTunes")
+                                        getLocalized("Descarga portadas para $count álbumes desde Deezer", "Download covers for $count albums from Deezer")
                                     } else {
-                                        getLocalized("Descarga portadas para $count canciones desde iTunes", "Download covers for $count tracks from iTunes")
+                                        getLocalized("Descarga portadas para $count canciones desde Deezer", "Download covers for $count tracks from Deezer")
                                     }
 
                                     Row(
@@ -948,7 +948,7 @@ fun MissingCoverFinderDialog(
             if (query.isNotBlank() && !isSearchingOnline) {
                 scope.launch {
                     isSearchingOnline = true
-                    onlineSearchStatus = getLocalized("Buscando en Deezer e iTunes...", "Searching Deezer & iTunes...")
+                    onlineSearchStatus = getLocalized("Buscando en Deezer...", "Searching Deezer...")
                     var results = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(query.trim(), type = type)
                     if (results.isEmpty() && query.contains(" ")) {
                         // Fallback: search just targetName
@@ -957,7 +957,7 @@ fun MissingCoverFinderDialog(
                     onlineSearchResults = results
                     isSearchingOnline = false
                     onlineSearchStatus = if (results.isEmpty()) {
-                        getLocalized("No se encontraron resultados en Deezer ni iTunes.", "No results found on Deezer or iTunes.")
+                        getLocalized("No se encontraron resultados en Deezer.", "No results found on Deezer.")
                     } else {
                         getLocalized("${results.size} portadas encontradas. Toca una para aplicar.", "Found ${results.size} covers. Tap one to apply.")
                     }

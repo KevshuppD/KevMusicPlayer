@@ -67,7 +67,7 @@ fun TagEditorDialog(
     val performSearch: (String, com.kevshupp.kevmusicplayer.data.CoverSearchType) -> Unit = { query, type ->
         scope.launch {
             isSearchingCover = true
-            coverSearchStatus = getLocalized("Buscando portadas en Deezer e iTunes...", "Searching covers on Deezer & iTunes...")
+            coverSearchStatus = getLocalized("Buscando portadas en Deezer...", "Searching covers on Deezer...")
             val results = com.kevshupp.kevmusicplayer.data.CoverArtRepository.searchCovers(query, type = type)
             coverResults = results
             isSearchingCover = false
@@ -363,7 +363,7 @@ fun TagEditorDialog(
                         OutlinedTextField(
                             value = coverSearchQuery,
                             onValueChange = { coverSearchQuery = it },
-                            label = { Text(getLocalized("Buscar en Deezer / iTunes", "Search on Deezer / iTunes"), color = Color.White.copy(alpha = 0.5f)) },
+                            label = { Text(getLocalized("Buscar en Deezer", "Search on Deezer"), color = Color.White.copy(alpha = 0.5f)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             trailingIcon = {

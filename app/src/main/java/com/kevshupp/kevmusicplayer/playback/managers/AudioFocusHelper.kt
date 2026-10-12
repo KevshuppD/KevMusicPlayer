@@ -23,6 +23,11 @@ class AudioFocusHelper(
     var playOnFocusGain: Boolean = false
         private set
 
+    // 1 normally, lower while another app holds the focus and the music is only lowered. The crossfade loop
+    // multiplies its target volume by this, otherwise it would bring the volume straight back up.
+    var duckFactor: Float = 1f
+        private set
+
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         val player = playerProvider() ?: return@OnAudioFocusChangeListener
         val isCallActive = audioManager.mode == AudioManager.MODE_IN_CALL ||
@@ -51,11 +56,13 @@ class AudioFocusHelper(
                     player.play()
                     playOnFocusGain = false
                 }
+                duckFactor = 1f
                 if (!isFadingIn()) {
                     player.volume = currentReplayGainFactor
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS -> {
+                duckFactor = 1f
                 player.pause()
                 playOnFocusGain = false
                 abandonAudioFocus()
@@ -74,7 +81,8 @@ class AudioFocusHelper(
                         "Playback_AudioFocus",
                         "Transient focus loss ignored (ducking enabled). Keeping playback alive."
                     )
-                    player.volume = 0.35f * currentReplayGainFactor
+                    duckFactor = 0.35f
+                    player.volume = duckFactor * currentReplayGainFactor
                     playOnFocusGain = true
                 } else {
                     if (player.isPlaying) {
@@ -84,7 +92,8 @@ class AudioFocusHelper(
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                player.volume = 0.25f * currentReplayGainFactor
+                duckFactor = 0.25f
+                player.volume = duckFactor * currentReplayGainFactor
             }
         }
     }

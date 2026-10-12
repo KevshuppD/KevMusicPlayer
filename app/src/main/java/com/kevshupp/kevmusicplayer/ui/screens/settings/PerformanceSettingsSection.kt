@@ -46,6 +46,34 @@ import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import kotlinx.coroutines.*
 import kotlin.math.*
+/**
+ * Every value a performance profile sets. The profile cards, the option chips below them and the detection of
+ * the active profile all read this table, so a profile can only use values that exist among the options.
+ */
+private data class PerformancePreset(
+    val refreshRate: String,
+    val disableAnimations: Boolean,
+    val haptics: Boolean,
+    val preloadCount: Int,
+    val cacheCapacity: Int,
+    val artResolution: Int,
+    val diskCacheQuality: Int,
+    val queueLimit: Int
+)
+
+private val preloadOptions = listOf(0, 3, 5, 10)
+private val cacheOptions = listOf(50, 150, 300)
+private val resolutionOptions = listOf(250, 500, 800)
+private val qualityOptions = listOf(70, 85, 100)
+private val queueLimitOptions = listOf(500, 1000, 1500)
+
+private val performancePresets = linkedMapOf(
+    "max" to PerformancePreset("120", false, true, 5, 300, 500, 85, 1500),
+    "turbo" to PerformancePreset("120", true, false, 3, 150, 500, 70, 1500),
+    "balanced" to PerformancePreset("90", false, true, 3, 150, 500, 85, 1000),
+    "battery" to PerformancePreset("60", true, false, 0, 50, 250, 70, 500)
+)
+
 @Composable
 fun PerformanceSettingsSection(
     selectedRefreshRate: String,
@@ -56,127 +84,87 @@ fun PerformanceSettingsSection(
     settingsPrefs: android.content.SharedPreferences,
     context: android.content.Context
 ) {
-    var performanceProfile by remember { mutableStateOf(settingsPrefs.getString("performance_profile", "max") ?: "max") }
-    var preloadCount by remember { mutableStateOf(settingsPrefs.getInt("preload_art_count", 5)) }
-    var cacheCapacity by remember { mutableStateOf(settingsPrefs.getInt("cover_cache_capacity", 150)) }
-    var artResolution by remember { mutableStateOf(settingsPrefs.getInt("art_resolution", 500)) }
-    var diskCacheQuality by remember { mutableStateOf(settingsPrefs.getInt("disk_cache_quality", 85)) }
+    // Values saved by older versions may not be one of the choices offered below (old profiles used e.g. 2 tracks
+    // or 400 px): they are moved to the nearest choice so every row always shows what is selected.
+    fun snappedPref(key: String, default: Int, options: List<Int>): Int {
+        val stored = settingsPrefs.getInt(key, default)
+        val snapped = options.minByOrNull { kotlin.math.abs(it - stored) } ?: default
+        if (snapped != stored) settingsPrefs.edit().putInt(key, snapped).apply()
+        return snapped
+    }
+    var preloadCount by remember { mutableStateOf(snappedPref("preload_art_count", 5, preloadOptions)) }
+    var cacheCapacity by remember { mutableStateOf(snappedPref("cover_cache_capacity", 150, cacheOptions)) }
+    var artResolution by remember { mutableStateOf(snappedPref("art_resolution", 500, resolutionOptions)) }
+    var diskCacheQuality by remember { mutableStateOf(snappedPref("disk_cache_quality", 85, qualityOptions)) }
     var hapticEnabled by remember { mutableStateOf(settingsPrefs.getBoolean("haptic_feedback_enabled", true)) }
-    var lazyReplayGain by remember { mutableStateOf(settingsPrefs.getBoolean("lazy_replay_gain", true)) }
-    var ipcQueueLimit by remember { mutableStateOf(settingsPrefs.getInt("ipc_queue_limit", 1500)) }
+    var ipcQueueLimit by remember { mutableStateOf(snappedPref("ipc_queue_limit", 1500, queueLimitOptions)) }
     var autoCleanTemp by remember { mutableStateOf(settingsPrefs.getBoolean("auto_clean_temp", true)) }
 
-    fun applyProfile(profileKey: String) {
-        performanceProfile = profileKey
-        val edit = settingsPrefs.edit()
-        edit.putString("performance_profile", profileKey)
-
-        when (profileKey) {
-            "max" -> {
-                onRefreshRateSelected("120")
-                edit.putString("refresh_rate", "120")
-                onDisableAnimationsChanged(false)
-                edit.putBoolean("disable_animations", false)
-                hapticEnabled = true
-                edit.putBoolean("haptic_feedback_enabled", true)
-                preloadCount = 5
-                edit.putInt("preload_art_count", 5)
-                cacheCapacity = 300
-                edit.putInt("cover_cache_capacity", 300)
-                updateAlbumArtCacheSize(300)
-                artResolution = 500
-                edit.putInt("art_resolution", 500)
-                diskCacheQuality = 85
-                edit.putInt("disk_cache_quality", 85)
-                lazyReplayGain = true
-                edit.putBoolean("lazy_replay_gain", true)
-                ipcQueueLimit = 3000
-                edit.putInt("ipc_queue_limit", 3000)
-                autoCleanTemp = true
-                edit.putBoolean("auto_clean_temp", true)
-            }
-            "turbo" -> {
-                onRefreshRateSelected("120")
-                edit.putString("refresh_rate", "120")
-                onDisableAnimationsChanged(true)
-                edit.putBoolean("disable_animations", true)
-                hapticEnabled = false
-                edit.putBoolean("haptic_feedback_enabled", false)
-                preloadCount = 2
-                edit.putInt("preload_art_count", 2)
-                cacheCapacity = 150
-                edit.putInt("cover_cache_capacity", 150)
-                updateAlbumArtCacheSize(150)
-                artResolution = 400
-                edit.putInt("art_resolution", 400)
-                diskCacheQuality = 70
-                edit.putInt("disk_cache_quality", 70)
-                lazyReplayGain = true
-                edit.putBoolean("lazy_replay_gain", true)
-                ipcQueueLimit = 3000
-                edit.putInt("ipc_queue_limit", 3000)
-                autoCleanTemp = true
-                edit.putBoolean("auto_clean_temp", true)
-            }
-            "balanced" -> {
-                onRefreshRateSelected("90")
-                edit.putString("refresh_rate", "90")
-                onDisableAnimationsChanged(false)
-                edit.putBoolean("disable_animations", false)
-                hapticEnabled = true
-                edit.putBoolean("haptic_feedback_enabled", true)
-                preloadCount = 3
-                edit.putInt("preload_art_count", 3)
-                cacheCapacity = 150
-                edit.putInt("cover_cache_capacity", 150)
-                updateAlbumArtCacheSize(150)
-                artResolution = 500
-                edit.putInt("art_resolution", 500)
-                diskCacheQuality = 80
-                edit.putInt("disk_cache_quality", 80)
-                lazyReplayGain = true
-                edit.putBoolean("lazy_replay_gain", true)
-                ipcQueueLimit = 1500
-                edit.putInt("ipc_queue_limit", 1500)
-                autoCleanTemp = true
-                edit.putBoolean("auto_clean_temp", true)
-            }
-            "battery" -> {
-                onRefreshRateSelected("60")
-                edit.putString("refresh_rate", "60")
-                onDisableAnimationsChanged(true)
-                edit.putBoolean("disable_animations", true)
-                hapticEnabled = false
-                edit.putBoolean("haptic_feedback_enabled", false)
-                preloadCount = 0
-                edit.putInt("preload_art_count", 0)
-                cacheCapacity = 60
-                edit.putInt("cover_cache_capacity", 60)
-                updateAlbumArtCacheSize(60)
-                artResolution = 300
-                edit.putInt("art_resolution", 300)
-                diskCacheQuality = 70
-                edit.putInt("disk_cache_quality", 70)
-                lazyReplayGain = true
-                edit.putBoolean("lazy_replay_gain", true)
-                ipcQueueLimit = 500
-                edit.putInt("ipc_queue_limit", 500)
-                autoCleanTemp = false
-                edit.putBoolean("auto_clean_temp", false)
-            }
-            "custom" -> {}
+    // The active profile is whichever preset matches the values on screen, never a separately stored label:
+    // that way the highlighted card and the options below can not disagree.
+    val currentValues = PerformancePreset(
+        refreshRate = selectedRefreshRate,
+        disableAnimations = disableAnimations,
+        haptics = hapticEnabled,
+        preloadCount = preloadCount,
+        cacheCapacity = cacheCapacity,
+        artResolution = artResolution,
+        diskCacheQuality = diskCacheQuality,
+        queueLimit = ipcQueueLimit
+    )
+    val performanceProfile = performancePresets.entries.firstOrNull { it.value == currentValues }?.key ?: "custom"
+    LaunchedEffect(performanceProfile) {
+        if (settingsPrefs.getString("performance_profile", null) != performanceProfile) {
+            settingsPrefs.edit().putString("performance_profile", performanceProfile).apply()
         }
-        edit.apply()
-        albumArtCache.evictAll()
-        clearDiskAlbumArtCache(context)
-        albumArtVersion++
     }
 
-    fun markCustom() {
-        if (performanceProfile != "custom") {
-            performanceProfile = "custom"
-            settingsPrefs.edit().putString("performance_profile", "custom").apply()
+    fun applyProfile(profileKey: String) {
+        val preset = performancePresets[profileKey] ?: return
+        val artChanged = preset.artResolution != artResolution || preset.diskCacheQuality != diskCacheQuality
+
+        onRefreshRateSelected(preset.refreshRate)
+        onDisableAnimationsChanged(preset.disableAnimations)
+        hapticEnabled = preset.haptics
+        preloadCount = preset.preloadCount
+        cacheCapacity = preset.cacheCapacity
+        artResolution = preset.artResolution
+        diskCacheQuality = preset.diskCacheQuality
+        ipcQueueLimit = preset.queueLimit
+
+        settingsPrefs.edit()
+            .putString("refresh_rate", preset.refreshRate)
+            .putBoolean("disable_animations", preset.disableAnimations)
+            .putBoolean("haptic_feedback_enabled", preset.haptics)
+            .putInt("preload_art_count", preset.preloadCount)
+            .putInt("cover_cache_capacity", preset.cacheCapacity)
+            .putInt("art_resolution", preset.artResolution)
+            .putInt("disk_cache_quality", preset.diskCacheQuality)
+            .putInt("ipc_queue_limit", preset.queueLimit)
+            .apply()
+        updateAlbumArtCacheSize(preset.cacheCapacity)
+
+        // Stored covers only need rebuilding when their size or quality actually changes
+        if (artChanged) {
+            albumArtCache.evictAll()
+            clearDiskAlbumArtCache(context)
+            albumArtVersion++
         }
+    }
+
+    fun presetSummary(preset: PerformancePreset): String {
+        val yes = getLocalized("sí", "on")
+        val no = getLocalized("no", "off")
+        return listOf(
+            "${preset.refreshRate} Hz",
+            getLocalized("Animaciones", "Animations") + " " + (if (preset.disableAnimations) no else yes),
+            getLocalized("Vibración", "Haptics") + " " + (if (preset.haptics) yes else no),
+            getLocalized("Precarga", "Preload") + " " + preset.preloadCount,
+            getLocalized("Caché", "Cache") + " " + preset.cacheCapacity,
+            getLocalized("Carátulas", "Artwork") + " ${preset.artResolution} px",
+            "WebP ${preset.diskCacheQuality}%",
+            getLocalized("Cola", "Queue") + " " + preset.queueLimit
+        ).joinToString("  ·  ")
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -214,55 +202,34 @@ fun PerformanceSettingsSection(
                     data class ProfileItem(
                         val key: String,
                         val title: String,
-                        val badge: String,
                         val desc: String
                     )
 
                     val profiles = listOf(
                         ProfileItem(
-                            key = "max",
-                            title = "⚡ " + getLocalized("Máxima Fidelidad", "Max Fidelity"),
-                            badge = "120 Hz • Full",
-                            desc = getLocalized(
-                                "Tasa a 120Hz con animaciones visuales completas, pre-carga agresiva (5 temas) y carátulas en máxima resolución.",
-                                "120Hz rate with full visual animations, aggressive preloading (5 tracks) and maximum resolution artwork."
-                            )
+                            "max",
+                            "⚡ " + getLocalized("Máxima Fidelidad", "Max Fidelity"),
+                            getLocalized("Todo activado: animaciones completas, más precarga y la caché más grande.", "Everything on: full animations, more preloading and the largest cache.")
                         ),
                         ProfileItem(
-                            key = "turbo",
-                            title = "🚀 " + getLocalized("Ultra Rápido (Optimizado)", "Ultra Fast (Optimized)"),
-                            badge = "120 Hz • Turbo",
-                            desc = getLocalized(
-                                "Fluidez a 120Hz sin latencia: suprime animaciones y optimiza la decodificación (400px, WebP 70%) para una respuesta táctil instantánea.",
-                                "Fluid 120Hz with zero latency: disables animations and optimizes decoding (400px, 70% WebP) for instant touch response."
-                            )
+                            "turbo",
+                            "🚀 " + getLocalized("Ultra Rápido", "Ultra Fast"),
+                            getLocalized("120 Hz sin animaciones ni vibración, con carátulas más comprimidas en disco.", "120 Hz without animations or haptics, with more compressed artwork on disk.")
                         ),
                         ProfileItem(
-                            key = "balanced",
-                            title = "⚖️ " + getLocalized("Equilibrado", "Balanced"),
-                            badge = "90 Hz",
-                            desc = getLocalized(
-                                "Punto óptimo a 90Hz: desplazamiento suave, pre-carga moderada (3 temas) y consumo energético equilibrado.",
-                                "Optimal balance at 90Hz: smooth scrolling, moderate preloading (3 tracks) and balanced power consumption."
-                            )
+                            "balanced",
+                            "⚖️ " + getLocalized("Equilibrado", "Balanced"),
+                            getLocalized("90 Hz con animaciones, precarga moderada y una cola más corta.", "90 Hz with animations, moderate preloading and a shorter queue.")
                         ),
                         ProfileItem(
-                            key = "battery",
-                            title = "🔋 " + getLocalized("Ahorro de Batería", "Battery Saver"),
-                            badge = "60 Hz",
-                            desc = getLocalized(
-                                "Refresco a 60Hz, animaciones mínimas y sin pre-carga para maximizar la autonomía durante horas de reproducción.",
-                                "60Hz refresh rate, disabled animations and no preloading to maximize battery during long listening sessions."
-                            )
+                            "battery",
+                            "🔋 " + getLocalized("Ahorro de Batería", "Battery Saver"),
+                            getLocalized("60 Hz, sin animaciones ni precarga, carátulas pequeñas y caché mínima.", "60 Hz, no animations or preloading, small artwork and minimal cache.")
                         ),
                         ProfileItem(
-                            key = "custom",
-                            title = "⚙️ " + getLocalized("Personalizado", "Custom"),
-                            badge = getLocalized("Manual", "Manual"),
-                            desc = getLocalized(
-                                "Ajusta individualmente la tasa de refresco (60/90/120Hz), caché, resolución de carátulas y animaciones.",
-                                "Manually configure refresh rate (60/90/120Hz), cache limits, artwork resolution and animation speeds."
-                            )
+                            "custom",
+                            "⚙️ " + getLocalized("Personalizado", "Custom"),
+                            getLocalized("Se activa solo cuando cambias cualquier opción de abajo.", "Turns on by itself when you change any option below.")
                         )
                     )
 
@@ -290,22 +257,6 @@ fun PerformanceSettingsSection(
                                             fontWeight = FontWeight.Bold,
                                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                         )
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(
-                                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-                                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                                )
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = item.badge,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                            )
-                                        }
                                     }
                                     Spacer(modifier = Modifier.height(3.dp))
                                     Text(
@@ -313,6 +264,15 @@ fun PerformanceSettingsSection(
                                         fontSize = 11.sp,
                                         lineHeight = 15.sp,
                                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+                                    )
+                                    Spacer(modifier = Modifier.height(5.dp))
+                                    // Exactly what this profile sets (for Custom, the values currently in use)
+                                    Text(
+                                        text = presetSummary(performancePresets[item.key] ?: currentValues),
+                                        fontSize = 10.sp,
+                                        lineHeight = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                                     )
                                 }
                                 RadioButton(
@@ -402,7 +362,6 @@ fun PerformanceSettingsSection(
                                         .clickable {
                                             onRefreshRateSelected(rate)
                                             settingsPrefs.edit().putString("refresh_rate", rate).apply()
-                                            markCustom()
                                         }
                                         .padding(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
@@ -463,7 +422,6 @@ fun PerformanceSettingsSection(
                             onCheckedChange = { checked ->
                                 onDisableAnimationsChanged(checked)
                                 settingsPrefs.edit().putBoolean("disable_animations", checked).apply()
-                                markCustom()
                             }
                         )
                     }
@@ -514,7 +472,6 @@ fun PerformanceSettingsSection(
                             onCheckedChange = { checked ->
                                 hapticEnabled = checked
                                 settingsPrefs.edit().putBoolean("haptic_feedback_enabled", checked).apply()
-                                markCustom()
                             }
                         )
                     }
@@ -586,7 +543,7 @@ fun PerformanceSettingsSection(
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            listOf(0, 3, 5, 10).forEach { count ->
+                            preloadOptions.forEach { count ->
                                 val isSelected = preloadCount == count
                                 val label = if (count == 0) getLocalized("Off", "Off") else "$count"
                                 Box(
@@ -599,7 +556,6 @@ fun PerformanceSettingsSection(
                                         .clickable {
                                             preloadCount = count
                                             settingsPrefs.edit().putInt("preload_art_count", count).apply()
-                                            markCustom()
                                         }
                                         .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
@@ -658,7 +614,7 @@ fun PerformanceSettingsSection(
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            listOf(50, 150, 300).forEach { cap ->
+                            cacheOptions.forEach { cap ->
                                 val isSelected = cacheCapacity == cap
                                 val label = when (cap) {
                                     50 -> getLocalized("Baja", "Low")
@@ -676,7 +632,6 @@ fun PerformanceSettingsSection(
                                             cacheCapacity = cap
                                             settingsPrefs.edit().putInt("cover_cache_capacity", cap).apply()
                                             updateAlbumArtCacheSize(cap)
-                                            markCustom()
                                         }
                                         .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
@@ -735,7 +690,7 @@ fun PerformanceSettingsSection(
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            listOf(250, 500, 800).forEach { res ->
+                            resolutionOptions.forEach { res ->
                                 val isSelected = artResolution == res
                                 val label = when (res) {
                                     250 -> getLocalized("250p", "250p")
@@ -755,7 +710,6 @@ fun PerformanceSettingsSection(
                                             albumArtCache.evictAll()
                                             clearDiskAlbumArtCache(context)
                                             albumArtVersion++
-                                            markCustom()
                                         }
                                         .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
@@ -814,7 +768,7 @@ fun PerformanceSettingsSection(
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            listOf(70, 85, 100).forEach { qual ->
+                            qualityOptions.forEach { qual ->
                                 val isSelected = diskCacheQuality == qual
                                 val label = when (qual) {
                                     70 -> getLocalized("Rápida", "Fast")
@@ -834,7 +788,6 @@ fun PerformanceSettingsSection(
                                             albumArtCache.evictAll()
                                             clearDiskAlbumArtCache(context)
                                             albumArtVersion++
-                                            markCustom()
                                         }
                                         .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
@@ -929,7 +882,7 @@ fun PerformanceSettingsSection(
         // CARD 3: OPTIMIZACIÓN DE AUDIO Y SISTEMA (Audio & System Optimization Card)
         Column {
             Text(
-                text = getLocalized("OPTIMIZACIÓN DE PROCESAMIENTO Y AUDIO", "AUDIO & PROCESSING OPTIMIZATION"),
+                text = getLocalized("COLA Y LIMPIEZA", "QUEUE & CLEANUP"),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -948,58 +901,7 @@ fun PerformanceSettingsSection(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // 1. ReplayGain Processing Mode
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.GraphicEq,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(14.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = getLocalized("Normalización ReplayGain", "ReplayGain Normalization"),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = getLocalized(
-                                    "Modo de lectura diferido ahorra procesador al escanear la biblioteca",
-                                    "Lazy reading mode saves CPU processing during initial library scanning"
-                                ),
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                        }
-
-                        Switch(
-                            checked = lazyReplayGain,
-                            onCheckedChange = { checked ->
-                                lazyReplayGain = checked
-                                settingsPrefs.edit().putBoolean("lazy_replay_gain", checked).apply()
-                                markCustom()
-                            }
-                        )
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-
-                    // 2. Media3 IPC Buffer Limit
+                    // 1. Queue size limit
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
@@ -1023,15 +925,15 @@ fun PerformanceSettingsSection(
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = getLocalized("Límite Búfer IPC Media3", "Media3 IPC Buffer Limit"),
+                                text = getLocalized("Tamaño Máximo de la Cola", "Maximum Queue Size"),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = getLocalized(
-                                    "Máximo de elementos en memoria del reproductor (evita picos de RAM)",
-                                    "Max items serialized in player buffer (prevents RAM spikes on low memory)"
+                                    "Canciones que se cargan en la cola al reproducir una lista grande (menos = menos RAM)",
+                                    "Songs loaded into the queue when playing a large list (fewer = less RAM)"
                                 ),
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -1041,7 +943,7 @@ fun PerformanceSettingsSection(
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            listOf(500, 1500, 3000).forEach { limit ->
+                            queueLimitOptions.forEach { limit ->
                                 val isSelected = ipcQueueLimit == limit
                                 Box(
                                     modifier = Modifier
@@ -1053,7 +955,6 @@ fun PerformanceSettingsSection(
                                         .clickable {
                                             ipcQueueLimit = limit
                                             settingsPrefs.edit().putInt("ipc_queue_limit", limit).apply()
-                                            markCustom()
                                         }
                                         .padding(horizontal = 8.dp, vertical = 6.dp)
                                 ) {
@@ -1070,7 +971,7 @@ fun PerformanceSettingsSection(
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
 
-                    // 3. Auto Clean Temp Files on Startup
+                    // 2. Auto Clean Temp Files on Startup
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
@@ -1101,8 +1002,8 @@ fun PerformanceSettingsSection(
                             )
                             Text(
                                 text = getLocalized(
-                                    "Elimina instaladores APK antiguos y logs temporales automáticamente al abrir la app",
-                                    "Purges old temporary APK installers and temporary logs automatically on startup"
+                                    "Borra al abrir la app los instaladores APK descargados y los archivos temporales de edición",
+                                    "Deletes downloaded APK installers and leftover editing temp files when the app starts"
                                 ),
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -1114,7 +1015,6 @@ fun PerformanceSettingsSection(
                             onCheckedChange = { checked ->
                                 autoCleanTemp = checked
                                 settingsPrefs.edit().putBoolean("auto_clean_temp", checked).apply()
-                                markCustom()
                             }
                         )
                     }

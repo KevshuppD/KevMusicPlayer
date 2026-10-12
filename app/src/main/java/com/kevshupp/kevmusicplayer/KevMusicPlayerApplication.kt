@@ -34,6 +34,31 @@ class KevMusicPlayerApplication : Application(), ImageLoaderFactory {
             }
             defaultHandler?.uncaughtException(thread, throwable)
         }
+
+        applyPerformanceSettings()
+    }
+
+    // Performance settings that only take effect if something applies them when the app starts
+    private fun applyPerformanceSettings() {
+        val prefs = getSharedPreferences("settings_prefs", MODE_PRIVATE)
+        com.kevshupp.kevmusicplayer.ui.screens.updateAlbumArtCacheSize(prefs.getInt("cover_cache_capacity", 150))
+
+        if (prefs.getBoolean("auto_clean_temp", true)) {
+            Thread {
+                try {
+                    // Only files older than an hour: a tag edit or an update download may be using a newer one
+                    val cutoff = System.currentTimeMillis() - 60 * 60 * 1000L
+                    cacheDir.listFiles()?.forEach { file ->
+                        val name = file.name
+                        val isTemp = name.endsWith(".apk") || name.startsWith("temp_mp3_") ||
+                            name.startsWith("temp_jaudiotagger_") || name.startsWith("kmp_backup_")
+                        if (file.isFile && isTemp && file.lastModified() < cutoff) file.delete()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }.start()
+        }
     }
 
     override fun newImageLoader(): ImageLoader {

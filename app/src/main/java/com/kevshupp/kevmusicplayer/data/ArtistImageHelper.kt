@@ -271,34 +271,6 @@ object ArtistImageHelper {
         }
     }
 
-    private fun searchItunesArtistPicture(cleanSearch: String): String? {
-        return try {
-            val encodedQuery = URLEncoder.encode(cleanSearch, "UTF-8")
-            val url = "https://itunes.apple.com/search?term=$encodedQuery&entity=album&limit=3"
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "KevMusicPlayer/1.5.6")
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val responseBody = response.body?.string() ?: return null
-                val json = JSONObject(responseBody)
-                val results = json.optJSONArray("results") ?: return null
-                if (results.length() > 0) {
-                    val first = results.getJSONObject(0)
-                    val rawUrl = first.optString("artworkUrl100", "")
-                    if (rawUrl.isNotEmpty()) {
-                        return rawUrl.replace("100x100bb.jpg", "600x600bb.jpg")
-                    }
-                }
-                null
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
     private fun downloadImageToDisk(url: String, destFile: File): Boolean {
         return try {
             val request = Request.Builder()

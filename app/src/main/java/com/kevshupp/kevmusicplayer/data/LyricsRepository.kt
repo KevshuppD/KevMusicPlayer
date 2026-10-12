@@ -367,14 +367,8 @@ object LyricsRepository {
         }
     }
 
-    suspend fun searchCoversFromITunes(query: String): List<CoverSearchResult> {
-        return CoverArtRepository.searchCovers(query)
-    }
-
     suspend fun downloadCoverBytes(url: String): ByteArray? {
         return CoverArtRepository.downloadCoverBytes(url)
     }
 }
-
-typealias ITunesCoverSearchResult = CoverSearchResult
 

@@ -25,7 +25,7 @@ data class CoverSearchResult(
     val artistName: String,
     val albumName: String,
     val coverUrl: String,
-    val source: String = "iTunes"
+    val source: String = "Deezer"
 )
 
 object CoverArtRepository {
@@ -148,75 +148,6 @@ object CoverArtRepository {
     }
 
     /**
-     * Search covers on iTunes Search API with proper entity support and 1000x1000 resolution.
-     */
-    suspend fun searchCoversFromITunes(query: String, type: CoverSearchType = CoverSearchType.AUTO): List<CoverSearchResult> {
-        return withContext(Dispatchers.IO) {
-            val list = mutableListOf<CoverSearchResult>()
-            val cleanedQuery = cleanCoverSearchTerm(query)
-            if (cleanedQuery.isBlank()) return@withContext emptyList()
-
-            val encodedQuery = URLEncoder.encode(cleanedQuery, "UTF-8")
-            val entityParam = when (type) {
-                CoverSearchType.ALBUM -> "entity=album&limit=12"
-                CoverSearchType.SONG -> "entity=song&limit=12"
-                CoverSearchType.AUTO -> "media=music&entity=album,song&limit=12"
-            }
-
-            val request = Request.Builder()
-                .url("https://itunes.apple.com/search?term=$encodedQuery&$entityParam")
-                .build()
-
-            var attempt = 0
-            val maxAttempts = 2
-            while (attempt < maxAttempts) {
-                try {
-                    client.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val body = response.body?.string() ?: return@withContext emptyList()
-                            val jsonObject = JSONObject(body)
-                            val results = jsonObject.optJSONArray("results") ?: return@withContext emptyList()
-
-                            for (i in 0 until results.length()) {
-                                val obj = results.getJSONObject(i)
-                                val trackName = obj.optString("trackName", "")
-                                val artistName = obj.optString("artistName", "")
-                                val albumName = obj.optString("collectionName", "")
-                                var coverUrl = obj.optString("artworkUrl100", "")
-
-                                if (coverUrl.isNotEmpty()) {
-                                    coverUrl = coverUrl.replace(Regex("\\d+x\\d+bb"), "1000x1000bb")
-                                        .replace("100x100bb.jpg", "1000x1000bb.jpg")
-                                        .replace("100x100bb.png", "1000x1000bb.png")
-                                }
-
-                                if (coverUrl.isNotEmpty() && list.none { it.coverUrl == coverUrl }) {
-                                    list.add(
-                                        CoverSearchResult(
-                                            trackName = trackName,
-                                            artistName = artistName,
-                                            albumName = albumName,
-                                            coverUrl = coverUrl,
-                                            source = "iTunes"
-                                        )
-                                    )
-                                }
-                            }
-                            break
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    kotlinx.coroutines.delay(500L * (attempt + 1))
-                }
-                attempt++
-            }
-
-            list
-        }
-    }
-
-    /**
      * Search covers directly from Deezer API (1000x1000 HD artwork).
      */
     suspend fun searchCovers(query: String, type: CoverSearchType = CoverSearchType.AUTO): List<CoverSearchResult> {
@@ -240,8 +171,7 @@ object CoverArtRepository {
                 }
             }
 
-            // Last resort fallback
-            searchCoversFromITunes(trimmed, type)
+            emptyList()
         }
     }
 

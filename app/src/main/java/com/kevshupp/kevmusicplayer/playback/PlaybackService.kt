@@ -72,7 +72,7 @@ class PlaybackService : MediaLibraryService() {
 
     private var currentReplayGainFactor: Float = 1f
 
-    private val audioFocusHelper by lazy {
+    private val audioFocusHelper: AudioFocusHelper by lazy {
         AudioFocusHelper(
             context = this,
             playerProvider = { mediaLibrarySession?.player as? ExoPlayer },
@@ -89,11 +89,11 @@ class PlaybackService : MediaLibraryService() {
         WidgetStateHelper(this, serviceScope)
     }
 
-    private val volumeFadeHelper by lazy {
+    private val volumeFadeHelper: VolumeFadeHelper by lazy {
         VolumeFadeHelper(
             context = this,
             scope = serviceScope,
-            getReplayGainFactor = { currentReplayGainFactor }
+            getReplayGainFactor = { currentReplayGainFactor * audioFocusHelper.duckFactor }
         )
     }
 
@@ -711,7 +711,9 @@ class PlaybackService : MediaLibraryService() {
 
                 if (items.isEmpty() && localAudioFiles.isNotEmpty()) {
                     // Same cap the app uses for its queues, to avoid IPC TransactionTooLargeException
-                    val shuffledFiles = localAudioFiles.shuffled().take(1500)
+                    val queueLimit = PreferenceConstants.getSettingsPrefs(this@PlaybackService)
+                        .getInt("ipc_queue_limit", 1500).coerceIn(100, 1500)
+                    val shuffledFiles = localAudioFiles.shuffled().take(queueLimit)
                     shuffledFiles.forEach { song ->
                         val trackUri = Uri.parse(song.uriString)
                         val mediaItem = MediaItem.Builder()
