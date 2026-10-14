@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -168,41 +169,34 @@ fun ShareClipDialog(
     }
 
     // Lyrics selection handler
-    fun handleLyricClick(index: Int) {
-        if (selectedLyricStartIdx == selectedLyricEndIdx) {
-            if (index == selectedLyricStartIdx) {
-                // Keep selected
-            } else if (index > selectedLyricStartIdx) {
-                val tStart = parsedLyrics[selectedLyricStartIdx].timeMs
-                val tEnd = if (index + 1 < parsedLyrics.size) parsedLyrics[index + 1].timeMs else min(songDurationMs, parsedLyrics[index].timeMs + 4000L)
-                if (tEnd - tStart <= 60000L) {
-                    selectedLyricEndIdx = index
+    fun lineEndMs(index: Int): Long =
+        if (index + 1 < parsedLyrics.size) parsedLyrics[index + 1].timeMs
+        else min(songDurationMs, parsedLyrics[index].timeMs + 4000L)
+
+    // Toque: amplía la selección hasta la línea tocada (en cualquier dirección). Dentro de la
+    // selección, tocar un extremo lo quita y tocar una línea intermedia la fija como final.
+    // Mantener pulsado empieza una selección nueva en esa línea.
+    fun handleLyricClick(index: Int, startNew: Boolean = false) {
+        val start = selectedLyricStartIdx
+        val end = selectedLyricEndIdx
+        when {
+            startNew -> { selectedLyricStartIdx = index; selectedLyricEndIdx = index }
+            index < start || index > end -> {
+                val newStart = min(start, index)
+                val newEnd = max(end, index)
+                if (lineEndMs(newEnd) - parsedLyrics[newStart].timeMs <= 60000L) {
+                    selectedLyricStartIdx = newStart
+                    selectedLyricEndIdx = newEnd
                 } else {
-                    selectedLyricStartIdx = index
-                    selectedLyricEndIdx = index
-                }
-            } else {
-                val tStart = parsedLyrics[index].timeMs
-                val tEnd = if (selectedLyricEndIdx + 1 < parsedLyrics.size) parsedLyrics[selectedLyricEndIdx + 1].timeMs else min(songDurationMs, parsedLyrics[selectedLyricEndIdx].timeMs + 4000L)
-                if (tEnd - tStart <= 60000L) {
-                    selectedLyricStartIdx = index
-                } else {
+                    android.widget.Toast.makeText(context, "Máximo 60 s: se empezó una selección nueva", android.widget.Toast.LENGTH_SHORT).show()
                     selectedLyricStartIdx = index
                     selectedLyricEndIdx = index
                 }
             }
-        } else {
-            if (index < selectedLyricStartIdx || index > selectedLyricEndIdx) {
-                selectedLyricStartIdx = index
-                selectedLyricEndIdx = index
-            } else if (index == selectedLyricStartIdx) {
-                selectedLyricStartIdx = min(selectedLyricEndIdx, selectedLyricStartIdx + 1)
-            } else if (index == selectedLyricEndIdx) {
-                selectedLyricEndIdx = max(selectedLyricStartIdx, selectedLyricEndIdx - 1)
-            } else {
-                selectedLyricStartIdx = index
-                selectedLyricEndIdx = index
-            }
+            start == end -> Unit
+            index == start -> selectedLyricStartIdx = start + 1
+            index == end -> selectedLyricEndIdx = end - 1
+            else -> selectedLyricEndIdx = index
         }
 
         // Recalculate startMs and endMs
@@ -213,6 +207,7 @@ fun ShareClipDialog(
         } else {
             min(songDurationMs, parsedLyrics[selectedLyricEndIdx].timeMs + 4000L)
         }
+        isPreviewPlaying = false
         if (endMs - startMs > 60000L) {
             endMs = startMs + 60000L
         }
@@ -523,6 +518,15 @@ fun ShareClipDialog(
                         )
                     }
 
+                    if (selectedTab == 0 && parsedLyrics.isNotEmpty()) {
+                        Text(
+                            text = "Toca una línea para ampliar hasta ella · mantén pulsado para empezar de nuevo",
+                            color = Color.White.copy(alpha = 0.5f),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(6.dp))
                 }
 
@@ -530,7 +534,7 @@ fun ShareClipDialog(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(145.dp)
+                        .height(210.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(Color(0xFF141624))
                         .padding(8.dp)
@@ -550,7 +554,10 @@ fun ShareClipDialog(
                                         .background(
                                             if (isSelected) primaryColor.copy(alpha = 0.18f) else Color.Transparent
                                         )
-                                        .clickable { handleLyricClick(index) }
+                                        .combinedClickable(
+                                            onClick = { handleLyricClick(index) },
+                                            onLongClick = { handleLyricClick(index, startNew = true) }
+                                        )
                                         .padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -577,7 +584,7 @@ fun ShareClipDialog(
                                             color = if (isSelected) Color.White else Color.White.copy(alpha = 0.65f),
                                             fontSize = 13.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            maxLines = 1,
+                                            maxLines = 2,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         if (showTranslation && translatedLyrics != null) {

@@ -56,6 +56,7 @@ object VideoClipGenerator {
     private const val AUDIO_SAMPLE_RATE = 44100
     private const val AUDIO_CHANNEL_COUNT = 2
     private const val AUDIO_BIT_RATE = 192000
+    private const val CLIP_LINE_TOLERANCE_MS = 300L
 
     suspend fun generateClip(
         context: Context,
@@ -378,87 +379,96 @@ object VideoClipGenerator {
         canvas.drawRoundRect(cardRect, 32f, 32f, cardPaint)
         canvas.drawRoundRect(cardRect, 32f, 32f, borderPaint)
 
-        // Lyric lines display (Authentic typography, displaying selected lines)
+        // Bottom Song Badge inside Card (se calcula antes para que la letra no lo invada)
+        val badgeHeight = 90f
+        val badgeTop = cardBottom - badgeHeight - 24f
+
+        // Letra: todas las líneas seleccionadas, con ajuste de línea y tamaño automático
         if (config.lyricsLines.isNotEmpty()) {
-            val selectedLines = config.lyricsLines.filter { it.timeMs in (config.startMs - 500)..config.endMs }
-            val linesToDisplay = if (selectedLines.isNotEmpty()) selectedLines else config.lyricsLines.take(4)
+            val linesToDisplay = clipLyricLines(config).ifEmpty { config.lyricsLines.take(4) }
             val currentLineIndex = linesToDisplay.indexOfLast { it.timeMs <= currentTimeMs }
 
-            val lyricsStartY = cardTop + if (config.isVertical) 90f else 50f
-            val baseSize = when {
+            val textLeft = cardMargin + 35f
+            val maxTextWidth = cardRect.width() - 70f
+            val lyricsTop = cardTop + if (config.isVertical) 60f else 40f
+            val availableHeight = badgeTop - 30f - lyricsTop
+
+            fun translationOf(line: LyricLine): String? =
+                if (config.showTranslation) config.translatedLyrics?.get(line.timeMs)?.takeIf { it.isNotBlank() } else null
+
+            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.LEFT }
+            val transPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textAlign = Paint.Align.LEFT
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+            }
+
+            class LaidOutLine(val lines: List<String>, val trans: List<String>, val height: Float)
+
+            fun layout(baseSize: Float): List<LaidOutLine> = linesToDisplay.mapIndexed { idx, line ->
+                val size = if (idx == currentLineIndex) baseSize * 1.15f else baseSize
+                textPaint.textSize = size
+                textPaint.typeface = Typeface.create(Typeface.DEFAULT, if (idx == currentLineIndex) Typeface.BOLD else Typeface.NORMAL)
+                val wrapped = wrapText(line.text, textPaint, maxTextWidth)
+                transPaint.textSize = baseSize * 0.72f
+                val trans = translationOf(line)?.let { wrapText(it, transPaint, maxTextWidth) } ?: emptyList()
+                LaidOutLine(wrapped, trans, wrapped.size * size * 1.3f + trans.size * baseSize * 0.95f + baseSize * 0.45f)
+            }
+
+            // Se reduce la fuente hasta que quepa todo; las estrofas largas ya no se salen de la tarjeta
+            var baseSize = when {
                 linesToDisplay.size <= 2 -> if (config.isVertical) 42f else 32f
                 linesToDisplay.size <= 4 -> if (config.isVertical) 34f else 26f
-                else -> if (config.isVertical) 26f else 20f
+                else -> if (config.isVertical) 28f else 22f
             }
-            val activeSize = baseSize * 1.15f
+            val minSize = if (config.isVertical) 18f else 15f
+            var laidOut = layout(baseSize)
+            while (laidOut.sumOf { it.height.toDouble() } > availableHeight && baseSize > minSize) {
+                baseSize = (baseSize - 1f).coerceAtLeast(minSize)
+                laidOut = layout(baseSize)
+            }
 
-            var lineY = lyricsStartY
-            for ((idx, line) in linesToDisplay.withIndex()) {
+            // Si aun así no cabe, se muestra una ventana que sigue a la línea activa
+            var first = 0
+            if (laidOut.sumOf { it.height.toDouble() } > availableHeight) {
+                val anchor = currentLineIndex.coerceAtLeast(0)
+                first = anchor
+                var used = laidOut[anchor].height
+                while (first > 0 && used + laidOut[first - 1].height <= availableHeight * 0.4f) {
+                    first--
+                    used += laidOut[first].height
+                }
+            }
+
+            var lineY = lyricsTop
+            for (idx in first until laidOut.size) {
+                val item = laidOut[idx]
+                if (lineY + item.height > lyricsTop + availableHeight + baseSize) break
                 val isActive = idx == currentLineIndex
-
-                val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                val size = if (isActive) baseSize * 1.15f else baseSize
+                textPaint.apply {
                     color = if (isActive) Color.WHITE else Color.argb(130, 255, 255, 255)
-                    textSize = if (isActive) activeSize else baseSize
+                    textSize = size
                     typeface = Typeface.create(Typeface.DEFAULT, if (isActive) Typeface.BOLD else Typeface.NORMAL)
-                    textAlign = Paint.Align.LEFT
-                    if (isActive) {
-                        setShadowLayer(16f, 0f, 0f, Color.argb(180, 255, 255, 255))
-                    }
+                    if (isActive) setShadowLayer(16f, 0f, 0f, Color.argb(180, 255, 255, 255)) else clearShadowLayer()
                 }
-
-                // Word wrap long lines cleanly
-                val words = line.text.split(" ")
-                var currentLine = ""
-                for (word in words) {
-                    val testLine = if (currentLine.isEmpty()) word else "$currentLine $word"
-                    if (textPaint.measureText(testLine) < (cardRect.width() - 70f)) {
-                        currentLine = testLine
-                    } else {
-                        canvas.drawText(currentLine, cardMargin + 35f, lineY, textPaint)
-                        lineY += (if (isActive) activeSize else baseSize) * 1.35f
-                        currentLine = word
-                    }
+                for (text in item.lines) {
+                    lineY += size
+                    canvas.drawText(text, textLeft, lineY, textPaint)
+                    lineY += size * 0.3f
                 }
-                if (currentLine.isNotEmpty()) {
-                    canvas.drawText(currentLine, cardMargin + 35f, lineY, textPaint)
-                    lineY += (if (isActive) activeSize else baseSize) * 1.25f
+                transPaint.apply {
+                    color = if (isActive) Color.argb(235, 220, 230, 255) else Color.argb(110, 200, 210, 235)
+                    textSize = baseSize * 0.72f
                 }
-
-                // Translation Subtitle Line
-                if (config.showTranslation && config.translatedLyrics != null) {
-                    val trans = config.translatedLyrics[line.timeMs]
-                    if (!trans.isNullOrBlank()) {
-                        val transPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = if (isActive) Color.argb(235, 220, 230, 255) else Color.argb(110, 200, 210, 235)
-                            textSize = baseSize * 0.72f
-                            typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-                            textAlign = Paint.Align.LEFT
-                        }
-                        val transWords = trans.split(" ")
-                        var curTrans = ""
-                        for (w in transWords) {
-                            val testT = if (curTrans.isEmpty()) w else "$curTrans $w"
-                            if (transPaint.measureText(testT) < (cardRect.width() - 70f)) {
-                                curTrans = testT
-                            } else {
-                                canvas.drawText(curTrans, cardMargin + 35f, lineY, transPaint)
-                                lineY += baseSize * 0.95f
-                                curTrans = w
-                            }
-                        }
-                        if (curTrans.isNotEmpty()) {
-                            canvas.drawText(curTrans, cardMargin + 35f, lineY, transPaint)
-                            lineY += baseSize * 1.15f
-                        }
-                    }
+                for (text in item.trans) {
+                    lineY += baseSize * 0.72f
+                    canvas.drawText(text, textLeft, lineY, transPaint)
+                    lineY += baseSize * 0.23f
                 }
-                lineY += baseSize * 0.35f
+                lineY += baseSize * 0.45f
             }
         }
 
-        // Bottom Song Badge inside Card
-        val badgeHeight = 90f
-        val badgeTop = cardBottom - badgeHeight - 24f
         val badgeLeft = cardMargin + 28f
         val artSize = 80f
 
@@ -575,7 +585,7 @@ object VideoClipGenerator {
                     textAlign = Paint.Align.CENTER
                     setShadowLayer(16f, 0f, 0f, accentColor)
                 }
-                canvas.drawText(truncateText("“${currentLine.text}”", lyricPaint, width - 100f), width / 2f, textTop + 105f, lyricPaint)
+                val lyricBottom = drawWrappedCentered(canvas, "“${currentLine.text}”", lyricPaint, width - 100f, width / 2f, textTop + 105f, maxLines = 3, minSize = 20f)
 
                 // Translation if enabled
                 if (config.showTranslation && config.translatedLyrics != null) {
@@ -587,7 +597,7 @@ object VideoClipGenerator {
                             typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
                             textAlign = Paint.Align.CENTER
                         }
-                        canvas.drawText(truncateText(trans, transPaint, width - 110f), width / 2f, textTop + 138f, transPaint)
+                        drawWrappedCentered(canvas, trans, transPaint, width - 110f, width / 2f, lyricBottom + 32f, maxLines = 2, minSize = 16f)
                     }
                 }
             }
@@ -695,7 +705,7 @@ object VideoClipGenerator {
                     textAlign = Paint.Align.CENTER
                     setShadowLayer(16f, 0f, 0f, accentColor)
                 }
-                canvas.drawText(truncateText(lineText, lyricPaint, width - 100f), width / 2f, textTop + 110f, lyricPaint)
+                drawWrappedCentered(canvas, lineText, lyricPaint, width - 100f, width / 2f, textTop + 110f, maxLines = 3, minSize = 20f)
             }
         }
 
@@ -803,6 +813,59 @@ object VideoClipGenerator {
         }
     }
 
+    /** Líneas de letra del fragmento. Excluye la línea que empieza justo en [ShareClipConfig.endMs] (es la siguiente estrofa). */
+    private fun clipLyricLines(config: ShareClipConfig): List<LyricLine> =
+        config.lyricsLines.filter { it.timeMs >= config.startMs - CLIP_LINE_TOLERANCE_MS && it.timeMs < config.endMs - CLIP_LINE_TOLERANCE_MS }
+
+    /** Ajuste de línea por palabras; corta por caracteres las palabras más anchas que la línea. */
+    private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
+        val result = mutableListOf<String>()
+        var current = ""
+        for (rawWord in text.trim().split(Regex("\\s+"))) {
+            var word = rawWord
+            while (paint.measureText(word) > maxWidth && word.length > 1) {
+                var cut = word.length - 1
+                while (cut > 1 && paint.measureText(word, 0, cut) > maxWidth) cut--
+                if (current.isNotEmpty()) { result.add(current); current = "" }
+                result.add(word.substring(0, cut))
+                word = word.substring(cut)
+            }
+            val test = if (current.isEmpty()) word else "$current $word"
+            if (current.isNotEmpty() && paint.measureText(test) > maxWidth) {
+                result.add(current)
+                current = word
+            } else {
+                current = test
+            }
+        }
+        if (current.isNotEmpty()) result.add(current)
+        return result
+    }
+
+    /**
+     * Dibuja texto centrado en varias líneas, reduciendo la fuente hasta [minSize] para no pasar de [maxLines].
+     * Devuelve la coordenada Y de la última línea dibujada.
+     */
+    private fun drawWrappedCentered(
+        canvas: Canvas, text: String, paint: Paint, maxWidth: Float, centerX: Float, firstBaseline: Float,
+        maxLines: Int, minSize: Float
+    ): Float {
+        var lines = wrapText(text, paint, maxWidth)
+        while (lines.size > maxLines && paint.textSize > minSize) {
+            paint.textSize = (paint.textSize - 1f).coerceAtLeast(minSize)
+            lines = wrapText(text, paint, maxWidth)
+        }
+        if (lines.size > maxLines) {
+            lines = lines.take(maxLines - 1) + truncateText(lines.drop(maxLines - 1).joinToString(" "), paint, maxWidth)
+        }
+        var y = firstBaseline
+        lines.forEachIndexed { i, line ->
+            if (i > 0) y += paint.textSize * 1.25f
+            canvas.drawText(line, centerX, y, paint)
+        }
+        return y
+    }
+
     private fun truncateText(text: String, paint: Paint, maxWidth: Float): String {
         if (paint.measureText(text) <= maxWidth) return text
         var truncated = text
@@ -878,9 +941,17 @@ object VideoClipGenerator {
 
         val startUs = startMs * 1000L
         val endUs = endMs * 1000L
-        extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
-
         val srcMime = inputFormat.getString(MediaFormat.KEY_MIME)!!
+        if (srcMime == MediaFormat.MIMETYPE_AUDIO_MPEG) {
+            // En MP3 (sobre todo VBR sin tabla Xing) seekTo() estima la posición por bitrate y cae
+            // segundos antes o después: la letra quedaba desfasada del audio. Leyendo los frames en
+            // orden, sampleTime es exacto. Se empieza 200 ms antes para que el decodificador se estabilice.
+            while (extractor.sampleTime in 0 until (startUs - 200_000L)) {
+                if (!extractor.advance()) break
+            }
+        } else {
+            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        }
         var sampleRate = if (inputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) else AUDIO_SAMPLE_RATE
         var channelCount = if (inputFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else AUDIO_CHANNEL_COUNT
 
@@ -929,12 +1000,22 @@ object VideoClipGenerator {
                         continue
                     }
                     val outputBuffer = decoder.getOutputBuffer(outputIndex)
-                    if (outputBuffer != null && bufferInfo.size > 0 && bufferInfo.presentationTimeUs >= startUs) {
-                        outputBuffer.position(bufferInfo.offset)
-                        outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                        val pcmChunk = ByteArray(bufferInfo.size)
-                        outputBuffer.get(pcmChunk)
-                        pcmOutputStream.write(pcmChunk)
+                    if (outputBuffer != null && bufferInfo.size > 0) {
+                        // Recorte exacto a [startUs, endUs] dentro del buffer: descartar el buffer entero
+                        // que cruza el inicio adelantaba el audio respecto a la letra
+                        val frameBytes = channelCount * 2
+                        val ptsUs = bufferInfo.presentationTimeUs
+                        val skipFrames = if (ptsUs < startUs) ((startUs - ptsUs) * sampleRate / 1_000_000L) else 0L
+                        val endFrames = ((endUs - ptsUs) * sampleRate / 1_000_000L)
+                        val from = (skipFrames * frameBytes).coerceIn(0L, bufferInfo.size.toLong()).toInt()
+                        val to = (endFrames * frameBytes).coerceIn(0L, bufferInfo.size.toLong()).toInt()
+                        if (to > from) {
+                            outputBuffer.position(bufferInfo.offset + from)
+                            outputBuffer.limit(bufferInfo.offset + to)
+                            val pcmChunk = ByteArray(to - from)
+                            outputBuffer.get(pcmChunk)
+                            pcmOutputStream.write(pcmChunk)
+                        }
                     }
                     decoder.releaseOutputBuffer(outputIndex, false)
 
