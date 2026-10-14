@@ -211,6 +211,8 @@ fun AppNavigation() {
         }
     }
 
+    BackgroundRestrictionWarning()
+
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -498,7 +500,7 @@ fun AppNavigation() {
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(max = 150.dp),
+                                        .heightIn(max = 260.dp),
                                     colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f))
                                 ) {
                                     androidx.compose.foundation.lazy.LazyColumn(
@@ -506,7 +508,7 @@ fun AppNavigation() {
                                     ) {
                                         item {
                                             Text(
-                                                text = info.changelog,
+                                                text = com.kevshupp.kevmusicplayer.data.AppUpdater.formatChangelog(info.changelog),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = Color.White.copy(alpha = 0.8f)
                                             )
@@ -1434,4 +1436,52 @@ private fun android.content.Context.findActivity(): android.app.Activity? {
         context = context.baseContext
     }
     return null
+}
+
+/**
+ * Avisa al abrir la app si el sistema la tiene en "Restringida" (gestor de batería de Android/Motorola):
+ * en ese estado puede cerrar la música en segundo plano. Se comprueba cada vez que la app vuelve al frente,
+ * porque el sistema puede cambiarlo sin que el usuario toque nada. Se muestra una vez por sesión.
+ */
+@Composable
+private fun BackgroundRestrictionWarning() {
+    val context = LocalContext.current
+    var restricted by remember { mutableStateOf(false) }
+    var dismissed by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        restricted = com.kevshupp.kevmusicplayer.data.BackgroundRestriction.isRestricted(context)
+        onPauseOrDispose { }
+    }
+
+    if (restricted && !dismissed) {
+        AlertDialog(
+            onDismissRequest = { dismissed = true },
+            title = { Text("Batería restringida") },
+            text = {
+                Text(
+                    "Android tiene a Kev Music Player en modo \"Restringido\", aunque en Ajustes aparezca otra cosa. " +
+                        "Así puede detener la música en segundo plano.\n\n" +
+                        "Abre la app en Ajustes → Batería y elige \"Sin restricciones\". " +
+                        "Si vuelve a pasar, desactiva la \"Batería adaptable\" del teléfono."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    dismissed = true
+                    try {
+                        context.startActivity(
+                            android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                                .setData(android.net.Uri.parse("package:${context.packageName}"))
+                        )
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }) { Text("Abrir ajustes") }
+            },
+            dismissButton = {
+                TextButton(onClick = { dismissed = true }) { Text("Ahora no") }
+            }
+        )
+    }
 }

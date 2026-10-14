@@ -15,6 +15,8 @@ import kotlin.math.abs
 /**
  * Manages audio volume fading, crossfades between tracks, manual skip transitions, and playback watchdogs.
  */
+private const val WATCHDOG_INTERVAL_MS = 3000L
+
 class VolumeFadeHelper(
     private val context: Context,
     private val scope: CoroutineScope,
@@ -54,7 +56,9 @@ class VolumeFadeHelper(
                     break
                 }
 
-                if (!player.isPlaying || isFadingIn) {
+                // En pausa el bucle termina; PlaybackService lo vuelve a lanzar al reanudar
+                if (!player.isPlaying) break
+                if (isFadingIn) {
                     delay(1000)
                     continue
                 }
@@ -86,8 +90,9 @@ class VolumeFadeHelper(
                         if (abs(player.volume - gainFactor) > 0.02f && !isFadingIn) {
                             player.volume = gainFactor
                         }
+                        // Duerme hasta poco antes del crossfade (máx. 10 s) en lugar de despertar cada segundo
                         val timeUntilCrossfade = remainingMs - crossfadeMs
-                        val sleepMs = timeUntilCrossfade.coerceIn(150L, 1000L)
+                        val sleepMs = (timeUntilCrossfade - 300L).coerceIn(150L, 10_000L)
                         delay(sleepMs)
                     }
                 } else {
@@ -180,7 +185,7 @@ class VolumeFadeHelper(
             var stalledTicks = 0
 
             while (true) {
-                delay(2000)
+                delay(WATCHDOG_INTERVAL_MS)
                 try {
                     if (player.isPlaying && player.playWhenReady && player.playbackState == Player.STATE_READY) {
                         val currentPos = player.currentPosition
@@ -188,7 +193,7 @@ class VolumeFadeHelper(
                         // Detect if playback position is frozen while player reports isPlaying=true (Bluetooth sink stall)
                         if (currentPos == lastRecordedPos && (duration <= 0 || currentPos < duration - 1500L)) {
                             stalledTicks++
-                            if (stalledTicks >= 2) { // 4 seconds without progress while isPlaying is true
+                            if (stalledTicks >= 2) { // 6 seconds without progress while isPlaying is true
                                 TelemetryLogger.logWarn(
                                     context,
                                     "Playback_Watchdog",
@@ -213,6 +218,11 @@ class VolumeFadeHelper(
                 }
             }
         }
+    }
+
+    fun stopPlaybackWatchdogLoop() {
+        watchdogJob?.cancel()
+        watchdogJob = null
     }
 
     fun cancelAll() {

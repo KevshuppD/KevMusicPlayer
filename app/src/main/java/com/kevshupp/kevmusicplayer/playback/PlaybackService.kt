@@ -63,7 +63,6 @@ import kotlin.math.pow
 class PlaybackService : MediaLibraryService() {
     private var mediaLibrarySession: MediaLibrarySession? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + TelemetryLogger.getExceptionHandler("PlaybackService_Scope"))
-    private var wakeLock: PowerManager.WakeLock? = null
     private var playWhenRestored = false
     private var isRestoring = false
     private var missingFileStreak = 0
@@ -106,9 +105,6 @@ class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannelIfNeeded()
-
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KevMusicPlayer:PlaybackWakeLock")
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -165,7 +161,6 @@ class PlaybackService : MediaLibraryService() {
         }
 
         volumeFadeHelper.startFadeCheckLoop(player)
-        volumeFadeHelper.startPlaybackWatchdogLoop(player)
 
         val eqPrefs = PreferenceConstants.getEqualizerPrefs(this)
         eqPrefs.registerOnSharedPreferenceChangeListener(eqPrefsListener)
@@ -239,21 +234,10 @@ class PlaybackService : MediaLibraryService() {
                 if (isPlaying) {
                     audioFocusHelper.requestAudioFocus()
                     volumeFadeHelper.startFadeCheckLoop(player)
-                    try {
-                        if (wakeLock?.isHeld == false) {
-                            wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24h limit
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
+                    volumeFadeHelper.startPlaybackWatchdogLoop(player)
                 } else {
-                    try {
-                        if (wakeLock?.isHeld == true) {
-                            wakeLock?.release()
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
+                    // En pausa no hay nada que vigilar: no se despierta el procesador cada pocos segundos
+                    volumeFadeHelper.stopPlaybackWatchdogLoop()
                 }
                 savePlaybackState(player)
             }
@@ -310,6 +294,10 @@ class PlaybackService : MediaLibraryService() {
                     "Playback_Discontinuity",
                     "Position discontinuity ($reasonStr): from ${oldPosition.positionMs}ms to ${newPosition.positionMs}ms"
                 )
+                // El bucle del crossfade duerme hasta acercarse al final: tras un salto manual de posición recalcula
+                if (reason == Player.DISCONTINUITY_REASON_SEEK && player.isPlaying) {
+                    volumeFadeHelper.startFadeCheckLoop(player)
+                }
                 savePlaybackState(player)
             }
 
@@ -628,7 +616,7 @@ class PlaybackService : MediaLibraryService() {
         notificationCheckJob = serviceScope.launch {
             kotlinx.coroutines.delay(2500)
             val currentId = player.currentMediaItem?.mediaId ?: return@launch
-            if (player.playbackState == Player.STATE_IDLE || currentId == lastNotifiedMediaId) return@launch
+            if (!player.isPlaying || currentId == lastNotifiedMediaId) return@launch
             TelemetryLogger.logWarn(
                 this@PlaybackService,
                 "Playback_Notification",
@@ -844,6 +832,22 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = mediaLibrarySession
 
+    /**
+     * Con la batería de la app en "Restringida", Android rechaza startForeground() desde segundo plano
+     * ("not allowed due to bg restriction") y Media3, que publica la notificación con esa llamada, la dejaba
+     * congelada en la canción anterior. En ese caso se publica como notificación normal.
+     */
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        val restricted = com.kevshupp.kevmusicplayer.data.BackgroundRestriction.isRestricted(this)
+        if (restricted && startInForegroundRequired && !loggedBackgroundRestriction) {
+            loggedBackgroundRestriction = true
+            TelemetryLogger.logWarn(this, "Playback_Notification", "App is background-restricted: posting the notification without startForeground")
+        }
+        super.onUpdateNotification(session, startInForegroundRequired && !restricted)
+    }
+
+    private var loggedBackgroundRestriction = false
+
     override fun onDestroy() {
         mediaLibrarySession?.player?.let { player ->
             try {
@@ -875,11 +879,6 @@ class PlaybackService : MediaLibraryService() {
 
         notificationCheckJob?.cancel()
         serviceScope.cancel()
-        try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
-        } catch (e: Exception) {}
 
         val eqPrefs = PreferenceConstants.getEqualizerPrefs(this)
         eqPrefs.unregisterOnSharedPreferenceChangeListener(eqPrefsListener)

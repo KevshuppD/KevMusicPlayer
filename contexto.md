@@ -69,6 +69,7 @@ com/kevshupp/kevmusicplayer/
 │   ├── AppUpdater.kt                    # Comprobador y descargador de actualizaciones vía GitHub Releases
 │   ├── TelemetryLogger.kt               # Registro seguro de errores y telemetría local
 │   ├── HttpClients.kt                   # OkHttpClient compartido (un solo pool de conexiones)
+│   ├── BackgroundRestriction.kt         # Detecta si Android tiene la app en batería "Restringida"
 │   └── cloud/                           # Módulo de Autenticación y Nube
 │       ├── CloudUser.kt                 # Modelo de usuario de Google/Firebase
 │       ├── CloudAuthManager.kt          # Gestión de autenticación con Google Play Services
@@ -209,7 +210,9 @@ sequenceDiagram
 - **Salto Manual Instantáneo:** Al pulsar "Siguiente" o "Anterior", `VolumeFadeHelper.performManualSkip()` ejecuta la transición de inmediato sin bucles lentos de desvanecimiento artificial.
 - **Protección de AudioFX:** `PlaybackService` valida que `audioEffectsManager.currentAudioSessionId != sessionId` antes de reconfigurar los efectos de sonido DSP en transiciones de pista, evitando recreaciones nativas síncronas que bloqueen el audio.
 
-- **Notificación desactualizada:** Se observó que la notificación de Media3 podía quedarse en una canción anterior mientras la app mostraba la correcta (causa aún sin confirmar). `PlaybackService` envuelve `DefaultMediaNotificationProvider` para guardar el `mediaId` de la última notificación construida (`lastNotifiedMediaId`); 2,5 s después de cada cambio de pista, `checkNotificationUpToDate()` compara con la canción actual y, si no coincide, registra `Playback_Notification` en la telemetría y fuerza `triggerNotificationUpdate()`. También se registra si se desconecta el controlador interno de la notificación.
+- **Notificación desactualizada (batería "Restringida"):** Si el usuario (o el sistema) pone la batería de la app en "Restringida" (`RUN_ANY_IN_BACKGROUND` denegado, `ActivityManager.isBackgroundRestricted`), Android rechaza `startForeground()` desde segundo plano ("not allowed due to bg restriction"). Media3 publica la notificación de reproducción precisamente con esa llamada, así que al cambiar de canción con la app oculta la notificación se quedaba congelada. `PlaybackService.onUpdateNotification()` detecta la restricción con `BackgroundRestriction.isRestricted()` (`data/BackgroundRestriction.kt`; no basta `ActivityManager.isBackgroundRestricted`, que devuelve `false` cuando la app está exenta de optimización de batería pero tiene `RUN_ANY_IN_BACKGROUND` denegado, el estado mixto que deja el gestor de Motorola: se lee también ese permiso con `AppOpsManager.unsafeCheckOpNoThrow("android:run_any_in_background")`) y llama a `super` con `startInForegroundRequired = false`, de modo que Media3 la publica como notificación normal (comprobado en el moto g35: 6 saltos seguidos, la notificación sigue a la canción). Como red de seguridad, `checkNotificationUpToDate()` compara 2,5 s después de cada cambio de pista el `mediaId` de la última notificación construida y, si no coincide, registra `Playback_Notification` y fuerza `triggerNotificationUpdate()`. La tarjeta de batería de Ajustes del sistema (`SystemSettingsSection`) también detecta "Restringida": la exención de optimización de batería por sí sola no basta, y el botón abre la ficha de la app para elegir "Sin restricciones".
+
+- **Sin wakelock propio:** `PlaybackService` ya no toma un `PARTIAL_WAKE_LOCK` manual de 24 h al reproducir; ExoPlayer mantiene el procesador despierto con `setWakeMode(C.WAKE_MODE_LOCAL)`. Los gestores de batería (Android y Motorola) marcan las apps que retienen wakelocks largos en segundo plano y pueden pasarlas a "Restringida". El vigilante de reproducción atascada (`startPlaybackWatchdogLoop`, cada 3 s) solo corre mientras suena, y el bucle del crossfade termina al pausar y duerme hasta 300 ms antes del crossfade (máx. 10 s); un salto manual de posición (`DISCONTINUITY_REASON_SEEK`) lo relanza. `BackgroundRestrictionWarning()` en `MainActivity` avisa al volver a la app si el sistema la tiene restringida.
 
 - **Canciones que ya no existen:** Ante `ERROR_CODE_IO_FILE_NOT_FOUND`, `PlaybackService` quita la pista de la cola y avisa una sola vez; tras 10 fallos seguidos (`MAX_MISSING_FILE_STREAK`) pausa y pide volver a escanear. Antes saltaba a la siguiente con un aviso por canción y recorría toda la cola. Ocurre cuando MediaStore reindexa la tarjeta SD y asigna identificadores nuevos: Room, las listas y la cola guardada usan el `_id` de MediaStore y quedan apuntando a canciones inexistentes hasta el siguiente escaneo.
 
@@ -316,7 +319,8 @@ Ubicado en `/home/kevshupp/Escritorio/publicar_release.sh` (con alias `release` 
 - Se dispara automáticamente al recibir un nuevo tag `v*` o vía `workflow_dispatch`.
 - Decodifica el secreto `GOOGLE_SERVICES_JSON_BASE64` para generar `app/google-services.json` de forma segura.
 - Compila con Gradle (`./gradlew assembleRelease`).
-- Publica el APK firmado y optimizado en **GitHub Releases** adjuntando el changelog automático.
+- Publica el APK firmado y optimizado en **GitHub Releases**. Las notas de la versión salen de `changelog/<tag>.md` (por ejemplo `changelog/v1.2.47.md`) si existe; si no, se usa el changelog automático de GitHub (lista de commits).
+- **Notas de la versión:** antes de crear el tag se escribe `changelog/vX.Y.Z.md` con la lista de cambios en lenguaje para el usuario (viñetas `- ` anidadas con dos espacios, `**negrita**`). La app la muestra en el diálogo de actualización: `AppUpdater.checkUpdate()` lee `body` con `JSONObject` (antes una regex lo cortaba en la primera comilla) y `AppUpdater.formatChangelog()` convierte ese Markdown en viñetas y negritas.
 
 ---
 

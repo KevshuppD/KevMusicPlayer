@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import androidx.compose.ui.text.withStyle
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,6 +20,38 @@ data class UpdateInfo(
 )
 
 object AppUpdater {
+
+    /**
+     * Convierte las notas de la versión (Markdown de GitHub) en texto con formato: viñetas anidadas
+     * por sangría, títulos y **negrita** en negrita, y `código` sin las comillas invertidas.
+     */
+    fun formatChangelog(markdown: String): androidx.compose.ui.text.AnnotatedString {
+        val bold = androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+        return androidx.compose.ui.text.buildAnnotatedString {
+            fun appendInline(text: String) {
+                // Partes impares entre ** van en negrita
+                text.replace("`", "").split("**").forEachIndexed { i, part ->
+                    if (i % 2 == 1) withStyle(bold) { append(part) } else append(part)
+                }
+            }
+            val lines = markdown.replace("\r\n", "\n").lines()
+            lines.forEachIndexed { index, raw ->
+                val indent = raw.length - raw.trimStart().length
+                val line = raw.trim()
+                when {
+                    line.startsWith("#") -> withStyle(bold) { append(line.trimStart('#').trim().replace("**", "").replace("`", "")) }
+                    line.startsWith("- ") || line.startsWith("* ") -> {
+                        val level = indent / 2
+                        append("    ".repeat(level))
+                        append(if (level == 0) "• " else "◦ ")
+                        appendInline(line.substring(2))
+                    }
+                    else -> appendInline(line)
+                }
+                if (index < lines.lastIndex) append("\n")
+            }
+        }
+    }
 
     fun isNewerVersion(current: String, latest: String): Boolean {
         val cleanCurrent = current.removePrefix("v").split("-")[0].split("+")[0].trim()
@@ -58,14 +91,13 @@ object AppUpdater {
                     val apkMatch = "\"browser_download_url\"\\s*:\\s*\"([^\"]+\\.apk)\"".toRegex().find(response)
                     val downloadUrl = apkMatch?.groups?.get(1)?.value ?: return@withContext null
                     
-                    // Parse body / changelog
-                    val bodyMatch = "\"body\"\\s*:\\s*\"([^\"]+)\"".toRegex().find(response)
-                    val bodyRaw = bodyMatch?.groups?.get(1)?.value ?: ""
-                    val body = bodyRaw
-                        .replace("\\r\\n", "\n")
-                        .replace("\\n", "\n")
-                        .replace("\\\"", "\"")
-                    
+                    // Notas de la versión (Markdown). Con una regex se cortaban en la primera comilla
+                    val body = try {
+                        org.json.JSONObject(response).optString("body", "")
+                    } catch (e: Exception) {
+                        ""
+                    }
+
                     val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         context.packageManager.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
                     } else {

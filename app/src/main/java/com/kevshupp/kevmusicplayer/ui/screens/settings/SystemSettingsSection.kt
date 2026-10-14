@@ -596,6 +596,10 @@ fun SystemSettingsSection(
                 HorizontalDivider(color = settingsDividerColor())
 
                 // 4. Battery Optimization Exemption Row
+                // La optimización de batería puede estar desactivada y aun así la app estar "Restringida"
+                // (RUN_ANY_IN_BACKGROUND denegado): entonces Android no la deja pasar a primer plano
+                val backgroundRestricted = com.kevshupp.kevmusicplayer.data.BackgroundRestriction.isRestricted(context)
+                val batteryOk = isIgnoringBatteryOptimizations && !backgroundRestricted
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
@@ -605,15 +609,15 @@ fun SystemSettingsSection(
                             .size(40.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(
-                                if (isIgnoringBatteryOptimizations) Color(0xFF00E676).copy(alpha = 0.15f)
+                                if (batteryOk) Color(0xFF00E676).copy(alpha = 0.15f)
                                 else Color(0xFFFF9100).copy(alpha = 0.15f)
                             ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (isIgnoringBatteryOptimizations) Icons.Rounded.BatteryChargingFull else Icons.Rounded.BatteryAlert,
+                            imageVector = if (batteryOk) Icons.Rounded.BatteryChargingFull else Icons.Rounded.BatteryAlert,
                             contentDescription = null,
-                            tint = if (isIgnoringBatteryOptimizations) Color(0xFF00E676) else Color(0xFFFF9100),
+                            tint = if (batteryOk) Color(0xFF00E676) else Color(0xFFFF9100),
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -628,8 +632,10 @@ fun SystemSettingsSection(
                             color = settingsTextColor()
                         )
                         Text(
-                            text = if (isIgnoringBatteryOptimizations) {
+                            text = if (batteryOk) {
                                 getLocalized("Sin restricciones. El sistema no suspenderá la reproducción.", "Unrestricted. The system won't kill playback.")
+                            } else if (backgroundRestricted) {
+                                getLocalized("Restringida. Android no deja actualizar la notificación ni mantener la música en segundo plano. Elige \"Sin restricciones\" en Batería.", "Restricted. Android blocks the notification and background playback. Choose \"Unrestricted\" under Battery.")
                             } else {
                                 getLocalized("Optimizado. Puede cerrarse al estar en segundo plano.", "Optimized. Playback may be killed in background.")
                             },
@@ -638,11 +644,20 @@ fun SystemSettingsSection(
                         )
                     }
                     
-                    if (!isIgnoringBatteryOptimizations) {
+                    if (!batteryOk) {
                         Button(
                             onClick = {
                                 var launched = false
-                                try {
+                                // "Restringida" solo se quita desde la ficha de la app (Batería → Sin restricciones)
+                                if (backgroundRestricted) try {
+                                    context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    })
+                                    launched = true
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                                if (!launched) try {
                                     val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                                         data = Uri.parse("package:${context.packageName}")
                                     }
