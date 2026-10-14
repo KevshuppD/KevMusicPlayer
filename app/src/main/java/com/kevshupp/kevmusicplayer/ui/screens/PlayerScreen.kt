@@ -493,7 +493,7 @@ fun PlayerScreen(
                 val results = mutableMapOf<Long, String>()
                 try {
                     withContext(Dispatchers.IO) {
-                        val client = okhttp3.OkHttpClient.Builder()
+                        val client = com.kevshupp.kevmusicplayer.data.HttpClients.shared.newBuilder()
                             .connectTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
                             .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                             .build()
@@ -2329,7 +2329,7 @@ fun rememberDominantColor(bitmap: android.graphics.Bitmap?): Color {
                 try {
                     val smallBitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, 50, 50, false)
                     val palette = Palette.from(smallBitmap).generate()
-                    smallBitmap.recycle()
+                    if (smallBitmap !== bitmap) smallBitmap.recycle()
                     val color = palette.getVibrantColor(
                         palette.getDominantColor(defaultColor.toArgb())
                     )

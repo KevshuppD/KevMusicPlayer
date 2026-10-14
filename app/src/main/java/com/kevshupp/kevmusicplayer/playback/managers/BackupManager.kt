@@ -22,7 +22,7 @@ class BackupManager(
         includePlaylists: Boolean = true,
         includeLyrics: Boolean = true,
         includeStatistics: Boolean = true
-    ) = withContext(Dispatchers.IO) {
+    ) = withContext(Dispatchers.IO) { outputStream.use { stream ->
         val json = JSONObject()
         json.put("backup_version", 1)
 
@@ -228,11 +228,9 @@ class BackupManager(
             json.put("songs_metadata", songsMetadataArray)
         }
 
-        // Write to stream
-        outputStream.use { stream ->
-            stream.write(json.toString(4).toByteArray(Charsets.UTF_8))
-        }
-    }
+        // Write to stream (use{} externo: el archivo se cierra también si algo falla antes)
+        stream.write(json.toString(4).toByteArray(Charsets.UTF_8))
+    } }
 
     suspend fun importBackup(
         context: Context,

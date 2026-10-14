@@ -1,6 +1,8 @@
 package com.kevshupp.kevmusicplayer.playback.managers
 
 import android.content.Context
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import android.graphics.*
 import android.media.*
 import android.net.Uri
@@ -64,6 +66,8 @@ object VideoClipGenerator {
         onProgress: (Float) -> Unit
     ): Result<File> = withContext(Dispatchers.Default) {
         val outputDir = File(context.cacheDir, "story_clips").apply { mkdirs() }
+        // Los clips de antes ya se compartieron: se borran al pasar una hora para no llenar la caché
+        cleanOldClips(context)
         val outputFile = File(outputDir, "Story_${System.currentTimeMillis()}.mp4")
 
         val width = 720
@@ -73,6 +77,7 @@ object VideoClipGenerator {
 
         var muxer: MediaMuxer? = null
         var videoEncoder: MediaCodec? = null
+        var frameBitmap: Bitmap? = null
 
         try {
             Log.d(TAG, "Starting clip generation: $width x $height, $durationMs ms, totalFrames=$totalFrames")
@@ -108,7 +113,7 @@ object VideoClipGenerator {
             var audioTrackIndex = -1
             var muxerStarted = false
 
-            val frameBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val frameBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { frameBitmap = it }
             val canvas = Canvas(frameBitmap)
             val bufferInfo = MediaCodec.BufferInfo()
             val yuvBuffer = ByteArray(width * height * 3 / 2)
@@ -135,6 +140,8 @@ object VideoClipGenerator {
 
             // Main Encoding Loop
             while (frameCount < totalFrames || !isInputDone) {
+                // Si se cierra el diálogo o la pantalla, se deja de codificar en lugar de terminar el clip
+                coroutineContext.ensureActive()
                 if (frameCount < totalFrames) {
                     val inputBufferIndex = videoEncoder.dequeueInputBuffer(10000)
                     if (inputBufferIndex >= 0) {
@@ -254,7 +261,6 @@ object VideoClipGenerator {
             } catch (e: Exception) {}
 
             frameBitmap.recycle()
-
             onProgress(1.0f)
             Log.d(TAG, "Story clip generated successfully: ${outputFile.absolutePath}")
             Result.success(outputFile)
@@ -262,8 +268,18 @@ object VideoClipGenerator {
             Log.e(TAG, "Error generating clip", e)
             try { videoEncoder?.stop(); videoEncoder?.release() } catch (ex: Exception) {}
             try { muxer?.release() } catch (ex: Exception) {}
+            frameBitmap?.recycle()
             outputFile.delete()
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Result.failure(e)
+        }
+    }
+
+    /** Borra los clips generados hace más de una hora (la app que los recibió ya los copió). */
+    fun cleanOldClips(context: Context) {
+        val cutoff = System.currentTimeMillis() - 60 * 60 * 1000L
+        File(context.cacheDir, "story_clips").listFiles()?.forEach { file ->
+            if (file.isFile && file.lastModified() < cutoff) file.delete()
         }
     }
 
@@ -880,7 +896,7 @@ object VideoClipGenerator {
         return try {
             val small = Bitmap.createScaledBitmap(bitmap, 48, 48, false)
             val palette = Palette.from(small).generate()
-            small.recycle()
+            if (small !== bitmap) small.recycle()
             val dominant = palette.getVibrantColor(palette.getDominantColor(defaultPrimary))
             val accent = palette.getLightVibrantColor(palette.getMutedColor(defaultAccent))
             Pair(dominant, accent)

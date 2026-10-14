@@ -1286,6 +1286,11 @@ private fun checkSongHasCover(context: Context, uriString: String): Boolean {
     try {
         val songId = uriString.substringAfterLast("/").toLongOrNull()
         val physicalPath = getPhysicalPath(context, songId ?: 0L, uriString)
+        // Comprobaciones baratas primero: embeddedPicture carga la imagen completa en memoria
+        if (com.kevshupp.kevmusicplayer.playback.findSavedCoverFile(context, uriString, physicalPath) != null) {
+            return true
+        }
+
         if (!physicalPath.isNullOrBlank()) {
             val file = File(physicalPath)
             if (file.exists() && file.isFile) {
@@ -1302,11 +1307,6 @@ private fun checkSongHasCover(context: Context, uriString: String): Boolean {
             if (retriever.embeddedPicture != null) {
                 return true
             }
-        }
-
-        // Check the cover saved for this song's album (.covers hidden dir or internal app covers directory)
-        if (com.kevshupp.kevmusicplayer.playback.findSavedCoverFile(context, uriString, physicalPath) != null) {
-            return true
         }
 
         // Check legacy loose cover file next to the audio file

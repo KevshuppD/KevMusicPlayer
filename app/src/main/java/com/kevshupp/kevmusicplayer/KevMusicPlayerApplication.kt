@@ -54,6 +54,7 @@ class KevMusicPlayerApplication : Application(), ImageLoaderFactory {
                             name.startsWith("temp_jaudiotagger_") || name.startsWith("kmp_backup_")
                         if (file.isFile && isTemp && file.lastModified() < cutoff) file.delete()
                     }
+                    com.kevshupp.kevmusicplayer.playback.managers.VideoClipGenerator.cleanOldClips(this)
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }

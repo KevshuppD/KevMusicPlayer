@@ -53,6 +53,8 @@ private class ScanOutcome(
 data class PlayStats(val playCount: Int, val lastPlayed: Long)
 
 /** Lyrics of a song loaded on demand from the database; the song list itself never carries them. */
+private const val MAX_LOADED_LYRICS = 50
+
 data class SongLyrics(val lyrics: String?, val translatedLyrics: String?)
 
 class MediaBrowserViewModel(application: Application) : AndroidViewModel(application) {
@@ -87,6 +89,23 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     // Lyrics of the songs played this session, loaded on demand from SQLite
     val loadedLyrics = androidx.compose.runtime.mutableStateMapOf<Long, SongLyrics>()
 
+    /** Ids de [loadedLyrics] en orden de carga, para no acumular en RAM la letra de cada canción reproducida. */
+    private val lyricsLoadOrder = LinkedHashSet<Long>()
+
+    private fun putLoadedLyrics(id: Long, lyrics: SongLyrics) {
+        loadedLyrics[id] = lyrics
+        lyricsLoadOrder.remove(id)
+        lyricsLoadOrder.add(id)
+        val playingId = browser.value?.currentMediaItem?.mediaId?.toLongOrNull()
+        val iterator = lyricsLoadOrder.iterator()
+        while (lyricsLoadOrder.size > MAX_LOADED_LYRICS && iterator.hasNext()) {
+            val oldest = iterator.next()
+            if (oldest == playingId || oldest == id) continue
+            iterator.remove()
+            loadedLyrics.remove(oldest)
+        }
+    }
+
     /** Returns the stored lyrics of a song, reading them from SQLite the first time they are needed. */
     suspend fun ensureLyricsLoaded(id: Long): SongLyrics {
         loadedLyrics[id]?.let { return it }
@@ -94,7 +113,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             SongLyrics(audioDao.getLyricsById(id), audioDao.getTranslatedLyricsById(id))
         }
         // Keep anything saved while the query was running
-        return loadedLyrics[id] ?: fromDb.also { loadedLyrics[id] = it }
+        return loadedLyrics[id] ?: fromDb.also { putLoadedLyrics(id, it) }
     }
 
     fun songWithLyrics(mediaId: String?): AudioFile? {
@@ -111,6 +130,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         playStatsOverrides.clear()
         statsVersion.intValue++
         loadedLyrics.clear()
+        lyricsLoadOrder.clear()
         localLyricsCheckedIds.clear()
         onlineLyricsFoundIds.clear()
     }
@@ -151,6 +171,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         },
         onAllLyricsDeleted = {
             loadedLyrics.clear()
+            lyricsLoadOrder.clear()
+        lyricsLoadOrder.clear()
             localLyricsCheckedIds.clear()
             onlineLyricsFoundIds.clear()
         }
@@ -896,6 +918,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         for (oldId in idRemap.keys) {
             playStatsOverrides.remove(oldId)
             loadedLyrics.remove(oldId)
+            lyricsLoadOrder.remove(oldId)
         }
         val b = browser.value ?: return
         val songsById = songs.associateBy { it.id }
@@ -1093,7 +1116,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             try {
                 audioDao.updateLyrics(id, newLyrics)
                 audioDao.updateTranslatedLyrics(id, null)
-                loadedLyrics[id] = SongLyrics(newLyrics, null)
+                putLoadedLyrics(id, SongLyrics(newLyrics, null))
                 val file = audioFileMap[id.toString()]
                 if (file != null) {
                     // Physically write lyrics inside the song metadata and LRC file next to it!

@@ -35,6 +35,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.session.MediaNotification
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
@@ -211,6 +212,7 @@ class PlaybackService : MediaLibraryService() {
                 }
 
                 savePlaybackState(player)
+                checkNotificationUpToDate(player)
             }
 
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
@@ -499,6 +501,12 @@ class PlaybackService : MediaLibraryService() {
                 )
             }
 
+            override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
+                if (session.isMediaNotificationController(controller)) {
+                    TelemetryLogger.logWarn(this@PlaybackService, "Playback_Notification", "Media notification controller disconnected")
+                }
+            }
+
             override fun onGetLibraryRoot(
                 session: MediaLibrarySession,
                 browser: MediaSession.ControllerInfo,
@@ -574,12 +582,25 @@ class PlaybackService : MediaLibraryService() {
         }
         mediaLibrarySession = sessionBuilder.build()
 
-        setMediaNotificationProvider(
-            DefaultMediaNotificationProvider.Builder(this)
-                .setChannelId(CHANNEL_ID)
-                .setChannelName(R.string.playback_notification_channel_name)
-                .build()
-        )
+        val defaultNotificationProvider = DefaultMediaNotificationProvider.Builder(this)
+            .setChannelId(CHANNEL_ID)
+            .setChannelName(R.string.playback_notification_channel_name)
+            .build()
+        // Envuelve el proveedor para saber qué canción mostró la notificación por última vez
+        // (ver checkNotificationUpToDate)
+        setMediaNotificationProvider(object : MediaNotification.Provider by defaultNotificationProvider {
+            override fun createNotification(
+                mediaSession: MediaSession,
+                mediaButtonPreferences: com.google.common.collect.ImmutableList<androidx.media3.session.CommandButton>,
+                actionFactory: MediaNotification.ActionFactory,
+                onNotificationChangedCallback: MediaNotification.Provider.Callback
+            ): MediaNotification {
+                lastNotifiedMediaId = mediaSession.player.currentMediaItem?.mediaId
+                return defaultNotificationProvider.createNotification(
+                    mediaSession, mediaButtonPreferences, actionFactory, onNotificationChangedCallback
+                )
+            }
+        })
 
         val filter = IntentFilter(BluetoothDevice.ACTION_ACL_CONNECTED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -593,6 +614,29 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private var saveStateJob: kotlinx.coroutines.Job? = null
+
+    @Volatile private var lastNotifiedMediaId: String? = null
+    private var notificationCheckJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * La notificación la genera Media3 por su cuenta; se observó que podía quedarse en una canción
+     * anterior mientras la app mostraba la correcta. Tras cada cambio de pista se comprueba que la
+     * notificación ya se reconstruyó con la canción actual y, si no, se fuerza y se registra.
+     */
+    private fun checkNotificationUpToDate(player: Player) {
+        notificationCheckJob?.cancel()
+        notificationCheckJob = serviceScope.launch {
+            kotlinx.coroutines.delay(2500)
+            val currentId = player.currentMediaItem?.mediaId ?: return@launch
+            if (player.playbackState == Player.STATE_IDLE || currentId == lastNotifiedMediaId) return@launch
+            TelemetryLogger.logWarn(
+                this@PlaybackService,
+                "Playback_Notification",
+                "Notification stale: shows $lastNotifiedMediaId, playing $currentId (isPlaying=${player.isPlaying}). Forcing update"
+            )
+            try { triggerNotificationUpdate() } catch (e: Exception) { e.printStackTrace() }
+        }
+    }
 
     // The service is the only writer of the queue/position keys (it is alive in foreground and background).
     // The shuffle flag belongs to the ViewModel, which owns the app's own shuffle mode.
@@ -829,6 +873,7 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
+        notificationCheckJob?.cancel()
         serviceScope.cancel()
         try {
             if (wakeLock?.isHeld == true) {

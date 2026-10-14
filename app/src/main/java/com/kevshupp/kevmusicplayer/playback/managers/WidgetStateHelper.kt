@@ -16,6 +16,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.FileOutputStream
 
@@ -26,10 +28,14 @@ class WidgetStateHelper(
     private val context: Context,
     private val scope: CoroutineScope
 ) {
+    // Las actualizaciones comparten el archivo temporal de la carátula: en serie, para que dos
+    // saltos seguidos no lo escriban a la vez y el widget acabe con la carátula de otra canción
+    private val updateMutex = Mutex()
+
     fun updateWidgetState(title: String, artist: String, isPlaying: Boolean, uriString: String? = null) {
         Log.d("WidgetDebug", "updateWidgetState: title = $title, artist = $artist, isPlaying = $isPlaying, uri = $uriString")
 
-        scope.launch(Dispatchers.IO) {
+        scope.launch(Dispatchers.IO) { updateMutex.withLock {
             val artFile = File(context.cacheDir, "current_widget_art.png")
             if (uriString != null) {
                 var success = false
@@ -108,6 +114,6 @@ class WidgetStateHelper(
                     e
                 )
             }
-        }
+        } }
     }
 }

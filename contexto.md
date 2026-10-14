@@ -68,6 +68,7 @@ com/kevshupp/kevmusicplayer/
 │   ├── SongIdentity.kt                  # Remapeo de ids de MediaStore y archivo de canciones huérfanas
 │   ├── AppUpdater.kt                    # Comprobador y descargador de actualizaciones vía GitHub Releases
 │   ├── TelemetryLogger.kt               # Registro seguro de errores y telemetría local
+│   ├── HttpClients.kt                   # OkHttpClient compartido (un solo pool de conexiones)
 │   └── cloud/                           # Módulo de Autenticación y Nube
 │       ├── CloudUser.kt                 # Modelo de usuario de Google/Firebase
 │       ├── CloudAuthManager.kt          # Gestión de autenticación con Google Play Services
@@ -208,6 +209,8 @@ sequenceDiagram
 - **Salto Manual Instantáneo:** Al pulsar "Siguiente" o "Anterior", `VolumeFadeHelper.performManualSkip()` ejecuta la transición de inmediato sin bucles lentos de desvanecimiento artificial.
 - **Protección de AudioFX:** `PlaybackService` valida que `audioEffectsManager.currentAudioSessionId != sessionId` antes de reconfigurar los efectos de sonido DSP en transiciones de pista, evitando recreaciones nativas síncronas que bloqueen el audio.
 
+- **Notificación desactualizada:** Se observó que la notificación de Media3 podía quedarse en una canción anterior mientras la app mostraba la correcta (causa aún sin confirmar). `PlaybackService` envuelve `DefaultMediaNotificationProvider` para guardar el `mediaId` de la última notificación construida (`lastNotifiedMediaId`); 2,5 s después de cada cambio de pista, `checkNotificationUpToDate()` compara con la canción actual y, si no coincide, registra `Playback_Notification` en la telemetría y fuerza `triggerNotificationUpdate()`. También se registra si se desconecta el controlador interno de la notificación.
+
 - **Canciones que ya no existen:** Ante `ERROR_CODE_IO_FILE_NOT_FOUND`, `PlaybackService` quita la pista de la cola y avisa una sola vez; tras 10 fallos seguidos (`MAX_MISSING_FILE_STREAK`) pausa y pide volver a escanear. Antes saltaba a la siguiente con un aviso por canción y recorría toda la cola. Ocurre cuando MediaStore reindexa la tarjeta SD y asigna identificadores nuevos: Room, las listas y la cola guardada usan el `_id` de MediaStore y quedan apuntando a canciones inexistentes hasta el siguiente escaneo.
 
 ### D.2. Estado en Memoria de la Biblioteca (`MediaBrowserViewModel`)
@@ -248,6 +251,10 @@ sequenceDiagram
 - **Todo ajuste debe leerse en algún sitio:** `cover_cache_capacity` y `auto_clean_temp` se aplican en `KevMusicPlayerApplication.applyPerformanceSettings()` al arrancar; `ipc_queue_limit` limita la cola en `MediaBrowserViewModel.queueSizeLimit()` y en la cola de respaldo del servicio (máximo 1500). Se eliminaron `lazy_replay_gain` y `preferred_cover_provider`, que no tenían ningún efecto.
 - **Solo Deezer para carátulas:** No hay búsqueda en iTunes ni selector de proveedor.
 - **Verificador de integridad:** Además de comprobar que el archivo abre y tiene pista de audio, `findAudioTruncation()` detecta archivos cortados leyendo los últimos segundos: si faltan más de 8 s o un 3 % respecto a la duración declarada, lo marca indicando dónde termina el audio. No juzga los MP3 sin cabecera Xing/Info/VBRI, cuya duración es solo una estimación por tamaño de archivo.
+- **Recursos que no deben crecer:** `loadedLyrics` conserva como máximo 50 canciones (`MAX_LOADED_LYRICS`, se descartan las más antiguas salvo la que suena). No crear `OkHttpClient()` por petición: usar `HttpClients.shared` (o `shared.newBuilder()` para otros timeouts). Los clips de `cacheDir/story_clips/` se borran al pasar una hora (`VideoClipGenerator.cleanOldClips()`, al generar uno nuevo y al arrancar con `auto_clean_temp`). `generateClip()` comprueba `ensureActive()` por fotograma y se detiene si se cancela su corrutina.
+- **Bitmaps reescalados:** `createScaledBitmap()` devuelve el mismo bitmap si ya tiene ese tamaño; comprobar `scaled !== original` antes de `recycle()`, o se recicla una carátula de la caché.
+- **Widget:** `WidgetStateHelper` aplica las actualizaciones en serie (`Mutex`), porque todas escriben el mismo archivo temporal de carátula.
+- **Ajustes sin sondeo:** permisos y optimización de batería se comprueban con `LifecycleResumeEffect` al volver a la pantalla, no con bucles cada 1–2 s.
 - **Atenuación y crossfade:** `AudioFocusHelper.duckFactor` guarda la atenuación activa cuando otra app toma el foco; el bucle de crossfade multiplica su volumen objetivo por ese factor para no devolver el volumen al máximo.
 
 ### E. KevMusic Wrapped Interactivo

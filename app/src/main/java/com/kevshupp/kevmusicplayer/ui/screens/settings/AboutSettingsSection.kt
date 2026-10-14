@@ -112,7 +112,7 @@ fun AboutSettingsSection(
                                     downloadProgress = 0f
                                     scope.launch(Dispatchers.IO) {
                                         try {
-                                            val client = okhttp3.OkHttpClient()
+                                            val client = com.kevshupp.kevmusicplayer.data.HttpClients.shared
                                             val request = okhttp3.Request.Builder().url(url).build()
                                             client.newCall(request).execute().use { response ->
                                                 if (!response.isSuccessful) {
@@ -288,7 +288,7 @@ fun AboutSettingsSection(
                                 isCheckingUpdates = true
                                 withContext(Dispatchers.IO) {
                                     try {
-                                        val client = okhttp3.OkHttpClient()
+                                        val client = com.kevshupp.kevmusicplayer.data.HttpClients.shared
                                         val request = okhttp3.Request.Builder()
                                             .url("https://api.github.com/repos/KevshuppD/KevMusicPlayer/releases/latest")
                                             .header("User-Agent", "KevMusicPlayer")

@@ -115,12 +115,11 @@ fun SettingsScreen(
         })
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
-            isIgnoringBatteryOptimizations = pm.isIgnoringBatteryOptimizations(context.packageName)
-            delay(2000)
-        }
+    // Se vuelve a comprobar al regresar de los ajustes del sistema, no con un sondeo cada 2 s
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+        isIgnoringBatteryOptimizations = pm.isIgnoringBatteryOptimizations(context.packageName)
+        onPauseOrDispose { }
     }
 
     var isRenaming by remember { mutableStateOf(false) }
@@ -337,12 +336,11 @@ fun SettingsScreen(
         notificationGranted = isGranted
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            audioGranted = hasAudioPermission()
-            notificationGranted = hasNotificationPermission()
-            delay(1000)
-        }
+    // Los permisos solo cambian desde el diálogo o desde los ajustes del sistema: basta con revisarlos al volver
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        audioGranted = hasAudioPermission()
+        notificationGranted = hasNotificationPermission()
+        onPauseOrDispose { }
     }
 
     val isMonochrome = selectedTheme == "monochrome"
