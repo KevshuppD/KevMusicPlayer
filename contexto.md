@@ -260,6 +260,7 @@ sequenceDiagram
 
 ### G. Generador de Historias en Video (Music Story / Reel / Dedicatorias)
 - **Motor de Renderizado Nativo:** Basado en `MediaCodec` (Codificador de video H.264 / AVC a 720p 30 FPS + Transcodificación de audio PCM a AAC 192 kbps estéreo a 44.1 kHz) e intercalado monótono de muestras en `MediaMuxer`.
+- **Pista de audio del clip:** En `extractAudioToMemory()` los bucles de vaciado de `MediaCodec` deben tratar `INFO_OUTPUT_FORMAT_CHANGED` (valor negativo, -2) además de los índices `>= 0`. Antes el bucle era `while (outputIndex >= 0)`, el formato AAC nunca se capturaba, el muxer no añadía la pista de audio y el vídeo salía mudo. La frecuencia y los canales del codificador AAC se toman del formato de salida del decodificador, y el buffer `BUFFER_FLAG_CODEC_CONFIG` no se escribe como muestra.
 - **3 Estilos Visuales Auténticos:**
   1. *Letras (Spotify Lyrics Card):* Tarjeta de vidrio esmerilado con tipografía bold, resaltado lumínico de la estrofa en reproducción y badge inferior de canción.
   2. *Canvas (Apple Music Style):* Carátula principal en gran tamaño con sombra 3D, ondas de audio animadas reactivas y cita de la estrofa activa.
@@ -291,6 +292,9 @@ sequenceDiagram
 ---
 
 ## 7. Automatización de Compilación y Publicación (CI/CD)
+
+### Reglas de R8 (`app/proguard-rules.pro`)
+- **Nunca usar `-keep class * { ... }`:** con `class *` R8 conserva todas las clases de la app y de las librerías aunque el bloque de miembros no coincida, y el shrinking queda anulado (APK release de 39 MB, con `material-icons-extended` entero). Las clases de Room se conservan con `-keep @androidx.room.Entity class *` (y lo mismo para `Database`/`Dao`); Room, OkHttp y Firebase ya traen sus propias reglas. Con el cambio el APK bajó a 16 MB.
 
 ### Script de Publicación Local
 Ubicado en `/home/kevshupp/Escritorio/publicar_release.sh` (con alias `release` en `~/.bashrc`):

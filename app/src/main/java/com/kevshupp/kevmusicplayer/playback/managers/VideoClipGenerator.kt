@@ -881,8 +881,8 @@ object VideoClipGenerator {
         extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
 
         val srcMime = inputFormat.getString(MediaFormat.KEY_MIME)!!
-        val sampleRate = if (inputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) else AUDIO_SAMPLE_RATE
-        val channelCount = if (inputFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else AUDIO_CHANNEL_COUNT
+        var sampleRate = if (inputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) else AUDIO_SAMPLE_RATE
+        var channelCount = if (inputFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else AUDIO_CHANNEL_COUNT
 
         // Phase 1: Decode source audio to PCM in memory
         val pcmOutputStream = java.io.ByteArrayOutputStream()
@@ -919,7 +919,15 @@ object VideoClipGenerator {
                 }
 
                 var outputIndex = decoder.dequeueOutputBuffer(bufferInfo, timeoutUs)
-                while (outputIndex >= 0) {
+                while (outputIndex >= 0 || outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        // El PCM decodificado puede tener otra frecuencia o canales que el contenedor (p. ej. HE-AAC)
+                        val decodedFormat = decoder.outputFormat
+                        if (decodedFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) sampleRate = decodedFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                        if (decodedFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) channelCount = decodedFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                        outputIndex = decoder.dequeueOutputBuffer(bufferInfo, 0)
+                        continue
+                    }
                     val outputBuffer = decoder.getOutputBuffer(outputIndex)
                     if (outputBuffer != null && bufferInfo.size > 0 && bufferInfo.presentationTimeUs >= startUs) {
                         outputBuffer.position(bufferInfo.offset)
@@ -994,13 +1002,15 @@ object VideoClipGenerator {
                 }
 
                 // Drain AAC output
+                // INFO_OUTPUT_FORMAT_CHANGED es negativo: sin incluirlo nunca se obtenía el formato
+                // y el muxer no añadía la pista de audio (vídeo mudo)
                 var outputIndex = encoder.dequeueOutputBuffer(bufferInfo, timeoutUs)
-                while (outputIndex >= 0) {
+                while (outputIndex >= 0 || outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                         outputFormat = encoder.outputFormat
                     } else {
                         val encodedBuffer = encoder.getOutputBuffer(outputIndex)
-                        if (encodedBuffer != null && bufferInfo.size > 0) {
+                        if (encodedBuffer != null && bufferInfo.size > 0 && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
                             encodedBuffer.position(bufferInfo.offset)
                             encodedBuffer.limit(bufferInfo.offset + bufferInfo.size)
                             val aacBytes = ByteArray(bufferInfo.size)

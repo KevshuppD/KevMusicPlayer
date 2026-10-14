@@ -28,11 +28,11 @@
     @androidx.room.* <methods>;
     @kotlinx.serialization.Serializable *;
 }
--keep class * {
-    @androidx.room.Database *;
-    @androidx.room.Dao *;
-    @androidx.room.Entity *;
-}
+# Room ya incluye sus propias reglas (consumer rules). Un "-keep class * { ... }" conserva
+# TODAS las clases de la app y librerías y anula el shrinking de R8.
+-keep @androidx.room.Database class * { *; }
+-keep @androidx.room.Dao interface * { *; }
+-keep @androidx.room.Entity class * { *; }
 
 # Ignore jaudiotagger Java SE Desktop references in Android builds
 -dontwarn javax.swing.**
@@ -50,8 +50,6 @@
 -keepclassmembers class * extends javax.net.ssl.X509TrustManager { *; }
 
 # Keep OkHttp classes
--keep class okhttp3.** { *; }
--keep interface okhttp3.** { *; }
 -dontwarn okhttp3.**
 -dontwarn okio.**
 -dontwarn javax.annotation.**
