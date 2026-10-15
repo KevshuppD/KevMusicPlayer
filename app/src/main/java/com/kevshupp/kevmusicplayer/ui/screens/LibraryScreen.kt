@@ -361,7 +361,12 @@ fun LibraryScreen(
             )
             .statusBarsPadding()
     ) {
-        val bottomBarPadding = if (player?.currentMediaItem != null) 160.dp else 88.dp
+        // La barra inferior y el mini-reproductor flotan sobre la lista y se colocan por encima de
+        // la barra de navegación del sistema (navigationBarsPadding), así que la lista debe dejar
+        // también ese hueco o la última canción queda tapada a medias.
+        val navBarInset = androidx.compose.foundation.layout.WindowInsets.navigationBars
+            .asPaddingValues().calculateBottomPadding()
+        val bottomBarPadding = (if (player?.currentMediaItem != null) 176.dp else 104.dp) + navBarInset
 
         Column(
             modifier = Modifier.fillMaxSize()
