@@ -40,12 +40,23 @@ class PlaylistManager(
         }
         if (modified) {
             playlists[playlistName] = currentList
-            val prefs = application.getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
-            val idsStr = currentList.map { it.id }.joinToString(",")
-            prefs.edit()
-                .putString("playlist_$playlistName", idsStr)
-                .apply()
+            editStoredIds(playlistName) { ids -> songIds.forEach { if (it !in ids) ids.add(it) } }
         }
+    }
+
+    /**
+     * Edits the ids saved for a playlist in place. The in-memory list only holds songs that exist right now,
+     * so rewriting the prefs from it would drop ids that a later rescan can still remap (SD re-indexed,
+     * card unmounted) and the next backup would lose them for good.
+     */
+    private fun editStoredIds(playlistName: String, change: (MutableList<Long>) -> Unit) {
+        val prefs = application.getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
+        val ids = (prefs.getString("playlist_$playlistName", "") ?: "")
+            .split(",").mapNotNull { it.trim().toLongOrNull() }.toMutableList()
+        change(ids)
+        prefs.edit()
+            .putString("playlist_$playlistName", ids.joinToString(","))
+            .apply()
     }
 
 
@@ -208,7 +219,11 @@ class PlaylistManager(
         if (name.isBlank()) return
         val prefs = application.getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
         val names = (prefs.getStringSet("playlist_names", emptySet()) ?: emptySet()).toMutableSet()
-        names.add(name)
+        // The heart button calls this whenever "Favoritos" is missing from memory; never empty a saved list
+        if (!names.add(name)) {
+            if (!playlists.containsKey(name)) loadPlaylists()
+            return
+        }
         prefs.edit()
             .putStringSet("playlist_names", names)
             .putString("playlist_$name", "")
@@ -252,24 +267,14 @@ class PlaylistManager(
         val song = localAudioFiles.find { it.id == songId } ?: return
         currentList.add(song)
         playlists[playlistName] = currentList
-
-        val prefs = application.getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
-        val idsStr = currentList.map { it.id }.joinToString(",")
-        prefs.edit()
-            .putString("playlist_$playlistName", idsStr)
-            .apply()
+        editStoredIds(playlistName) { ids -> if (songId !in ids) ids.add(songId) }
     }
 
     fun removeSongFromPlaylist(playlistName: String, songId: Long) {
         val currentList = playlists[playlistName]?.toMutableList() ?: return
         currentList.removeAll { it.id == songId }
         playlists[playlistName] = currentList
-
-        val prefs = application.getSharedPreferences("playlists_prefs", android.content.Context.MODE_PRIVATE)
-        val idsStr = currentList.map { it.id }.joinToString(",")
-        prefs.edit()
-            .putString("playlist_$playlistName", idsStr)
-            .apply()
+        editStoredIds(playlistName) { ids -> ids.removeAll { it == songId } }
     }
 
     fun deletePlaylist(name: String) {

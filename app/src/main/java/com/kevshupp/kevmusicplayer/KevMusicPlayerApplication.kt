@@ -36,6 +36,7 @@ class KevMusicPlayerApplication : Application(), ImageLoaderFactory {
         }
 
         applyPerformanceSettings()
+        Thread { com.kevshupp.kevmusicplayer.data.ArtistImageHelper.migrateIfNeeded(this) }.start()
     }
 
     // Performance settings that only take effect if something applies them when the app starts

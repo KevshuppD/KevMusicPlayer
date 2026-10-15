@@ -593,8 +593,9 @@ fun LibraryScreen(
                     val disableAnims = com.kevshupp.kevmusicplayer.ui.theme.LocalDisableAnimations.current
                     AnimatedVisibility(
                         visible = showLocateButtonMain,
-                        enter = if (disableAnims) EnterTransition.None else (expandHorizontally() + fadeIn()),
-                        exit = if (disableAnims) ExitTransition.None else (shrinkHorizontally() + fadeOut())
+                        // Appears only on the Songs tab: no resize animation, or the search bar stretches on every tab switch
+                        enter = EnterTransition.None,
+                        exit = ExitTransition.None
                     ) {
                         IconButton(
                             onClick = {
@@ -647,12 +648,15 @@ fun LibraryScreen(
                     }
                 }
 
-                // Category Selection Pills
+                // Category Selection Pills. Up to 4 tabs share the width so all of them are visible without
+                // scrolling (the label shrinks if it does not fit); with more, the row scrolls.
+                val visibleTabCount = enabledTabs.count { it in listOf("Songs", "Albums", "Artists", "Genres", "Folders", "Playlists") }
+                val tabsFitWidth = visibleTabCount in 1..4
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = if (isCompact) 14.dp else 20.dp, vertical = if (isCompact) 4.dp else 12.dp)
-                        .horizontalScroll(rememberScrollState()),
+                        .padding(horizontal = if (isCompact) 14.dp else 16.dp, vertical = if (isCompact) 4.dp else 12.dp)
+                        .then(if (tabsFitWidth) Modifier else Modifier.horizontalScroll(rememberScrollState())),
                     horizontalArrangement = Arrangement.spacedBy(if (isCompact) 6.dp else 8.dp)
                 ) {
                     val tabLabelMap = mapOf(
@@ -667,6 +671,33 @@ fun LibraryScreen(
                     val tabs = enabledTabs.filter { it in allTabs }
                     tabs.forEach { tab ->
                         val isSelected = activeTab == tab
+                        if (tabsFitWidth) {
+                            var labelSize by remember(tab, isCompact) { mutableStateOf(if (isCompact) 11.sp else 12.sp) }
+                            Surface(
+                                onClick = { selectedTab = tab },
+                                shape = RoundedCornerShape(if (isCompact) 14.dp else 20.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(if (isCompact) 32.dp else 40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 4.dp)) {
+                                    Text(
+                                        text = (tabLabelMap[tab] ?: tab).uppercase(),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = labelSize,
+                                        letterSpacing = 0.2.sp,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
+                                        onTextLayout = { result ->
+                                            if (result.hasVisualOverflow && labelSize.value > 8f) labelSize = (labelSize.value - 0.5f).sp
+                                        }
+                                    )
+                                }
+                            }
+                            return@forEach
+                        }
                         FilterChip(
                             selected = isSelected,
                             onClick = { selectedTab = tab },
@@ -752,7 +783,15 @@ fun LibraryScreen(
                                 if (disableAnimations) {
                                     ContentTransform(EnterTransition.None, ExitTransition.None)
                                 } else {
-                                    fadeIn() togetherWith fadeOut()
+                                    // Short slide towards the chosen tab. The old tab fades out quickly instead of
+                                    // cross-fading with the new one, so two lists of different height never overlap.
+                                    val order = enabledTabs
+                                    val forward = order.indexOf(targetState) >= order.indexOf(initialState)
+                                    val direction = if (forward) 1 else -1
+                                    (slideInHorizontally(androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)) { width -> direction * width / 8 } +
+                                        fadeIn(androidx.compose.animation.core.tween(200, delayMillis = 60))) togetherWith
+                                        fadeOut(androidx.compose.animation.core.tween(90)) using
+                                        SizeTransform(clip = false)
                                 }
                             },
                             label = "library_tab_transition"
@@ -954,6 +993,7 @@ fun LibraryScreen(
                                     input.copyTo(output)
                                 }
                             }
+                            com.kevshupp.kevmusicplayer.data.ArtistImageHelper.markChanged()
                             // Re-assign to force reload UI
                             val temp = currentSubView
                             currentSubView = null

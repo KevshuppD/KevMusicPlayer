@@ -207,6 +207,19 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         com.kevshupp.kevmusicplayer.ui.screens.KnownSongDurations.lookup = { mediaId ->
             audioFileMap[mediaId]?.duration ?: 0L
         }
+        // Song titles of an artist, so the artist photo search can tell apart artists with the same name
+        com.kevshupp.kevmusicplayer.data.ArtistImageHelper.songTitlesProvider = { artist ->
+            try {
+                localAudioFiles.toList().asSequence()
+                    .filter { it.artist.equals(artist, ignoreCase = true) }
+                    .map { it.title }
+                    .distinct()
+                    .take(3)
+                    .toList()
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
         // Force jaudiotagger to run in Android mode (bypasses java.awt classes)
         try {
             org.jaudiotagger.tag.TagOptionSingleton.getInstance().setAndroid(true)
@@ -603,8 +616,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 if (!fetched.isNullOrEmpty()) {
                     onlineLyricsFoundIds.add(id)
                     val fetchedIsSynced = LyricsRepository.isLrcSynced(fetched)
-                    // If fetched lyrics are synced, or we currently have nothing, update!
-                    if (fetchedIsSynced || currentSongLyrics.isNullOrBlank()) {
+                    // If fetched lyrics are synced, or we currently have nothing, update! Re-read the stored
+                    // lyrics: the player may have saved synced ones while the request was running.
+                    val storedNow = loadedLyrics[id]?.lyrics
+                    if (LyricsRepository.isLrcSynced(storedNow)) return@launch
+                    if (fetchedIsSynced || storedNow.isNullOrBlank()) {
                         updateSongLyrics(id, fetched)
                     }
                 }
@@ -631,12 +647,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     val app = getApplication<android.app.Application>()
                     val prefs = app.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
                     val excludedJson = prefs.getString("excluded_folders", "[]") ?: "[]"
-                    val selectedMusicFolder = prefs.getString("music_folder_path", null)
+                    val musicFolders = com.kevshupp.kevmusicplayer.data.MusicFolders.all(prefs)
 
                     // Automatic scans are skipped entirely while MediaStore and the folder filters are unchanged
                     // since the last completed scan. Manual scans always run.
                     val scanPrefs = app.getSharedPreferences("scan_prefs", android.content.Context.MODE_PRIVATE)
-                    val scanSignature = computeScanSignature(app, selectedMusicFolder, excludedJson)
+                    val scanSignature = computeScanSignature(app, musicFolders.joinToString("|"), excludedJson)
                     if (!isManual && !isLocalEmpty && scanSignature != null &&
                         scanSignature == scanPrefs.getString("last_scan_signature", null)
                     ) {
@@ -668,11 +684,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
 
                     val filteredScanned = scannedFiles.filter { file ->
-                        val isInsideSelected = if (selectedMusicFolder != null) {
-                            file.folderPath.startsWith(selectedMusicFolder)
-                        } else {
-                            true
-                        }
+                        val isInsideSelected = com.kevshupp.kevmusicplayer.data.MusicFolders.isInside(file.folderPath, musicFolders)
                         isInsideSelected && excludedFolders.none { excluded ->
                             file.folderPath.equals(excluded, ignoreCase = true) || file.folderPath.startsWith(excluded + "/", ignoreCase = true)
                         }
@@ -1891,7 +1903,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun getAllDeviceFolders(context: Context): List<String> {
         val list = mutableListOf<String>()
         val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
-        val selectedMusicFolder = settingsPrefs.getString("music_folder_path", null)
+        val musicFolders = com.kevshupp.kevmusicplayer.data.MusicFolders.all(settingsPrefs)
 
         val projection = arrayOf(android.provider.MediaStore.Audio.Media.DATA)
         try {
@@ -1909,16 +1921,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     val parentFile = file.parentFile
                     if (parentFile != null) {
                         val parentPath = parentFile.absolutePath
-                        if (selectedMusicFolder != null) {
-                            if (parentPath.startsWith(selectedMusicFolder)) {
-                                if (!list.contains(parentPath)) {
-                                    list.add(parentPath)
-                                }
-                            }
-                        } else {
-                            if (!list.contains(parentPath)) {
-                                list.add(parentPath)
-                            }
+                        if (com.kevshupp.kevmusicplayer.data.MusicFolders.isInside(parentPath, musicFolders) && !list.contains(parentPath)) {
+                            list.add(parentPath)
                         }
                     }
                 }

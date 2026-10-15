@@ -1200,7 +1200,7 @@ fun OnboardingFlow(
 
                                 OutlinedButton(
                                     onClick = {
-                                        settingsPrefs.edit().remove("music_folder_path").apply()
+                                        settingsPrefs.edit().remove("music_folder_path").remove("extra_music_folders").apply()
                                         step = 3
                                     },
                                     modifier = Modifier
@@ -1455,13 +1455,21 @@ private fun BackgroundRestrictionWarning() {
     var fixing by remember { mutableStateOf(false) }
 
     androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
-        restricted = com.kevshupp.kevmusicplayer.data.BackgroundRestriction.isRestricted(context)
+        val isRestrictedNow = com.kevshupp.kevmusicplayer.data.BackgroundRestriction.isRestricted(context)
         shizukuRunning = shizuku.isRunning()
-        // Si ya se concedió Shizuku, se corrige solo y sin avisar (el gestor de Motorola puede
-        // volver a restringirla en cualquier momento)
-        val job = if (restricted && shizuku.hasPermission()) scope.launch {
-            if (shizuku.removeBackgroundRestriction(context)) restricted = false
-        } else null
+        // Si ya se concedió Shizuku, se corrige solo y sin avisar (el gestor de Motorola vuelve a
+        // restringirla en segundo plano). El aviso solo aparece si el arreglo falla: antes se mostraba
+        // primero y se cerraba un instante después, al terminar Shizuku.
+        val job = if (isRestrictedNow && shizukuRunning && shizuku.hasPermission()) scope.launch {
+            val fixed = shizuku.removeBackgroundRestriction(context)
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logWarn(
+                context, "Shizuku", if (fixed) "Background restriction was back; removed again" else "Background restriction is back and could not be removed"
+            )
+            restricted = !fixed
+        } else {
+            restricted = isRestrictedNow
+            null
+        }
         onPauseOrDispose { job?.cancel() }
     }
 

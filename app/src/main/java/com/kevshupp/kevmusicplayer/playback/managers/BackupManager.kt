@@ -49,6 +49,7 @@ class BackupManager(
             if (musicFolderPath != null) {
                 settingsJson.put("music_folder_path", musicFolderPath)
             }
+            settingsPrefs.getString("extra_music_folders", null)?.let { settingsJson.put("extra_music_folders", it) }
             
             val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
             settingsJson.put("enabled_tabs", playbackPrefs.getString("enabled_tabs", ""))
@@ -225,6 +226,21 @@ class BackupManager(
                     songsMetadataArray.put(metaJson)
                 }
             }
+            // Playlist songs whose row is gone (SD re-indexed or unmounted) are still known from the orphan
+            // archive: without their metadata the restore cannot match them and they vanish from the list
+            val exportedIds = allEntities.mapTo(HashSet()) { it.id }
+            com.kevshupp.kevmusicplayer.data.SongIdentity.loadOrphans(context)
+                .filter { it.oldId in idsToExport && it.oldId !in exportedIds }
+                .distinctBy { it.oldId }
+                .forEach { orphan ->
+                    val metaJson = JSONObject()
+                    metaJson.put("id", orphan.oldId)
+                    metaJson.put("title", orphan.title)
+                    metaJson.put("artist", orphan.artist)
+                    metaJson.put("album", orphan.album)
+                    metaJson.put("duration", orphan.duration)
+                    songsMetadataArray.put(metaJson)
+                }
             json.put("songs_metadata", songsMetadataArray)
         }
 
@@ -245,6 +261,7 @@ class BackupManager(
 
         // 0. Build mapping from old ID to new ID using songs_metadata
         val oldToNewIdMap = mutableMapOf<Long, Long>()
+        val idsWithMetadata = mutableSetOf<Long>()
         var currentSongs = audioDao.getAllAudioFiles()
         
         // Ensure local library is scanned into Room so we can match and restore metadata/stats
@@ -269,7 +286,8 @@ class BackupManager(
                 val artist = meta.getString("artist")
                 val album = if (meta.has("album")) meta.getString("album") else ""
                 val duration = meta.getLong("duration")
-                
+                idsWithMetadata.add(oldId)
+
                 // Look for a matching local song
                 val matchedSong = currentSongs.find { current ->
                     current.title.trim().equals(title.trim(), ignoreCase = true) &&
@@ -283,7 +301,11 @@ class BackupManager(
         }
 
         fun translateId(oldId: Long): Long? {
-            return oldToNewIdMap[oldId] ?: if (currentSongs.any { it.id == oldId }) oldId else null
+            oldToNewIdMap[oldId]?.let { return it }
+            // A song described in the backup that matched nothing here is not on this device. Keeping its id
+            // would point at whatever local song happens to have the same MediaStore id.
+            if (oldId in idsWithMetadata) return null
+            return if (currentSongs.any { it.id == oldId }) oldId else null
         }
 
         // 1. Restore settings
@@ -307,6 +329,7 @@ class BackupManager(
                     edit.putString("music_folder_path", musicFolderPath)
                 }
             }
+            if (settingsJson.has("extra_music_folders")) edit.putString("extra_music_folders", settingsJson.getString("extra_music_folders"))
             if (settingsJson.has("excluded_folders")) edit.putString("excluded_folders", settingsJson.getString("excluded_folders"))
             
             if (settingsJson.has("ambient_glow_enabled")) edit.putBoolean("ambient_glow_enabled", settingsJson.getBoolean("ambient_glow_enabled"))

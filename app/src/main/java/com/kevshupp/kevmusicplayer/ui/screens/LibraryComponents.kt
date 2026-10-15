@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -1506,6 +1507,72 @@ fun ConditionRow(
     }
 }
 
+const val FAVORITES_PLAYLIST = "Favoritos"
+private val FavoritesGradient = Brush.linearGradient(listOf(Color(0xFFFF4081), Color(0xFFB0003A)))
+
+@Composable
+private fun PlaylistListRow(
+    name: String,
+    songCount: Int,
+    coverPath: String?,
+    firstSongUri: String?,
+    isSmart: Boolean,
+    isFavorites: Boolean,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var expandedMenu by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(10.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (isFavorites) FavoritesGradient else getGradientForString(name)),
+                contentAlignment = Alignment.Center
+            ) {
+                val art = if (coverPath == null && !isFavorites) rememberAlbumArt(firstSongUri, thumbnail = true) else null
+                when {
+                    coverPath != null -> SubcomposeAsyncImage(model = coverPath, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    isFavorites -> Icon(Icons.Rounded.Favorite, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+                    art != null -> androidx.compose.foundation.Image(bitmap = art.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    else -> Icon(if (isSmart) Icons.Rounded.AutoAwesome else Icons.Rounded.QueueMusic, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(26.dp))
+                }
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(name, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground)
+                Text(
+                    text = (if (isSmart) "Inteligente · " else "") + "$songCount ${if (songCount == 1) "canción" else "canciones"}",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                )
+            }
+            when {
+                isFavorites -> Icon(Icons.Rounded.Favorite, contentDescription = null, tint = Color(0xFFFF4081), modifier = Modifier.padding(horizontal = 10.dp).size(20.dp))
+                isSmart -> Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 10.dp).size(20.dp))
+                else -> Box {
+                    IconButton(onClick = { expandedMenu = true }) {
+                        Icon(Icons.Rounded.MoreVert, contentDescription = "Opciones", tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
+                    }
+                    DropdownMenu(expanded = expandedMenu, onDismissRequest = { expandedMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Eliminar Lista", color = MaterialTheme.colorScheme.error) },
+                            leadingIcon = { Icon(Icons.Rounded.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                            onClick = { expandedMenu = false; onDelete() }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun PlaylistGridView(
     viewModel: MediaBrowserViewModel?,
@@ -1555,23 +1622,88 @@ fun PlaylistGridView(
     }
 
     if (showCreateDialog) {
-        AlertDialog(
-            onDismissRequest = { showCreateDialog = false },
-            title = { Text("Nueva lista de reproducción", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) },
-            text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    ) {
-                        Text("Lista Normal", color = MaterialTheme.colorScheme.onSurface)
-                        Switch(
-                            checked = isSmartDialog,
-                            onCheckedChange = { isSmartDialog = it },
-                            modifier = Modifier.padding(horizontal = 8.dp)
+        val dismissCreateDialog = {
+                    showCreateDialog = false
+                    selectedSongIds.clear()
+                    songSearchQuery = ""
+        }
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = dismissCreateDialog,
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .fillMaxHeight(0.9f)
+                    .imePadding()
+            ) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp)) {
+                    // Header
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isSmartDialog) Icons.Rounded.AutoAwesome else Icons.AutoMirrored.Rounded.PlaylistAdd,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            "Nueva lista de reproducción",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
                         )
-                        Text("Inteligente", color = MaterialTheme.colorScheme.onSurface)
+                        IconButton(onClick = dismissCreateDialog) {
+                            Icon(Icons.Rounded.Close, contentDescription = "Cerrar", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                        }
                     }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Type selector: two large cards instead of a small switch
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        listOf(
+                            Triple(false, "Normal", "Eliges las canciones"),
+                            Triple(true, "Inteligente", "Se llena sola por reglas")
+                        ).forEach { (smartOption, label, hint) ->
+                            val selected = isSmartDialog == smartOption
+                            Surface(
+                                onClick = { isSmartDialog = smartOption },
+                                shape = RoundedCornerShape(18.dp),
+                                color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                border = BorderStroke(
+                                    if (selected) 2.dp else 1.dp,
+                                    if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                                    Icon(
+                                        imageVector = if (smartOption) Icons.Rounded.AutoAwesome else Icons.Rounded.QueueMusic,
+                                        contentDescription = null,
+                                        tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                                    Text(hint, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     OutlinedTextField(
                         value = newPlaylistName,
@@ -1590,13 +1722,11 @@ fun PlaylistGridView(
 
                     if (!isSmartDialog) {
                         Spacer(modifier = Modifier.height(10.dp))
-                        Text("Sugerencias rápidas:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 6.dp)
                                 .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             listOf("🚗 En el Auto", "💪 Gimnasio", "🎉 Fiesta", "🎧 Chill", "✈️ Viaje", "❤️ Favoritas", "⚡ Noche").forEach { preset ->
                                 Surface(
@@ -1607,49 +1737,47 @@ fun PlaylistGridView(
                                 ) {
                                     Text(
                                         preset, 
-                                        fontSize = 11.sp, 
+                                        fontSize = 13.sp, 
                                         fontWeight = FontWeight.Bold, 
                                         color = MaterialTheme.colorScheme.primary, 
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                                     )
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                        Spacer(modifier = Modifier.height(8.dp))
 
-                        // Interactive Song Selector
+                        Spacer(modifier = Modifier.height(16.dp))
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                "Agregar canciones iniciales:",
-                                fontSize = 13.sp,
+                                "Canciones",
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.weight(1f)
                             )
+                            if (selectedSongIds.isNotEmpty()) {
+                                TextButton(onClick = { selectedSongIds.clear() }) { Text("Quitar todas", fontSize = 12.sp) }
+                            }
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (selectedSongIds.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
                             ) {
                                 Text(
                                     "${selectedSongIds.size} seleccionadas",
-                                    fontSize = 10.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (selectedSongIds.isNotEmpty()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                 )
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
+                        Spacer(modifier = Modifier.height(8.dp))
                         OutlinedTextField(
                             value = songSearchQuery,
                             onValueChange = { songSearchQuery = it },
-                            placeholder = { Text("Buscar canción o artista...", fontSize = 12.sp) },
-                            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            placeholder = { Text("Buscar canción o artista...", fontSize = 14.sp) },
+                            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
                             trailingIcon = {
                                 if (songSearchQuery.isNotEmpty()) {
                                     IconButton(onClick = { songSearchQuery = "" }) {
@@ -1667,52 +1795,74 @@ fun PlaylistGridView(
 
                         val availableSongs = viewModel?.localAudioFiles ?: emptyList()
                         val filteredSongs = remember(availableSongs, songSearchQuery) {
-                            if (songSearchQuery.isBlank()) availableSongs.take(30)
-                            else availableSongs.filter { it.title.contains(songSearchQuery, ignoreCase = true) || it.artist.contains(songSearchQuery, ignoreCase = true) }.take(50)
+                            if (songSearchQuery.isBlank()) availableSongs.toList()
+                            else availableSongs.filter { it.title.contains(songSearchQuery, ignoreCase = true) || it.artist.contains(songSearchQuery, ignoreCase = true) }
                         }
 
-                        Box(
+                        // The song list takes all the remaining height of the screen
+                        androidx.compose.foundation.lazy.LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 180.dp)
-                                .padding(top = 6.dp)
+                                .weight(1f)
+                                .padding(top = 8.dp)
                         ) {
-                            androidx.compose.foundation.lazy.LazyColumn(
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                items(filteredSongs, key = { it.id }) { song ->
-                                    val isSelected = selectedSongIds.contains(song.id)
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
+                            items(filteredSongs, key = { it.id }) { song ->
+                                val isSelected = selectedSongIds.contains(song.id)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f) else Color.Transparent)
+                                        .clickable {
+                                            if (isSelected) selectedSongIds.remove(song.id)
+                                            else selectedSongIds.add(song.id)
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Box(
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable {
-                                                if (isSelected) selectedSongIds.remove(song.id)
-                                                else selectedSongIds.add(song.id)
-                                            }
-                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            .size(46.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(getGradientForString(song.album)),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Checkbox(
-                                            checked = isSelected,
-                                            onCheckedChange = {
-                                                if (it) selectedSongIds.add(song.id)
-                                                else selectedSongIds.remove(song.id)
-                                            },
-                                            modifier = Modifier.scale(0.85f)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(song.title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
-                                            Text(song.artist, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        val art = rememberAlbumArt(song.uriString, thumbnail = true)
+                                        if (art != null) {
+                                            androidx.compose.foundation.Image(
+                                                bitmap = art.asImageBitmap(),
+                                                contentDescription = null,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(22.dp))
                                         }
                                     }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(song.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+                                        Text(song.artist, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    Checkbox(
+                                        checked = isSelected,
+                                        onCheckedChange = {
+                                            if (it) selectedSongIds.add(song.id)
+                                            else selectedSongIds.remove(song.id)
+                                        }
+                                    )
                                 }
                             }
                         }
-                    }
-
-                    if (isSmartDialog) {
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            run {
                         Spacer(modifier = Modifier.height(16.dp))
                         
                         Row(
@@ -1909,10 +2059,20 @@ fun PlaylistGridView(
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
-                }
-            },
-            confirmButton = {
-                Button(
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            onClick = dismissCreateDialog,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.weight(1f).height(52.dp)
+                        ) {
+                            Text("Cancelar", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f))
+                        }
+                        Button(
+                            enabled = newPlaylistName.isNotBlank(),
                     onClick = {
                         if (newPlaylistName.isNotBlank()) {
                             if (isSmartDialog) {
@@ -1964,73 +2124,119 @@ fun PlaylistGridView(
                             showCreateDialog = false
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Text("Crear", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { 
-                    showCreateDialog = false
-                    selectedSongIds.clear()
-                    songSearchQuery = ""
-                }) {
-                    Text("Cancelar", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.weight(1f).height(52.dp)
+                        ) {
+                            Text(
+                                if (!isSmartDialog && selectedSongIds.isNotEmpty()) "Crear (${selectedSongIds.size})" else "Crear",
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
-        )
+        }
     }
+    val context = LocalContext.current
+    val viewPrefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
+    var isListMode by remember { mutableStateOf(viewPrefs.getString("playlist_view_mode", "grid") == "list") }
+
+    // "Favoritos" is the app's own playlist (the heart button): it always exists and goes first
+    LaunchedEffect(viewModel) {
+        if (viewModel != null && !viewModel.playlists.containsKey(FAVORITES_PLAYLIST)) {
+            viewModel.createPlaylist(FAVORITES_PLAYLIST)
+        }
+    }
+    val orderedNames = remember(playlists.keys) {
+        playlists.keys.sortedWith(compareBy<String> { it != FAVORITES_PLAYLIST })
+    }
+
     LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = bottomPadding),
+        columns = GridCells.Fixed(if (isListMode) 1 else 2),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = bottomPadding),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(if (isListMode) 8.dp else 16.dp),
         modifier = Modifier.fillMaxSize()
     ) {
-        // Option to create a new playlist
-        item {
-            Card(
-                onClick = { showCreateDialog = true },
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-                ),
-                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
+        item(key = "__header__", span = { GridItemSpan(maxLineSpan) }) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "${playlists.size} ${if (playlists.size == 1) "lista" else "listas"}",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                    modifier = Modifier.weight(1f)
+                )
+                // New playlist, next to the view toggle
+                Surface(
+                    onClick = { showCreateDialog = true },
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    modifier = Modifier.height(40.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                            contentDescription = "New Playlist",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Crear Lista",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 14.sp
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp)) {
+                        Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Crear", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                ) {
+                    Row(modifier = Modifier.padding(3.dp)) {
+                        listOf(false to Icons.Rounded.GridView, true to Icons.AutoMirrored.Rounded.ViewList).forEach { (listOption, icon) ->
+                            val selected = isListMode == listOption
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 44.dp, height = 34.dp)
+                                    .clip(RoundedCornerShape(11.dp))
+                                    .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                                    .clickable {
+                                        isListMode = listOption
+                                        viewPrefs.edit().putString("playlist_view_mode", if (listOption) "list" else "grid").apply()
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = if (listOption) "Ver en lista" else "Ver en cuadrícula",
+                                    tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
 
-        items(playlists.keys.toList(), key = { it }) { name ->
+        items(orderedNames, key = { it }) { name ->
             val listSongs = playlists[name] ?: emptyList()
             val coverPath = playlistCovers[name]
             val isSmart = viewModel?.smartPlaylists?.containsKey(name) == true || name.startsWith("Recomendaciones")
+            val isFavorites = name == FAVORITES_PLAYLIST
             
             // Context menu state for playlist card
             var expandedMenu by remember { mutableStateOf(false) }
 
+            if (isListMode) {
+                PlaylistListRow(
+                    name = name,
+                    songCount = listSongs.size,
+                    coverPath = coverPath,
+                    firstSongUri = listSongs.firstOrNull()?.uriString,
+                    isSmart = isSmart,
+                    isFavorites = isFavorites,
+                    onClick = { onPlaylistClick(name) },
+                    onDelete = { onDeletePlaylist(name) }
+                )
+                return@items
+            }
             Box {
                 Card(
                     onClick = { onPlaylistClick(name) },
@@ -2047,8 +2253,16 @@ fun PlaylistGridView(
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .background(getGradientForString(name))
+                                .background(if (isFavorites) FavoritesGradient else getGradientForString(name))
                         ) {
+                            if (isFavorites && coverPath == null) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Favorite,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = 0.95f),
+                                    modifier = Modifier.size(64.dp).align(Alignment.Center).offset(y = (-12).dp)
+                                )
+                            }
                             if (coverPath != null) {
                                 SubcomposeAsyncImage(
                                     model = coverPath,
@@ -2072,7 +2286,18 @@ fun PlaylistGridView(
                         )
 
                         // Top right quick options button or Smart Playlist badge
-                        if (isSmart) {
+                        if (isFavorites) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(8.dp)
+                                    .size(28.dp)
+                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Rounded.Favorite, contentDescription = "Favoritos", tint = Color(0xFFFF4081), modifier = Modifier.size(14.dp))
+                            }
+                        } else if (isSmart) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
@@ -2129,7 +2354,7 @@ fun PlaylistGridView(
                     }
                 }
 
-                if (!isSmart) {
+                if (!isSmart && !isFavorites) {
                     DropdownMenu(
                         expanded = expandedMenu,
                         onDismissRequest = { expandedMenu = false },
@@ -2319,12 +2544,14 @@ fun ArtistImage(
     contentDescription: String? = null
 ) {
     val context = LocalContext.current
-    var lastModified by remember(artist) {
+    // Changes when any photo is downloaded, picked or removed: re-read the file instead of the cached bitmap
+    val imagesVersion = com.kevshupp.kevmusicplayer.data.ArtistImageHelper.imagesVersion.intValue
+    var lastModified by remember(artist, imagesVersion) {
         val initialFile = com.kevshupp.kevmusicplayer.data.ArtistImageHelper.getArtistImageFile(context, artist)
         mutableStateOf(if (initialFile.exists() && initialFile.length() > 0) initialFile.lastModified() else 0L)
     }
 
-    LaunchedEffect(artist) {
+    LaunchedEffect(artist, imagesVersion) {
         val currentFile = com.kevshupp.kevmusicplayer.data.ArtistImageHelper.getArtistImageFile(context, artist)
         if (!currentFile.exists() || currentFile.length() == 0L) {
             val file = com.kevshupp.kevmusicplayer.data.ArtistImageHelper.downloadArtistImage(context, artist)

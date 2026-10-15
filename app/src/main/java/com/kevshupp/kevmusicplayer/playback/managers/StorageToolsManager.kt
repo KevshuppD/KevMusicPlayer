@@ -41,17 +41,14 @@ class StorageToolsManager(
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 val prefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
-                val selectedFolder = prefs.getString("music_folder_path", null)
-                val rootDir = if (!selectedFolder.isNullOrBlank() && File(selectedFolder).exists()) {
-                    File(selectedFolder)
-                } else {
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
-                }
+                val rootDirs = com.kevshupp.kevmusicplayer.data.MusicFolders.all(prefs)
+                    .map { File(it) }.filter { it.exists() }
+                    .ifEmpty { listOf(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)) }
 
                 val audioExtensions = setOf("mp3", "flac", "m4a", "wav", "ogg", "aac", "opus", "wma", "m4b")
                 val foundAudioPaths = mutableListOf<String>()
 
-                if (rootDir.exists() && rootDir.isDirectory) {
+                rootDirs.filter { it.isDirectory }.forEach { rootDir ->
                     rootDir.walkTopDown()
                         .maxDepth(15)
                         .forEach { file ->
@@ -63,7 +60,7 @@ class StorageToolsManager(
                         }
                 }
 
-                Log.d("DeepScan", "Found ${foundAudioPaths.size} physical audio files on disk in ${rootDir.absolutePath}")
+                Log.d("DeepScan", "Found ${foundAudioPaths.size} physical audio files on disk in ${rootDirs.joinToString { it.absolutePath }}")
 
                 if (foundAudioPaths.isNotEmpty()) {
                     val batchSize = 50
@@ -203,6 +200,17 @@ class StorageToolsManager(
                                             null,
                                             null
                                         )
+                                    } else if (!newFile.exists() && moveAcrossVolumes(oldFile, newFile)) {
+                                        // Extra music folders can live on another volume (SD card vs internal),
+                                        // where renameTo always fails. MediaStore indexes the copy as a new song;
+                                        // the next scan remaps its id (SongIdentity), keeping stats and playlists.
+                                        moveCompleted = true
+                                        MediaScannerConnection.scanFile(
+                                            context,
+                                            arrayOf(oldFile.absolutePath, newFile.absolutePath),
+                                            null,
+                                            null
+                                        )
                                     }
                                 } catch (e: Exception) {
                                     e.printStackTrace()
@@ -237,6 +245,31 @@ class StorageToolsManager(
             withContext(Dispatchers.Main) {
                 onComplete(successCount, errorCount)
             }
+        }
+    }
+
+    /**
+     * Copies a song to another volume through a hidden sibling file, checks the size and only then removes the
+     * original. If the original cannot be deleted the copy is removed, so the song is never duplicated.
+     */
+    private fun moveAcrossVolumes(source: File, target: File): Boolean {
+        val targetDir = target.parentFile ?: return false
+        if (targetDir.usableSpace < source.length() + 1_048_576L) return false
+        val temp = File(targetDir, ".kmp_move_${target.name}")
+        try {
+            source.inputStream().use { input -> temp.outputStream().use { output -> input.copyTo(output) } }
+            if (temp.length() != source.length() || target.exists() || !temp.renameTo(target)) {
+                temp.delete()
+                return false
+            }
+            if (!source.delete()) {
+                target.delete()
+                return false
+            }
+            return true
+        } catch (e: Exception) {
+            temp.delete()
+            return false
         }
     }
 

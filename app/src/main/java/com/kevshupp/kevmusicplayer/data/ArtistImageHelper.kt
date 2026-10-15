@@ -22,6 +22,42 @@ object ArtistImageHelper {
         .readTimeout(12, TimeUnit.SECONDS)
         .build()
 
+    /** Set by the ViewModel: a few titles of the artist's songs in the library. */
+    @Volatile
+    var songTitlesProvider: ((String) -> List<String>)? = null
+
+    /** Bumped whenever a photo file changes, so ArtistImage reloads instead of showing the cached bitmap. */
+    val imagesVersion = androidx.compose.runtime.mutableIntStateOf(0)
+
+    fun markChanged() {
+        android.os.Handler(android.os.Looper.getMainLooper()).post { imagesVersion.intValue++ }
+    }
+
+    private const val MATCHING_VERSION = 2
+
+    /**
+     * Earlier versions accepted the first Deezer result when no name matched, and stored photos of other artists.
+     * Once, photos downloaded from Deezer (always 1000x1000) are deleted so they are searched again with the
+     * strict matching; photos the user picked by hand keep their size and are left alone.
+     */
+    fun migrateIfNeeded(context: Context) {
+        try {
+            val prefs = context.getSharedPreferences("artist_images_prefs", Context.MODE_PRIVATE)
+            if (prefs.getInt("matching_version", 1) >= MATCHING_VERSION) return
+            val dir = File(context.filesDir, "artist_images")
+            dir.listFiles()?.forEach { file ->
+                val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                val fromDeezer = options.outWidth == options.outHeight && options.outWidth in setOf(1000, 500, 250)
+                if (fromDeezer || file.length() == 0L) file.delete()
+            }
+            prefs.edit().putInt("matching_version", MATCHING_VERSION).apply()
+            markChanged()
+        } catch (e: Exception) {
+            TelemetryLogger.logError(context, "ArtistImages", "Failed to migrate artist photos", e)
+        }
+    }
+
     private val downloadingArtists = ConcurrentHashMap.newKeySet<String>()
     private val failedArtists = ConcurrentHashMap<String, Long>()
     private const val FAILED_RETRY_INTERVAL_MS = 60_000L // Retry after 1 minute
@@ -111,6 +147,7 @@ object ArtistImageHelper {
     fun deleteArtistImage(context: Context, artist: String): Boolean {
         failedArtists.remove(artist.trim())
         val file = getArtistImageFile(context, artist)
+        markChanged()
         return if (file.exists()) file.delete() else false
     }
 
@@ -148,7 +185,12 @@ object ArtistImageHelper {
 
         return withContext(Dispatchers.IO) {
             try {
-                var pictureUrl: String? = searchDeezerArtistPicture(cleanSearch)
+                val ownTitles = try { songTitlesProvider?.invoke(artistName).orEmpty() } catch (e: Exception) { emptyList() }
+                var pictureUrl: String? = searchDeezerArtistByOwnSongs(cleanSearch, ownTitles)
+
+                if (pictureUrl.isNullOrEmpty()) {
+                    pictureUrl = searchDeezerArtistPicture(cleanSearch)
+                }
 
                 if (pictureUrl.isNullOrEmpty()) {
                     pictureUrl = searchDeezerTrackArtistPicture(cleanSearch)
@@ -157,6 +199,7 @@ object ArtistImageHelper {
                 if (!pictureUrl.isNullOrEmpty()) {
                     val downloaded = downloadImageToDisk(pictureUrl, localFile)
                     if (downloaded) {
+                        markChanged()
                         failedArtists.remove(artistName)
                         downloadingArtists.remove(artistName)
                         return@withContext localFile
@@ -181,91 +224,92 @@ object ArtistImageHelper {
         return true
     }
 
+    private fun normalizeName(name: String): String = name.stripAccents().lowercase().trim()
+    private fun alphaNum(name: String): String = normalizeName(name).replace(Regex("[^a-z0-9]"), "")
+
+    private fun namesMatch(candidate: String, target: String): Boolean {
+        val c = normalizeName(candidate)
+        val t = normalizeName(target)
+        if (c == t) return true
+        val ca = alphaNum(candidate)
+        return ca.isNotEmpty() && ca == alphaNum(target)
+    }
+
+    private fun pictureOf(artistObj: JSONObject): String? {
+        val pic = artistObj.optString("picture_xl", "").ifEmpty {
+            artistObj.optString("picture_big", "").ifEmpty { artistObj.optString("picture_medium", "") }
+        }
+        return pic.takeIf { isValidPictureUrl(it) }
+    }
+
+    private fun getJson(url: String): JSONObject? {
+        val request = Request.Builder().url(url).header("User-Agent", BROWSER_USER_AGENT).build()
+        return client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val body = response.body?.string() ?: return null
+            JSONObject(body)
+        }
+    }
+
+    /**
+     * Finds the artist through one of the user's own songs (`artist:"X" track:"Y"`). This is what tells apart
+     * artists that share a name: the right one is the one who actually recorded the song in the library.
+     */
+    private fun searchDeezerArtistByOwnSongs(cleanSearch: String, titles: List<String>): String? {
+        for (title in titles) {
+            val cleanTitle = title.replace(Regex("\\s*[\\[(].*?[\\])]"), "").trim()
+            if (cleanTitle.length < 2) continue
+            try {
+                val query = URLEncoder.encode("artist:\"$cleanSearch\" track:\"$cleanTitle\"", "UTF-8")
+                val data = getJson("https://api.deezer.com/search?q=$query&limit=5")?.optJSONArray("data") ?: continue
+                for (i in 0 until data.length()) {
+                    val artistObj = data.getJSONObject(i).optJSONObject("artist") ?: continue
+                    if (!namesMatch(artistObj.optString("name", ""), cleanSearch)) continue
+                    pictureOf(artistObj)?.let { return it }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
+        }
+        return null
+    }
+
+    /**
+     * Artist search. Only a result whose name matches is accepted (several with the same name: the one with the
+     * most fans). There is no fallback to the first result: a placeholder is better than another artist's photo.
+     */
     private fun searchDeezerArtistPicture(cleanSearch: String): String? {
         return try {
             val encodedQuery = URLEncoder.encode(cleanSearch, "UTF-8")
-            val url = "https://api.deezer.com/search/artist?q=$encodedQuery&limit=10"
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", BROWSER_USER_AGENT)
-                .build()
+            val data = getJson("https://api.deezer.com/search/artist?q=$encodedQuery&limit=15")?.optJSONArray("data") ?: return null
+            val candidates = (0 until data.length()).map { data.getJSONObject(it) }
+            val exact = candidates.filter { namesMatch(it.optString("name", ""), cleanSearch) && pictureOf(it) != null }
+            exact.maxByOrNull { it.optLong("nb_fan", 0L) }?.let { return pictureOf(it) }
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val responseBody = response.body?.string() ?: return null
-                val json = JSONObject(responseBody)
-                val dataArray = json.optJSONArray("data") ?: return null
-                if (dataArray.length() == 0) return null
-
-                val targetNorm = cleanSearch.stripAccents().lowercase().trim()
-                val targetAlphaNum = targetNorm.replace(Regex("[^a-z0-9]"), "")
-
-                var bestUrl: String? = null
-
-                for (i in 0 until minOf(dataArray.length(), 10)) {
-                    val candidate = dataArray.getJSONObject(i)
-                    val candidateName = candidate.optString("name", "").trim()
-                    val candidateNorm = candidateName.stripAccents().lowercase().trim()
-                    val candidateAlphaNum = candidateNorm.replace(Regex("[^a-z0-9]"), "")
-
-                    val isExactMatch = candidateNorm == targetNorm
-                    val isAlphaMatch = candidateAlphaNum.isNotEmpty() && candidateAlphaNum == targetAlphaNum
-                    val isCloseMatch = (candidateNorm.contains(targetNorm) || targetNorm.contains(candidateNorm)) &&
-                            Math.abs(candidateNorm.length - targetNorm.length) <= 5
-
-                    val pic = candidate.optString("picture_xl", "").ifEmpty {
-                        candidate.optString("picture_big", "").ifEmpty {
-                            candidate.optString("picture_medium", "")
-                        }
-                    }
-
-                    if (isValidPictureUrl(pic)) {
-                        if (isExactMatch || isAlphaMatch) {
-                            return pic
-                        }
-                        if (isCloseMatch && bestUrl == null) {
-                            bestUrl = pic
-                        } else if (i == 0 && bestUrl == null) {
-                            bestUrl = pic
-                        }
-                    }
-                }
-                bestUrl
-            }
+            // Close spelling only ("The Beatles" / "Beatles"): one name contains the other, nearly the same length
+            val target = alphaNum(cleanSearch)
+            if (target.length < 4) return null
+            candidates.filter {
+                val name = alphaNum(it.optString("name", ""))
+                name.isNotEmpty() && (name.contains(target) || target.contains(name)) &&
+                    Math.abs(name.length - target.length) <= 3 && pictureOf(it) != null
+            }.maxByOrNull { it.optLong("nb_fan", 0L) }?.let { pictureOf(it) }
         } catch (e: Exception) {
             null
         }
     }
 
+    /** Track search fallback: only an artist whose name matches is accepted. */
     private fun searchDeezerTrackArtistPicture(cleanSearch: String): String? {
         return try {
-            val encodedQuery = URLEncoder.encode(cleanSearch, "UTF-8")
-            val url = "https://api.deezer.com/search?q=$encodedQuery&limit=8"
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", BROWSER_USER_AGENT)
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val responseBody = response.body?.string() ?: return null
-                val json = JSONObject(responseBody)
-                val dataArray = json.optJSONArray("data") ?: return null
-
-                for (i in 0 until dataArray.length()) {
-                    val item = dataArray.getJSONObject(i)
-                    val artistObj = item.optJSONObject("artist") ?: continue
-                    val pic = artistObj.optString("picture_xl", "").ifEmpty {
-                        artistObj.optString("picture_big", "").ifEmpty {
-                            artistObj.optString("picture_medium", "")
-                        }
-                    }
-                    if (isValidPictureUrl(pic)) {
-                        return pic
-                    }
-                }
-                null
+            val query = URLEncoder.encode("artist:\"$cleanSearch\"", "UTF-8")
+            val data = getJson("https://api.deezer.com/search?q=$query&limit=10")?.optJSONArray("data") ?: return null
+            for (i in 0 until data.length()) {
+                val artistObj = data.getJSONObject(i).optJSONObject("artist") ?: continue
+                if (!namesMatch(artistObj.optString("name", ""), cleanSearch)) continue
+                pictureOf(artistObj)?.let { return it }
             }
+            null
         } catch (e: Exception) {
             null
         }

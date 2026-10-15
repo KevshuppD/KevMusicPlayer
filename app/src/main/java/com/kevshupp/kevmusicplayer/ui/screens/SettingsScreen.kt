@@ -74,6 +74,8 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
+    // Lives outside the hub branch so going back from a subpage returns to the same spot of the index
+    val hubScrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     var isScanning by remember { mutableStateOf(false) }
@@ -155,6 +157,11 @@ fun SettingsScreen(
 
     BackHandler(enabled = true) {
         handleBack()
+    }
+
+    // Each subpage opens at its top instead of at the offset the previous one was left at
+    LaunchedEffect(activeCategory) {
+        if (activeCategory != null) scrollState.scrollTo(0)
     }
 
     val categories = remember(selectedLanguage) {
@@ -744,7 +751,7 @@ fun SettingsScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
+                            .verticalScroll(hubScrollState)
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {

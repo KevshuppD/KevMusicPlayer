@@ -296,6 +296,9 @@ object LyricsRepository {
             val cleanedTitle = cleanSearchTerm(title)
             val cleanedArtist = cleanSearchTerm(artist)
 
+            // Plain lyrics from the exact match: only returned if no search result has synced lyrics
+            var exactPlain: String? = null
+
             // Pass 1: Try direct GET endpoint first (/api/get)
             if (cleanedTitle.isNotBlank() && cleanedArtist.isNotBlank() && !cleanedArtist.contains("Unknown", ignoreCase = true)) {
                 try {
@@ -315,7 +318,7 @@ object LyricsRepository {
                                 }
                                 val plainLyrics = obj.optString("plainLyrics")
                                 if (!plainLyrics.isNullOrEmpty() && plainLyrics != "null") {
-                                    return@withContext plainLyrics
+                                    exactPlain = plainLyrics
                                 }
                             }
                         } else if (response.code != 404) {
@@ -333,11 +336,12 @@ object LyricsRepository {
             if (results.isNotEmpty()) {
                 val syncedMatch = results.firstOrNull { !it.syncedLyrics.isNullOrBlank() }
                 if (syncedMatch != null) return@withContext syncedMatch.syncedLyrics
+                if (exactPlain != null) return@withContext exactPlain
                 val plainMatch = results.firstOrNull { !it.plainLyrics.isNullOrBlank() }
                 if (plainMatch != null) return@withContext plainMatch.plainLyrics
             }
 
-            null
+            exactPlain
         }
     }
 

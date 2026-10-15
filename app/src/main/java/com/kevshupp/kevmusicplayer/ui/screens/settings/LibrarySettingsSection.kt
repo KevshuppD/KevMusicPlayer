@@ -90,6 +90,13 @@ fun LibrarySettingsSection(
     var selectedMusicFolder by remember {
         mutableStateOf(settingsPrefs.getString("music_folder_path", null))
     }
+    var extraMusicFolders by remember {
+        mutableStateOf(com.kevshupp.kevmusicplayer.data.MusicFolders.extras(settingsPrefs))
+    }
+    fun refreshMusicFolders() {
+        selectedMusicFolder = com.kevshupp.kevmusicplayer.data.MusicFolders.main(settingsPrefs)
+        extraMusicFolders = com.kevshupp.kevmusicplayer.data.MusicFolders.extras(settingsPrefs)
+    }
     var useSameFolderForBackup by remember {
         mutableStateOf(settingsPrefs.getBoolean("use_same_folder_for_backup", false))
     }
@@ -1842,7 +1849,16 @@ fun LibrarySettingsSection(
                 e.printStackTrace()
             }
             val path = getPhysicalPathFromTreeUri(context, uri)
-            if (path != null) {
+            if (path != null && selectedMusicFolder != null) {
+                // There is already a main folder: this one is added as an extra folder (scanned only)
+                if (com.kevshupp.kevmusicplayer.data.MusicFolders.add(settingsPrefs, path)) {
+                    refreshMusicFolders()
+                    android.widget.Toast.makeText(context, getLocalized("Carpeta añadida", "Folder added"), android.widget.Toast.LENGTH_SHORT).show()
+                    onRescan()
+                } else {
+                    android.widget.Toast.makeText(context, getLocalized("Esa carpeta ya está en la lista", "That folder is already listed"), android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } else if (path != null) {
                 settingsPrefs.edit().putString("music_folder_path", path).apply()
                 selectedMusicFolder = path
 
@@ -1870,7 +1886,7 @@ fun LibrarySettingsSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = getLocalized("CARPETA DE MÚSICA ESPECÍFICA", "SPECIFIC MUSIC FOLDER"),
+                text = getLocalized("CARPETAS DE MÚSICA", "MUSIC FOLDERS"),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -1878,10 +1894,10 @@ fun LibrarySettingsSection(
                 modifier = Modifier.weight(1f)
             )
             SettingsInfoButton(
-                title = getLocalized("Carpeta de Música Específica", "Specific Music Folder"),
+                title = getLocalized("Carpetas de Música", "Music Folders"),
                 infoText = getLocalized(
-                    "Selecciona una carpeta para buscar música. Si se selecciona, solo se escaneará esta carpeta.",
-                    "Select a folder to search for music. If selected, only this folder will be scanned."
+                    "Elige las carpetas donde buscar música; solo se escanearán esas. La principal es la primera que eliges y es donde \"Organizar biblioteca\" coloca las canciones (también las de las demás carpetas). Sin ninguna carpeta se escanea todo el dispositivo.",
+                    "Choose the folders to search for music; only those are scanned. The main folder is the first one you pick and is where \"Organize library\" places songs (including those from the other folders). With no folder, the whole device is scanned."
                 )
             )
         }
@@ -1919,16 +1935,28 @@ fun LibrarySettingsSection(
                                 fontSize = 10.sp,
                                 color = settingsTextMutedColor()
                             )
+                            Text(
+                                text = getLocalized("★ Principal · aquí se organizan las canciones", "★ Main · songs are organized here"),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
                         IconButton(
                             onClick = {
-                                settingsPrefs.edit().remove("music_folder_path").apply()
-                                selectedMusicFolder = null
+                                val hadExtras = extraMusicFolders.isNotEmpty()
+                                com.kevshupp.kevmusicplayer.data.MusicFolders.remove(settingsPrefs, selectedMusicFolder!!)
+                                refreshMusicFolders()
                                 if (useSameFolderForBackup) {
                                     useSameFolderForBackup = false
                                     settingsPrefs.edit().putBoolean("use_same_folder_for_backup", false).apply()
                                 }
-                                android.widget.Toast.makeText(context, getLocalized("Escaneo predeterminado restaurado", "Default scan restored"), android.widget.Toast.LENGTH_SHORT).show()
+                                android.widget.Toast.makeText(
+                                    context,
+                                    if (hadExtras) getLocalized("Carpeta quitada; la siguiente pasa a ser la principal", "Folder removed; the next one is now the main folder")
+                                    else getLocalized("Escaneo predeterminado restaurado", "Default scan restored"),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
                                 onRescan()
                             }
                         ) {
@@ -1938,6 +1966,80 @@ fun LibrarySettingsSection(
                                 tint = MaterialTheme.colorScheme.error
                             )
                         }
+                    }
+
+                    extraMusicFolders.forEach { folder ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(settingsDividerColor())
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = folder.substringAfterLast("/"),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = settingsTextColor()
+                                )
+                                Text(
+                                    text = folder,
+                                    fontSize = 10.sp,
+                                    color = settingsTextMutedColor()
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    com.kevshupp.kevmusicplayer.data.MusicFolders.makeMain(settingsPrefs, folder)
+                                    refreshMusicFolders()
+                                    if (useSameFolderForBackup) {
+                                        useSameFolderForBackup = false
+                                        settingsPrefs.edit().putBoolean("use_same_folder_for_backup", false).apply()
+                                    }
+                                    android.widget.Toast.makeText(context, getLocalized("Carpeta principal cambiada", "Main folder changed"), android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.StarBorder,
+                                    contentDescription = getLocalized("Hacer principal", "Make main"),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    com.kevshupp.kevmusicplayer.data.MusicFolders.remove(settingsPrefs, folder)
+                                    refreshMusicFolders()
+                                    android.widget.Toast.makeText(context, getLocalized("Carpeta quitada", "Folder removed"), android.widget.Toast.LENGTH_SHORT).show()
+                                    onRescan()
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Clear,
+                                    contentDescription = "Clear",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = { selectMusicFolderLauncher.launch(null) },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.CreateNewFolder,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = getLocalized("Añadir otra carpeta", "Add another folder"),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 } else {
                     Button(
