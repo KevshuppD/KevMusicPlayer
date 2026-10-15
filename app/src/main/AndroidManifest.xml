@@ -61,6 +61,15 @@
                 android:resource="@xml/music_widget_info" />
         </receiver>
 
+        <!-- Shizuku: permite quitar la restricción de batería de Motorola (ver ShizukuHelper) -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

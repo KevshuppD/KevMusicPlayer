@@ -584,9 +584,16 @@ class PlaybackService : MediaLibraryService() {
                 onNotificationChangedCallback: MediaNotification.Provider.Callback
             ): MediaNotification {
                 lastNotifiedMediaId = mediaSession.player.currentMediaItem?.mediaId
+                // La carátula llega después por este callback; también hay que repostearla a mano
+                // si el sistema ignora startForeground (ver onUpdateNotification)
+                val callback = MediaNotification.Provider.Callback { updated ->
+                    lastMediaNotification = updated
+                    onNotificationChangedCallback.onNotificationChanged(updated)
+                    repostNotificationIfRestricted()
+                }
                 return defaultNotificationProvider.createNotification(
-                    mediaSession, mediaButtonPreferences, actionFactory, onNotificationChangedCallback
-                )
+                    mediaSession, mediaButtonPreferences, actionFactory, callback
+                ).also { lastMediaNotification = it }
             }
         })
 
@@ -843,7 +850,41 @@ class PlaybackService : MediaLibraryService() {
             loggedBackgroundRestriction = true
             TelemetryLogger.logWarn(this, "Playback_Notification", "App is background-restricted: posting the notification without startForeground")
         }
+        // Con startInForegroundRequired = false Media3 publica la notificación y además llama a
+        // stopForeground(): el servicio deja de estar en primer plano y el lowmemorykiller lo mata
+        // en segundo plano. Mientras la app está visible startForeground sí se permite, y una vez
+        // en primer plano el sistema ignora los startForeground posteriores sin quitárselo, así
+        // que se pide igualmente y la notificación se actualiza con notify().
+        val isForeground = foregroundServiceType != android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE
+        if (restricted && startInForegroundRequired && (isForeground || isAppVisible())) {
+            super.onUpdateNotification(session, true)
+            repostNotificationIfRestricted()
+            return
+        }
         super.onUpdateNotification(session, startInForegroundRequired && !restricted)
+    }
+
+    private fun isAppVisible(): Boolean {
+        val info = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(info)
+        return info.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+    }
+
+    @Volatile private var lastMediaNotification: MediaNotification? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private fun repostNotificationIfRestricted() {
+        mainHandler.post {
+            val notification = lastMediaNotification ?: return@post
+            if (!com.kevshupp.kevmusicplayer.data.BackgroundRestriction.isRestricted(this)) return@post
+            if (foregroundServiceType == android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE) return@post
+            try {
+                getSystemService(NotificationManager::class.java)
+                    .notify(notification.notificationId, notification.notification)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     private var loggedBackgroundRestriction = false

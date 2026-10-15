@@ -1449,9 +1449,20 @@ private fun BackgroundRestrictionWarning() {
     var restricted by remember { mutableStateOf(false) }
     var dismissed by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
+    val scope = rememberCoroutineScope()
+    val shizuku = com.kevshupp.kevmusicplayer.data.ShizukuHelper
+    var shizukuRunning by remember { mutableStateOf(false) }
+    var fixing by remember { mutableStateOf(false) }
+
     androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
         restricted = com.kevshupp.kevmusicplayer.data.BackgroundRestriction.isRestricted(context)
-        onPauseOrDispose { }
+        shizukuRunning = shizuku.isRunning()
+        // Si ya se concedió Shizuku, se corrige solo y sin avisar (el gestor de Motorola puede
+        // volver a restringirla en cualquier momento)
+        val job = if (restricted && shizuku.hasPermission()) scope.launch {
+            if (shizuku.removeBackgroundRestriction(context)) restricted = false
+        } else null
+        onPauseOrDispose { job?.cancel() }
     }
 
     if (restricted && !dismissed) {
@@ -1463,10 +1474,27 @@ private fun BackgroundRestrictionWarning() {
                     "Android tiene a Kev Music Player en modo \"Restringido\", aunque en Ajustes aparezca otra cosa. " +
                         "Así puede detener la música en segundo plano.\n\n" +
                         "Abre la app en Ajustes → Batería y elige \"Sin restricciones\". " +
-                        "Si vuelve a pasar, desactiva la \"Batería adaptable\" del teléfono."
+                        "Si vuelve a pasar, desactiva la \"Batería adaptable\" del teléfono." +
+                        if (shizukuRunning) "\n\nSi Ajustes ya dice \"Sin restricciones\", usa Shizuku para quitar la restricción oculta." else ""
                 )
             },
             confirmButton = {
+                if (shizukuRunning) {
+                    TextButton(enabled = !fixing, onClick = {
+                        fixing = true
+                        scope.launch {
+                            val ok = shizuku.requestPermission() && shizuku.removeBackgroundRestriction(context)
+                            fixing = false
+                            if (ok) {
+                                restricted = false
+                                android.widget.Toast.makeText(context, "Listo: la música ya puede seguir en segundo plano", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                android.widget.Toast.makeText(context, "Shizuku no pudo quitar la restricción", android.widget.Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }) { Text(if (fixing) "Arreglando..." else "Arreglar con Shizuku") }
+                    return@AlertDialog
+                }
                 TextButton(onClick = {
                     dismissed = true
                     try {

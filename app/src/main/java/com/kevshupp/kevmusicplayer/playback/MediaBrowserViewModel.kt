@@ -1333,6 +1333,26 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    // Una instalación nueva (o una cuenta recién vinculada) no sube nada automáticamente hasta que
+    // sus datos parten de la nube: tras restaurar, tras una subida manual o al comprobar que la
+    // nube no tiene copia. Sin esto, al iniciar sesión el selector de cuentas de Google dejaba la
+    // app en segundo plano, la subida "al salir" enviaba la biblioteca vacía y machacaba la copia
+    // buena; la restauración posterior bajaba esa copia vacía.
+    private fun cloudBaselineKey(uid: String) = "baseline_$uid"
+
+    private fun hasCloudBaseline(user: com.kevshupp.kevmusicplayer.data.cloud.CloudUser): Boolean {
+        val key = cloudBaselineKey(user.uid)
+        if (cloudSyncStatePrefs.contains(key)) return cloudSyncStatePrefs.getBoolean(key, false)
+        // Dispositivos que ya sincronizaban antes de esta comprobación
+        val synced = user.lastSyncTimestamp > 0L
+        if (synced) cloudSyncStatePrefs.edit().putBoolean(key, true).apply()
+        return synced
+    }
+
+    private fun markCloudBaseline(uid: String) {
+        cloudSyncStatePrefs.edit().putBoolean(cloudBaselineKey(uid), true).apply()
+    }
+
     // Settings, equalizer and playlists are part of the backup but are edited all over the UI,
     // so changes are detected at the source. Kept in a field: SharedPreferences holds listeners weakly.
     private val backupPrefsChangeListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -1362,6 +1382,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
         val user = cloudUser.value ?: return
         if (!user.isAutoSyncEnabled) return
+        if (!hasCloudBaseline(user)) return
 
         // Validate trigger against configured autoSyncMode
         when (trigger) {
@@ -1438,17 +1459,20 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun uploadCloudBackup(
         context: Context,
         onSuccess: (Long) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        userInitiated: Boolean = true
     ) {
         val user = cloudUser.value ?: run {
             onError("Debes iniciar sesión con Google primero")
             return
         }
+        if (!userInitiated && !hasCloudBaseline(user)) return
         viewModelScope.launch {
             val counterAtUpload = cloudChangeCounter
             val cloudBackupMgr = com.kevshupp.kevmusicplayer.data.cloud.CloudBackupManager(context)
             val result = cloudBackupMgr.uploadBackupToCloud(user)
             result.onSuccess { timestamp ->
+                markCloudBaseline(user.uid)
                 clearPendingCloudChanges(counterAtUpload)
                 withContext(Dispatchers.Main) { onSuccess(timestamp) }
             }.onFailure { err ->
@@ -1470,6 +1494,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             val cloudBackupMgr = com.kevshupp.kevmusicplayer.data.cloud.CloudBackupManager(context)
             val result = cloudBackupMgr.restoreBackupFromCloud(user)
             result.onSuccess { importResult ->
+                markCloudBaseline(user.uid)
                 val updatedFiles = audioDao.getAllAudioFilesLightweight()
                 withContext(Dispatchers.Main) {
                     if (importResult.importedLanguage != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -1527,6 +1552,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             val cloudBackupMgr = com.kevshupp.kevmusicplayer.data.cloud.CloudBackupManager(context)
             val result = cloudBackupMgr.getLatestCloudBackupInfo(user)
+            // La nube no tiene copia: nada que machacar, ya se puede sincronizar
+            if (result.isSuccess && result.getOrNull() == null) markCloudBaseline(user.uid)
             withContext(Dispatchers.Main) {
                 onResult(result.getOrNull())
             }
@@ -1547,7 +1574,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     onComplete()
                     val user = cloudUser.value
                     if (user != null && user.isAutoSyncEnabled) {
-                        uploadCloudBackup(context, onSuccess = {}, onError = {})
+                        uploadCloudBackup(context, onSuccess = {}, onError = {}, userInitiated = false)
                     }
                 },
                 onError = onErr
