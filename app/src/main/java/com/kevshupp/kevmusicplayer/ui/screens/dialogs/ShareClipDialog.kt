@@ -77,44 +77,22 @@ fun ShareClipDialog(
     // Selection mode: 0 = Por Letras, 1 = Manual
     var selectedTab by remember { mutableIntStateOf(if (parsedLyrics.isNotEmpty()) 0 else 1) }
 
-    // Selected lyrics indices
+    // Línea que suena al abrir el diálogo: solo sirve para situar la lista, no se preselecciona.
     val initialIdx = remember {
         if (parsedLyrics.isNotEmpty()) {
             parsedLyrics.indexOfLast { it.timeMs <= currentPositionMs }.coerceAtLeast(0)
         } else 0
     }
-    var selectedLyricStartIdx by remember { mutableIntStateOf(initialIdx) }
-    var selectedLyricEndIdx by remember {
-        mutableIntStateOf(
-            if (parsedLyrics.isNotEmpty()) min(parsedLyrics.size - 1, initialIdx + 2) else 0
-        )
-    }
+    // Selección por letras; -1 = sin selección.
+    var selectedLyricStartIdx by remember { mutableIntStateOf(-1) }
+    var selectedLyricEndIdx by remember { mutableIntStateOf(-1) }
+    val hasLyricSelection = selectedLyricStartIdx >= 0
 
     // Range state
     var startMs by remember {
-        mutableLongStateOf(
-            if (parsedLyrics.isNotEmpty()) {
-                parsedLyrics[selectedLyricStartIdx].timeMs
-            } else {
-                currentPositionMs.coerceIn(0L, max(0L, songDurationMs - 15000L))
-            }
-        )
+        mutableLongStateOf(currentPositionMs.coerceIn(0L, max(0L, songDurationMs - 15000L)))
     }
-
-    var endMs by remember {
-        mutableLongStateOf(
-            if (parsedLyrics.isNotEmpty()) {
-                val nextAfterEnd = selectedLyricEndIdx + 1
-                if (nextAfterEnd in parsedLyrics.indices) {
-                    parsedLyrics[nextAfterEnd].timeMs
-                } else {
-                    min(songDurationMs, parsedLyrics[selectedLyricEndIdx].timeMs + 4000L)
-                }
-            } else {
-                min(songDurationMs, startMs + 15000L)
-            }
-        )
-    }
+    var endMs by remember { mutableLongStateOf(min(songDurationMs, startMs + 15000L)) }
 
     // Video visual configuration
     var isVertical by remember { mutableStateOf(true) } // true: 9:16 Story, false: 1:1 Feed
@@ -173,14 +151,27 @@ fun ShareClipDialog(
         if (index + 1 < parsedLyrics.size) parsedLyrics[index + 1].timeMs
         else min(songDurationMs, parsedLyrics[index].timeMs + 4000L)
 
-    // Toque: amplía la selección hasta la línea tocada (en cualquier dirección). Dentro de la
-    // selección, tocar un extremo lo quita y tocar una línea intermedia la fija como final.
+    fun applyLyricRange() {
+        startMs = parsedLyrics[selectedLyricStartIdx].timeMs
+        endMs = min(lineEndMs(selectedLyricEndIdx), startMs + 60000L)
+        isPreviewPlaying = false
+    }
+
+    fun clearLyricSelection() {
+        selectedLyricStartIdx = -1
+        selectedLyricEndIdx = -1
+        isPreviewPlaying = false
+    }
+
+    // Toque sin selección: marca esa línea como inicio. Toque fuera de la selección: la amplía
+    // hasta esa línea (en cualquier dirección). Toque en un extremo: lo quita (si era la única
+    // línea, borra la selección). Toque en una línea intermedia: la fija como final.
     // Mantener pulsado empieza una selección nueva en esa línea.
     fun handleLyricClick(index: Int, startNew: Boolean = false) {
         val start = selectedLyricStartIdx
         val end = selectedLyricEndIdx
         when {
-            startNew -> { selectedLyricStartIdx = index; selectedLyricEndIdx = index }
+            startNew || start < 0 -> { selectedLyricStartIdx = index; selectedLyricEndIdx = index }
             index < start || index > end -> {
                 val newStart = min(start, index)
                 val newEnd = max(end, index)
@@ -188,30 +179,20 @@ fun ShareClipDialog(
                     selectedLyricStartIdx = newStart
                     selectedLyricEndIdx = newEnd
                 } else {
-                    android.widget.Toast.makeText(context, "Máximo 60 s: se empezó una selección nueva", android.widget.Toast.LENGTH_SHORT).show()
-                    selectedLyricStartIdx = index
-                    selectedLyricEndIdx = index
+                    android.widget.Toast.makeText(context, "El fragmento no puede superar 60 s", android.widget.Toast.LENGTH_SHORT).show()
+                    return
                 }
             }
-            start == end -> Unit
+            start == end -> { clearLyricSelection(); return }
             index == start -> selectedLyricStartIdx = start + 1
             index == end -> selectedLyricEndIdx = end - 1
             else -> selectedLyricEndIdx = index
         }
-
-        // Recalculate startMs and endMs
-        startMs = parsedLyrics[selectedLyricStartIdx].timeMs
-        val nextAfterEnd = selectedLyricEndIdx + 1
-        endMs = if (nextAfterEnd in parsedLyrics.indices) {
-            parsedLyrics[nextAfterEnd].timeMs
-        } else {
-            min(songDurationMs, parsedLyrics[selectedLyricEndIdx].timeMs + 4000L)
-        }
-        isPreviewPlaying = false
-        if (endMs - startMs > 60000L) {
-            endMs = startMs + 60000L
-        }
+        applyLyricRange()
     }
+
+    // En "Por Letras" hace falta elegir al menos una línea; el modo manual siempre tiene rango.
+    val canGenerate = selectedTab != 0 || parsedLyrics.isEmpty() || hasLyricSelection
 
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.secondary
@@ -446,7 +427,7 @@ fun ShareClipDialog(
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.65f))
                             .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
-                            .clickable { isPreviewPlaying = !isPreviewPlaying }
+                            .clickable(enabled = canGenerate) { isPreviewPlaying = !isPreviewPlaying }
                             .padding(horizontal = 14.dp, vertical = 6.dp)
                     ) {
                         Icon(
@@ -457,7 +438,7 @@ fun ShareClipDialog(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            if (isPreviewPlaying) "Pausar" else "Preescuchar (${((endMs - startMs) / 1000)}s)",
+                            if (isPreviewPlaying) "Pausar" else if (!canGenerate) "Elige las líneas abajo" else "Preescuchar (${((endMs - startMs) / 1000)}s)",
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
@@ -484,7 +465,7 @@ fun ShareClipDialog(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(if (selectedTab == 0) primaryColor.copy(alpha = 0.2f) else Color.Transparent)
-                                    .clickable { selectedTab = 0 }
+                                    .clickable { selectedTab = 0; isPreviewPlaying = false }
                                     .padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
                                 Text(
@@ -498,7 +479,7 @@ fun ShareClipDialog(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(if (selectedTab == 1) primaryColor.copy(alpha = 0.2f) else Color.Transparent)
-                                    .clickable { selectedTab = 1 }
+                                    .clickable { selectedTab = 1; isPreviewPlaying = false }
                                     .padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
                                 Text(
@@ -510,17 +491,38 @@ fun ShareClipDialog(
                             }
                         }
 
-                        Text(
-                            text = "${((endMs - startMs) / 1000)}s seleccionados",
-                            color = primaryColor,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (canGenerate) "${((endMs - startMs) / 1000)}s seleccionados" else "Sin selección",
+                                color = if (canGenerate) primaryColor else Color.White.copy(alpha = 0.5f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (selectedTab == 0 && hasLyricSelection) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF161824))
+                                        .clickable { clearLyricSelection() }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Close, contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(12.dp))
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text("Borrar", color = Color.White.copy(alpha = 0.8f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                     }
 
                     if (selectedTab == 0 && parsedLyrics.isNotEmpty()) {
                         Text(
-                            text = "Toca una línea para ampliar hasta ella · mantén pulsado para empezar de nuevo",
+                            text = when {
+                                !hasLyricSelection -> "Toca la primera línea del fragmento"
+                                selectedLyricStartIdx == selectedLyricEndIdx -> "Ahora toca la última línea (máx. 60 s)"
+                                else -> "Toca fuera para ampliar · un extremo para quitarlo · mantén pulsado para empezar de nuevo"
+                            },
                             color = Color.White.copy(alpha = 0.5f),
                             fontSize = 11.sp,
                             modifier = Modifier.padding(top = 4.dp)
@@ -541,18 +543,23 @@ fun ShareClipDialog(
                 ) {
                     if (selectedTab == 0 && parsedLyrics.isNotEmpty()) {
                         val listState = rememberLazyListState(
-                            initialFirstVisibleItemIndex = max(0, selectedLyricStartIdx - 1)
+                            initialFirstVisibleItemIndex = max(0, initialIdx - 1)
                         )
                         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                             itemsIndexed(parsedLyrics) { index, line ->
-                                val isSelected = index in selectedLyricStartIdx..selectedLyricEndIdx
+                                val isSelected = hasLyricSelection && index in selectedLyricStartIdx..selectedLyricEndIdx
+                                val isNowPlaying = !hasLyricSelection && index == initialIdx
 
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(
-                                            if (isSelected) primaryColor.copy(alpha = 0.18f) else Color.Transparent
+                                            when {
+                                                isSelected -> primaryColor.copy(alpha = 0.18f)
+                                                isNowPlaying -> Color.White.copy(alpha = 0.05f)
+                                                else -> Color.Transparent
+                                            }
                                         )
                                         .combinedClickable(
                                             onClick = { handleLyricClick(index) },
@@ -579,6 +586,16 @@ fun ShareClipDialog(
                                     )
 
                                     Column(modifier = Modifier.weight(1f)) {
+                                        val edgeLabel = when {
+                                            !isSelected -> null
+                                            selectedLyricStartIdx == selectedLyricEndIdx -> "INICIO · FIN"
+                                            index == selectedLyricStartIdx -> "INICIO"
+                                            index == selectedLyricEndIdx -> "FIN"
+                                            else -> null
+                                        }
+                                        if (edgeLabel != null) {
+                                            Text(edgeLabel, color = primaryColor, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                                        }
                                         Text(
                                             text = line.text,
                                             color = if (isSelected) Color.White else Color.White.copy(alpha = 0.65f),
@@ -778,7 +795,7 @@ fun ShareClipDialog(
                             }
                         }
                     },
-                    enabled = !isGenerating,
+                    enabled = !isGenerating && canGenerate,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp),
@@ -802,7 +819,7 @@ fun ShareClipDialog(
                         Icon(Icons.Rounded.MovieFilter, contentDescription = null, tint = Color.Black)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (dedicationText.isNotBlank()) "Generar y Dedicar Historia" else "Generar y Compartir Historia",
+                            text = if (!canGenerate) "Elige las líneas del fragmento" else if (dedicationText.isNotBlank()) "Generar y Dedicar Historia" else "Generar y Compartir Historia",
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
