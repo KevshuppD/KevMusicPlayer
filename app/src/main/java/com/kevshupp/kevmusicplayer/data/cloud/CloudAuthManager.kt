@@ -94,8 +94,9 @@ object CloudAuthManager {
             photoUrl = photo,
             lastSyncTimestamp = lastSync,
             isAutoSyncEnabled = autoSync,
-            autoSyncMode = mode,
-            syncWifiOnly = wifiOnly,
+            // Ya no hay modos: la sincronización es siempre en tiempo real (Firestore) y por cualquier red
+            autoSyncMode = "realtime",
+            syncWifiOnly = false,
             includePlaylists = incPlaylists,
             includeLyrics = incLyrics,
             includeStats = incStats,

@@ -41,6 +41,13 @@ object RealtimeSongSync {
     /** Lo asigna el ViewModel: recarga estadísticas y letras en memoria tras aplicar cambios de la nube. */
     @Volatile var onRemoteApplied: ((lyricsChanged: Set<Long>) -> Unit)? = null
 
+    /** Lo asigna el ViewModel: otro dispositivo reinició las estadísticas, hay que borrar las de este por completo. */
+    @Volatile var onRemoteStatsReset: (() -> Unit)? = null
+
+    private var resetRegistration: ListenerRegistration? = null
+    private fun resetSeenKey(uid: String) = "realtime_stats_reset_seen_$uid"
+    private fun metaDoc(uid: String) = firestore().collection("users").document(uid).collection("meta").document("stats")
+
     private fun firestore() = FirebaseFirestore.getInstance()
     private fun prefs(context: Context) = context.getSharedPreferences("cloud_sync_state", Context.MODE_PRIVATE)
     private fun migratedKey(uid: String) = "realtime_songs_$uid"
@@ -71,6 +78,8 @@ object RealtimeSongSync {
     }
 
     fun stop() {
+        resetRegistration?.remove()
+        resetRegistration = null
         startJob?.cancel()
         startJob = null
         registration?.remove()
@@ -128,6 +137,10 @@ object RealtimeSongSync {
     fun resetStats(context: Context) {
         if (!syncStats) return
         val id = activeUid(context) ?: return
+        // Evento de reinicio: cada dispositivo borra todas sus estadísticas, también las de canciones sin documento
+        val now = System.currentTimeMillis()
+        prefs(context).edit().putLong(resetSeenKey(id), now).apply()
+        metaDoc(id).set(mapOf("statsResetAt" to now), SetOptions.merge())
         scope.launch {
             try {
                 val docs = collection(id).whereGreaterThan("playCount", 0).get().await().documents
@@ -181,12 +194,14 @@ object RealtimeSongSync {
         applyDocs(context, merged)
         prefs(context).edit()
             .putBoolean(migratedKey(userId), true)
+            .putLong(resetSeenKey(userId), maxOf(prefs(context).getLong(resetSeenKey(userId), 0L), System.currentTimeMillis()))
             .putLong(lastSeenKey(userId), System.currentTimeMillis() - 60_000L)
             .apply()
         TelemetryLogger.logInfo(context, "RealtimeSync", "Estadísticas y letras unidas con la nube: ${writes.size} subidas, ${merged.size} en la nube")
     }
 
     private fun listen(context: Context, userId: String) {
+        if (syncStats) listenResets(context, userId)
         val since = prefs(context).getLong(lastSeenKey(userId), 0L)
         registration = collection(userId)
             .whereGreaterThan("updatedAt", Timestamp(java.util.Date(since)))
@@ -206,6 +221,19 @@ object RealtimeSongSync {
                     }
                 }
             }
+    }
+
+    private fun listenResets(context: Context, userId: String) {
+        resetRegistration = metaDoc(userId).addSnapshotListener { snapshot, _ ->
+            val resetAt = snapshot?.getLong("statsResetAt") ?: return@addSnapshotListener
+            if (resetAt <= prefs(context).getLong(resetSeenKey(userId), 0L)) return@addSnapshotListener
+            prefs(context).edit().putLong(resetSeenKey(userId), resetAt).apply()
+            TelemetryLogger.logInfo(context, "RealtimeSync", "Estadísticas reiniciadas desde otro dispositivo")
+            scope.launch {
+                mutex.withLock { AppDatabase.getDatabase(context).audioDao().resetAllPlayStats() }
+                onRemoteStatsReset?.invoke()
+            }
+        }
     }
 
     /** Copia a Room lo que dice la nube para las canciones de la biblioteca con esa clave. */

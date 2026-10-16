@@ -1665,8 +1665,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         triggerAutoSync(debounceMs = 30000L)
     }
 
-    /** Sets every play count and last-played date to zero (Room, in-memory mirror and archived orphans). */
+    /** Sets every play count and last-played date to zero here and, through the cloud, on the other devices. */
     fun resetPlayStats() {
+        val context = getApplication<Application>()
+        com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.resetStats(context)
+        resetPlayStatsLocal()
+    }
+
+    /** Local part of the reset (Room, in-memory mirror and archived orphans); also run when another device resets. */
+    private fun resetPlayStatsLocal() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 audioDao.resetAllPlayStats()
@@ -1677,7 +1684,6 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         context, orphans.map { it.copy(playCount = 0, lastPlayed = 0L) }
                     )
                 }
-                com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.resetStats(context)
                 withContext(Dispatchers.Main) {
                     for (song in localAudioFiles) playStatsOverrides[song.id] = PlayStats(0, 0L)
                     statsVersion.intValue++
@@ -1745,9 +1751,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     init {
         viewModelScope.launch {
             cloudUser.collect { user ->
-                if (user != null && user.isAuthenticated && user.includePlaylists) realtimePlaylists.start(user.uid)
+                if (user != null && user.isAuthenticated && user.isAutoSyncEnabled && user.includePlaylists) realtimePlaylists.start(user.uid)
                 else realtimePlaylists.stop()
-                if (user != null && user.isAuthenticated) {
+                if (user != null && user.isAuthenticated && user.isAutoSyncEnabled) {
                     com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.start(application, user.uid, user.includeStats, user.includeLyrics)
                 } else {
                     com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.stop()
@@ -1757,6 +1763,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     init {
+        com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.onRemoteStatsReset = { resetPlayStatsLocal() }
         com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.onRemoteApplied = { lyricsChanged ->
             viewModelScope.launch(Dispatchers.Main) {
                 lyricsChanged.forEach { id ->
