@@ -166,4 +166,29 @@ object SongIdentity {
             TelemetryLogger.logError(context, "SongIdentity", "Failed to save orphaned songs", e)
         }
     }
+
+    /**
+     * Canciones reemplazadas por una copia nueva (reparación vía Telegram): id de MediaStore del archivo
+     * nuevo → id antiguo. El siguiente escaneo las trata como la misma canción aunque cambien el título
+     * o la duración, para que conserven estadísticas, letras y listas.
+     */
+    private const val REPLACEMENTS_PREFS = "song_replacements"
+
+    fun addReplacement(context: Context, newId: Long, oldId: Long) {
+        context.getSharedPreferences(REPLACEMENTS_PREFS, Context.MODE_PRIVATE).edit()
+            .putLong(newId.toString(), oldId).commit()
+    }
+
+    fun loadReplacements(context: Context): Map<Long, Long> =
+        context.getSharedPreferences(REPLACEMENTS_PREFS, Context.MODE_PRIVATE).all.mapNotNull { (k, v) ->
+            val newId = k.toLongOrNull() ?: return@mapNotNull null
+            (v as? Long)?.let { newId to it }
+        }.toMap()
+
+    fun clearReplacements(context: Context, newIds: Collection<Long>) {
+        if (newIds.isEmpty()) return
+        val editor = context.getSharedPreferences(REPLACEMENTS_PREFS, Context.MODE_PRIVATE).edit()
+        newIds.forEach { editor.remove(it.toString()) }
+        editor.apply()
+    }
 }

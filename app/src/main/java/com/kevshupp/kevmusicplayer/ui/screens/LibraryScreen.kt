@@ -2127,6 +2127,7 @@ fun LibraryScreen(
         onDismiss = { showInsights = false },
         audioFiles = if (showInsights) viewModel?.audioFilesWithStats ?: audioFiles else audioFiles,
         getLocalized = getLocalized,
+        onResetStats = viewModel?.let { vm -> { vm.resetPlayStats() } },
         onPlaySongs = { songs, startIndex ->
             val first = songs.getOrNull(startIndex) ?: songs.firstOrNull()
             if (first != null) {

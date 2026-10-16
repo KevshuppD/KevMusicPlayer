@@ -50,6 +50,7 @@ class BackupManager(
                 settingsJson.put("music_folder_path", musicFolderPath)
             }
             settingsPrefs.getString("extra_music_folders", null)?.let { settingsJson.put("extra_music_folders", it) }
+            settingsPrefs.getString("telegram_bot_username", null)?.takeIf { it.isNotBlank() }?.let { settingsJson.put("telegram_bot_username", it) }
             
             val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
             settingsJson.put("enabled_tabs", playbackPrefs.getString("enabled_tabs", ""))
@@ -330,6 +331,7 @@ class BackupManager(
                 }
             }
             if (settingsJson.has("extra_music_folders")) edit.putString("extra_music_folders", settingsJson.getString("extra_music_folders"))
+            if (settingsJson.has("telegram_bot_username")) edit.putString("telegram_bot_username", settingsJson.getString("telegram_bot_username"))
             if (settingsJson.has("excluded_folders")) edit.putString("excluded_folders", settingsJson.getString("excluded_folders"))
             
             if (settingsJson.has("ambient_glow_enabled")) edit.putBoolean("ambient_glow_enabled", settingsJson.getBoolean("ambient_glow_enabled"))

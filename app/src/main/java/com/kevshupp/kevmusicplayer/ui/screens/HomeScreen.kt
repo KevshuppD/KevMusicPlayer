@@ -74,6 +74,7 @@ fun HomeScreen(
     }
 
     var showInsights by remember { mutableStateOf(false) }
+    var showDownloader by remember { mutableStateOf(false) }
     var showProfileDialog by remember { mutableStateOf(false) }
     val cloudUser by (viewModel?.cloudUser ?: kotlinx.coroutines.flow.MutableStateFlow(null)).collectAsState()
     val coroutineScope = rememberCoroutineScope()
@@ -220,6 +221,20 @@ fun HomeScreen(
                     }
 
                     IconButton(
+                        onClick = { showDownloader = true },
+                        colors = IconButtonDefaults.iconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.CloudDownload,
+                            contentDescription = "Descargar música",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+
+                    IconButton(
                         onClick = { showInsights = true },
                         colors = IconButtonDefaults.iconButtonColors(
                             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
@@ -247,6 +262,13 @@ fun HomeScreen(
                         )
                     }
                 }
+            }
+
+            if (showDownloader) {
+                com.kevshupp.kevmusicplayer.ui.screens.dialogs.TelegramDownloadDialog(
+                    librarySongs = audioFiles,
+                    onDismiss = { showDownloader = false }
+                )
             }
 
             if (showProfileDialog && viewModel != null) {
@@ -407,6 +429,7 @@ fun HomeScreen(
         onDismiss = { showInsights = false },
         audioFiles = if (showInsights) viewModel?.audioFilesWithStats ?: audioFiles else audioFiles,
         getLocalized = getLocalized,
+        onResetStats = viewModel?.let { vm -> { vm.resetPlayStats() } },
         onPlaySongs = { songs, startIndex ->
             val first = songs.getOrNull(startIndex) ?: songs.firstOrNull()
             if (first != null) {

@@ -207,6 +207,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         com.kevshupp.kevmusicplayer.ui.screens.KnownSongDurations.lookup = { mediaId ->
             audioFileMap[mediaId]?.duration ?: 0L
         }
+        // Canciones descargadas o reparadas con el bot de Telegram: escanear para añadirlas
+        com.kevshupp.kevmusicplayer.data.telegram.TelegramDownloadQueue.onSongSaved = { scanFiles() }
         // Song titles of an artist, so the artist photo search can tell apart artists with the same name
         com.kevshupp.kevmusicplayer.data.ArtistImageHelper.songTitlesProvider = { artist ->
             try {
@@ -708,13 +710,18 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     val orphansByTitle by lazy(LazyThreadSafetyMode.NONE) {
                         storedOrphans.groupBy { it.title.trim().lowercase() }
                     }
+                    val replacements = SongIdentity.loadReplacements(app)
                     val claimedOldIds = HashSet<Long>()
                     val usedOrphanIds = HashSet<Long>()
                     val idRemap = HashMap<Long, Long>()
                     val entities = filteredScanned.map { file ->
                         val sameIdExisting = existingEntities[file.id]
                         val titleKey = file.title.trim().lowercase()
-                        val existing = sameIdExisting ?: existingByTitle[titleKey]?.filter {
+                        // Copia nueva de una canción reparada: hereda la fila antigua aunque cambien título o duración
+                        val replaced = if (sameIdExisting == null) {
+                            replacements[file.id]?.takeIf { it !in scannedIdSet && it !in claimedOldIds }?.let { existingEntities[it] }
+                        } else null
+                        val existing = sameIdExisting ?: replaced ?: existingByTitle[titleKey]?.filter {
                             it.id !in claimedOldIds &&
                                 SongIdentity.sameSong(it.title, it.artist, it.duration, file.title, file.artist, file.duration)
                         }?.maxByOrNull { SongIdentity.matchScore(it.folderPath, it.album, file.folderPath, file.album) }
@@ -882,6 +889,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             storedOrphans.filter { it.oldId !in usedOrphanIds && it.oldId !in newOrphanIds } + newOrphans
                         )
                     }
+                    SongIdentity.clearReplacements(app, replacements.keys.filter { it in scannedIdSet })
                     if (idRemap.isNotEmpty()) {
                         SongIdentity.applyIdRemap(app, idRemap)
                         com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
@@ -1647,6 +1655,30 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         triggerAutoSync(debounceMs = 30000L)
     }
 
+    /** Sets every play count and last-played date to zero (Room, in-memory mirror and archived orphans). */
+    fun resetPlayStats() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                audioDao.resetAllPlayStats()
+                val context = getApplication<Application>()
+                val orphans = com.kevshupp.kevmusicplayer.data.SongIdentity.loadOrphans(context)
+                if (orphans.any { it.playCount > 0 || it.lastPlayed > 0 }) {
+                    com.kevshupp.kevmusicplayer.data.SongIdentity.saveOrphans(
+                        context, orphans.map { it.copy(playCount = 0, lastPlayed = 0L) }
+                    )
+                }
+                withContext(Dispatchers.Main) {
+                    for (song in localAudioFiles) playStatsOverrides[song.id] = PlayStats(0, 0L)
+                    statsVersion.intValue++
+                    playlistManager.updateSmartPlaylists(statsOnly = true)
+                    triggerAutoSync()
+                }
+            } catch (e: Exception) {
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(getApplication(), "Stats", "Failed to reset play stats", e)
+            }
+        }
+    }
+
     fun refreshStatsFromDb() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -2204,6 +2236,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     override fun onCleared() {
         super.onCleared()
         com.kevshupp.kevmusicplayer.ui.screens.KnownSongDurations.lookup = { 0L }
+        com.kevshupp.kevmusicplayer.data.telegram.TelegramDownloadQueue.onSongSaved = null
         backupPrefsFiles.forEach { name ->
             getApplication<Application>().getSharedPreferences(name, Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(backupPrefsChangeListener)

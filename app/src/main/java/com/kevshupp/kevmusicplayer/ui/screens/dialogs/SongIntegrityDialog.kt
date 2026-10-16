@@ -30,6 +30,8 @@ sealed class IntegrityScanState {
     data class Success(val songs: List<Pair<AudioFile, String>>) : IntegrityScanState()
     data class Deleting(val count: Int) : IntegrityScanState()
     data class Complete(val deletedCount: Int) : IntegrityScanState()
+    /** Terminaron todas las reparaciones pedidas: canciones reemplazadas y las que fallaron (con el motivo). */
+    data class Repaired(val replaced: Int, val failed: List<Pair<AudioFile, String>>) : IntegrityScanState()
 }
 
 @Composable
@@ -63,6 +65,27 @@ fun SongIntegrityDialog(
     }
 
     val selectedCount = selectedIds.values.count { it }
+    val repairAvailable = rememberSongRepairAvailable()
+    val repairs by com.kevshupp.kevmusicplayer.data.telegram.TelegramDownloadQueue.repairs.collectAsState()
+    // Canciones enviadas a reparar desde este diálogo; al terminar todas se muestra el resumen
+    var repairing by remember { mutableStateOf<List<AudioFile>>(emptyList()) }
+    val repairDone = repairing.count { repairs[it.id] is com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Done }
+    val repairFinished = repairing.count {
+        repairs[it.id] is com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Done ||
+            repairs[it.id] is com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Failed
+    }
+    LaunchedEffect(repairing, repairFinished) {
+        if (repairing.isNotEmpty() && repairFinished == repairing.size) {
+            kotlinx.coroutines.delay(600) // deja ver el último estado
+            scanState = IntegrityScanState.Repaired(
+                replaced = repairDone,
+                failed = repairing.mapNotNull { song ->
+                    (repairs[song.id] as? com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Failed)?.let { song to it.reason }
+                }
+            )
+            repairing = emptyList()
+        }
+    }
     var showConfirmDelete by remember { mutableStateOf(false) }
 
     if (showConfirmDelete) {
@@ -131,6 +154,52 @@ fun SongIntegrityDialog(
                 }
             }
         }
+    }
+
+    (scanState as? IntegrityScanState.Repaired)?.let { result ->
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = {
+                Text(
+                    text = when {
+                        result.failed.isEmpty() -> "¡Reparación completada!"
+                        result.replaced == 0 -> "No se pudo reparar"
+                        else -> "Reparación terminada"
+                    },
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column {
+                    if (result.replaced > 0) {
+                        Text(
+                            if (result.replaced == 1) "Se reemplazó 1 canción por una copia nueva. Conserva sus reproducciones, letras y listas."
+                            else "Se reemplazaron ${result.replaced} canciones por copias nuevas. Conservan sus reproducciones, letras y listas.",
+                            color = Color.White.copy(alpha = 0.8f)
+                        )
+                    }
+                    if (result.failed.isNotEmpty()) {
+                        if (result.replaced > 0) Spacer(modifier = Modifier.height(12.dp))
+                        Text("No se pudieron reparar:", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        result.failed.take(8).forEach { (song, reason) ->
+                            Text("• ${song.title} — $reason", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (result.failed.size > 8) Text("y ${result.failed.size - 8} más", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
+                    Text(getLocalized("Aceptar", "OK"), color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = Color(0xFF161829),
+            titleContentColor = Color.White,
+            textContentColor = Color.White
+        )
+        return
     }
 
     if (scanState is IntegrityScanState.Complete) {
@@ -257,7 +326,8 @@ fun SongIntegrityDialog(
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 Text(
                                     text = getLocalized(
-                                        "Se encontraron las siguientes canciones dañadas. Puedes removerlas de tu biblioteca.",
+                                        if (repairAvailable) "Se encontraron las siguientes canciones dañadas. Puedes volver a descargarlas (se reemplazan en su sitio y conservan reproducciones, letras y listas) o removerlas de tu biblioteca."
+                                        else "Se encontraron las siguientes canciones dañadas. Puedes removerlas de tu biblioteca, o iniciar sesión en \"Descargar música\" (Inicio) para volver a descargarlas.",
                                         "The following damaged songs were found. You can remove them from your library."
                                     ),
                                     color = Color.White.copy(alpha = 0.6f),
@@ -319,6 +389,7 @@ fun SongIntegrityDialog(
                                                         color = MaterialTheme.colorScheme.error,
                                                         fontWeight = FontWeight.Bold
                                                     )
+                                                    SongRepairStatus(song.id)
                                                 }
                                             }
                                         }
@@ -350,12 +421,33 @@ fun SongIntegrityDialog(
         confirmButton = {
             val state = scanState
             if (state is IntegrityScanState.Success && state.songs.isNotEmpty()) {
-                Button(
-                    onClick = { showConfirmDelete = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    enabled = selectedCount > 0
-                ) {
-                    Text(getLocalized("Eliminar", "Delete"), color = Color.White, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (repairAvailable) {
+                        Button(
+                            onClick = {
+                                val selected = state.songs.map { it.first }.filter { selectedIds[it.id] == true }
+                                com.kevshupp.kevmusicplayer.data.telegram.SongRepair.repair(context, selected)
+                                repairing = selected
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            enabled = selectedCount > 0 && repairing.isEmpty()
+                        ) {
+                            if (repairing.isNotEmpty()) {
+                                CircularProgressIndicator(strokeWidth = 2.dp, color = Color.Black, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("$repairFinished/${repairing.size}", color = Color.Black, fontWeight = FontWeight.Bold)
+                            } else {
+                                Text(getLocalized("Volver a descargar", "Download again"), color = Color.Black, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    Button(
+                        onClick = { showConfirmDelete = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        enabled = selectedCount > 0 && repairing.isEmpty()
+                    ) {
+                        Text(getLocalized("Eliminar", "Delete"), color = Color.White, fontWeight = FontWeight.Bold)
+                    }
                 }
             } else if (state is IntegrityScanState.Success && state.songs.isEmpty()) {
                 Button(

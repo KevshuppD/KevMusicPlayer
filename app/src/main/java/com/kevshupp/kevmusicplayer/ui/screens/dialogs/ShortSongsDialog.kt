@@ -47,6 +47,7 @@ fun ShortSongsDialog(
 
     var thresholdSeconds by remember { mutableIntStateOf(60) } // Default threshold: 60s
     val allSongs = viewModel.localAudioFiles.toList()
+    val repairAvailable = rememberSongRepairAvailable()
 
     val shortSongs = remember(allSongs, thresholdSeconds) {
         allSongs.filter { it.duration in 1000L..(thresholdSeconds * 1000L) }
@@ -232,6 +233,7 @@ fun ShortSongsDialog(
                         items(shortSongs, key = { it.id }) { song ->
                             ShortSongRow(
                                 song = song,
+                                repairAvailable = repairAvailable,
                                 onPlay = { viewModel.playFile(song, shortSongs) },
                                 onCopy = {
                                     val query = "${song.title} ${song.artist}".trim()
@@ -260,6 +262,7 @@ fun ShortSongsDialog(
 @Composable
 private fun ShortSongRow(
     song: AudioFile,
+    repairAvailable: Boolean,
     onPlay: () -> Unit,
     onCopy: () -> Unit
 ) {
@@ -322,6 +325,7 @@ private fun ShortSongRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            SongRepairStatus(song.id)
         }
 
         Spacer(modifier = Modifier.width(8.dp))
@@ -339,6 +343,8 @@ private fun ShortSongRow(
                 fontSize = 12.sp
             )
         }
+
+        if (repairAvailable) SongRepairButton(song, enabled = true)
 
         IconButton(onClick = onCopy, modifier = Modifier.size(36.dp)) {
             Icon(

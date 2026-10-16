@@ -52,6 +52,7 @@ fun MusicInsightsScreen(
     onDismiss: () -> Unit,
     audioFiles: List<AudioFile>,
     getLocalized: (String, String) -> String,
+    onResetStats: (() -> Unit)? = null,
     onPlaySongs: ((List<AudioFile>, Int) -> Unit)? = null,
     onCreatePlaylist: ((String, List<AudioFile>) -> Unit)? = null
 ) {
@@ -68,6 +69,7 @@ fun MusicInsightsScreen(
 
     var selectedPeriod by remember { mutableStateOf(InsightPeriod.ALL_TIME) }
     var showPosterDialog by remember { mutableStateOf(false) }
+    var showResetDialog by remember { mutableStateOf(false) }
 
     // Period boundary calculations
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
@@ -307,6 +309,21 @@ fun MusicInsightsScreen(
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (onResetStats != null) {
+                            IconButton(
+                                onClick = { showResetDialog = true },
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.RestartAlt,
+                                    contentDescription = getLocalized("Reiniciar estadísticas", "Reset statistics"),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+
                         // Poster Story Generator Button
                         IconButton(
                             onClick = { showPosterDialog = true },
@@ -1149,6 +1166,35 @@ fun MusicInsightsScreen(
     }
 
     // Modal: Spotify-Wrapped Fullscreen Interactive Story Experience
+    if (showResetDialog && onResetStats != null) {
+        AlertDialog(
+            onDismissRequest = { showResetDialog = false },
+            icon = { Icon(Icons.Rounded.RestartAlt, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text(getLocalized("¿Reiniciar estadísticas?", "Reset statistics?")) },
+            text = {
+                Text(
+                    getLocalized(
+                        "Se pondrán a cero las reproducciones y el historial de todas las canciones. El resumen, \"Lo que más escuchas\" y las listas inteligentes empezarán de nuevo. No se puede deshacer.",
+                        "Play counts and history of every song will be set to zero. Insights, \"Most played\" and smart playlists will start over. This cannot be undone."
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetDialog = false
+                        onResetStats()
+                        android.widget.Toast.makeText(context, getLocalized("Estadísticas reiniciadas", "Statistics reset"), android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) { Text(getLocalized("Reiniciar", "Reset")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetDialog = false }) { Text(getLocalized("Cancelar", "Cancel")) }
+            }
+        )
+    }
+
     if (showPosterDialog) {
         Dialog(
             onDismissRequest = { showPosterDialog = false },

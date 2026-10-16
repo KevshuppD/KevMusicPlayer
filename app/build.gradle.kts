@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -14,10 +16,25 @@ android {
         applicationId = "com.kevshupp.kevmusicplayer"
         minSdk = 33
         targetSdk = 37
-        versionCode = 56
-        versionName = "1.2.52"
+        versionCode = 57
+        versionName = "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Credenciales de la API de Telegram (my.telegram.org): local.properties o variables de entorno, nunca en Git
+        val localProps = Properties().apply {
+            val f = rootProject.file("local.properties")
+            if (f.exists()) f.inputStream().use { load(it) }
+        }
+        val tgApiId = (localProps.getProperty("TELEGRAM_API_ID") ?: System.getenv("TELEGRAM_API_ID") ?: "0").trim()
+        val tgApiHash = (localProps.getProperty("TELEGRAM_API_HASH") ?: System.getenv("TELEGRAM_API_HASH") ?: "").trim()
+        buildConfigField("int", "TELEGRAM_API_ID", tgApiId.toIntOrNull()?.toString() ?: "0")
+        buildConfigField("String", "TELEGRAM_API_HASH", "\"$tgApiHash\"")
+
+        // TDLib pesa ~20 MB por arquitectura: solo las de teléfonos reales
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     lint {
@@ -67,6 +84,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         jniLibs {
@@ -130,6 +148,7 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.okhttp)
+    implementation("dev.g000sha256:tdl-coroutines:13.0.0")
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
     implementation(platform(libs.firebase.bom))
