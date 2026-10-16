@@ -100,6 +100,17 @@ class IntegrityCheckerManager(
                                 }
                             }
 
+                            // 4. Blocks lost while copying: same size, but part of the audio reads as zeros
+                            if (!isDamaged) {
+                                val gap = findZeroGap(context, Uri.parse(song.uriString), song.duration)
+                                if (gap != null) {
+                                    isDamaged = true
+                                    val kb = gap.lengthBytes / 1024
+                                    reason = if (isEs) "Audio perdido: faltan $kb KB cerca de ${formatIntegrityTime(gap.atMs)}"
+                                    else "Lost audio: $kb KB missing near ${formatIntegrityTime(gap.atMs)}"
+                                }
+                            }
+
                             if (isDamaged) {
                                 damaged.add(Pair(song, reason))
                             }
@@ -228,5 +239,53 @@ fun findAudioTruncation(context: Context, uri: Uri): AudioTruncation? {
         null
     } finally {
         try { extractor.release() } catch (e: Exception) {}
+    }
+}
+
+/** A run of zeros inside the audio, where the file lost blocks of data. */
+data class AudioZeroGap(val atMs: Long, val lengthBytes: Long)
+
+/**
+ * Finds blocks of the file that read as zeros. They appear when a copy does not reach the storage intact: the file
+ * keeps its size, but whole 4 KB blocks are lost, so the song plays shorter or jumps. Compressed audio never holds
+ * 32 KB of zeros starting on a block boundary; uncompressed WAV/AIFF can (digital silence) and is skipped.
+ */
+fun findZeroGap(context: Context, uri: Uri, durationMs: Long): AudioZeroGap? {
+    val mime = context.contentResolver.getType(uri).orEmpty()
+    if (mime.contains("wav") || mime.contains("aiff")) return null
+    val minRun = 32 * 1024L
+    // The first 256 KB hold the tags and the cover, whose padding can be zeros
+    val skip = 256 * 1024L
+    return try {
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val block = ByteArray(4096)
+            var offset = 0L
+            var runStart = -1L
+            var found: Pair<Long, Long>? = null
+            while (found == null) {
+                var filled = 0
+                while (filled < block.size) {
+                    val read = input.read(block, filled, block.size - filled)
+                    if (read <= 0) break
+                    filled += read
+                }
+                if (filled == 0) break
+                val zero = filled == block.size && block.all { it == 0.toByte() }
+                if (zero) {
+                    if (runStart < 0) runStart = offset
+                } else if (runStart >= 0) {
+                    if (runStart >= skip && offset - runStart >= minRun) found = runStart to (offset - runStart)
+                    runStart = -1
+                }
+                offset += filled
+                if (filled < block.size) break
+            }
+            if (found == null && runStart >= skip && offset - runStart >= minRun) found = runStart to (offset - runStart)
+            val (start, length) = found ?: return@use null
+            val atMs = if (offset > 0) durationMs * start / offset else 0L
+            AudioZeroGap(atMs, length)
+        }
+    } catch (e: Exception) {
+        null
     }
 }

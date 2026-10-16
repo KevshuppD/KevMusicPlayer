@@ -249,7 +249,7 @@ class StorageToolsManager(
     }
 
     /**
-     * Copies a song to another volume through a hidden sibling file, checks the size and only then removes the
+     * Copies a song to another volume through a hidden sibling file, checks its content and only then removes the
      * original. If the original cannot be deleted the copy is removed, so the song is never duplicated.
      */
     private fun moveAcrossVolumes(source: File, target: File): Boolean {
@@ -257,8 +257,7 @@ class StorageToolsManager(
         if (targetDir.usableSpace < source.length() + 1_048_576L) return false
         val temp = File(targetDir, ".kmp_move_${target.name}")
         try {
-            source.inputStream().use { input -> temp.outputStream().use { output -> input.copyTo(output) } }
-            if (temp.length() != source.length() || target.exists() || !temp.renameTo(target)) {
+            if (!com.kevshupp.kevmusicplayer.playback.copyAudioVerified(source, temp) || target.exists() || !temp.renameTo(target)) {
                 temp.delete()
                 return false
             }

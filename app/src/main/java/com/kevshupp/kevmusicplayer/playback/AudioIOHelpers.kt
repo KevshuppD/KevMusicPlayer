@@ -544,13 +544,7 @@ fun replaceAudioFileSafely(context: android.content.Context, newContent: File, d
     val sibling = File(destFile.parentFile, ".kmp_write_${destFile.name}")
     try {
         if (sibling.exists()) sibling.delete()
-        newContent.inputStream().use { input ->
-            java.io.FileOutputStream(sibling).use { output ->
-                input.copyTo(output)
-                output.fd.sync()
-            }
-        }
-        if (sibling.length() == expectedSize && sibling.renameTo(destFile) && destFile.length() == expectedSize) {
+        if (copyAudioVerified(newContent, sibling) && sibling.renameTo(destFile) && destFile.length() == expectedSize) {
             return true
         }
     } catch (e: Exception) {
@@ -952,3 +946,37 @@ fun syncLyricsAndCoverArtForMovedFile(
     }
 }
 
+
+/**
+ * Copies a song to [dest], forces it to storage and reads both files back to compare their content.
+ * Checking only the size is not enough: a copy can have the right length with blocks that never reached the
+ * storage (they read back as zeros). Returns false, and deletes [dest], when the copy is not identical.
+ */
+fun copyAudioVerified(source: File, dest: File): Boolean {
+    try {
+        source.inputStream().use { input ->
+            java.io.FileOutputStream(dest).use { output ->
+                input.copyTo(output, 64 * 1024)
+                output.fd.sync()
+            }
+        }
+        if (dest.length() == source.length() && dest.length() > 0L && sha256(dest).contentEquals(sha256(source))) return true
+    } catch (e: Exception) {
+        android.util.Log.w("AudioCopy", "Copy to ${dest.absolutePath} failed", e)
+    }
+    try { dest.delete() } catch (e: Exception) {}
+    return false
+}
+
+private fun sha256(file: File): ByteArray {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest()
+}

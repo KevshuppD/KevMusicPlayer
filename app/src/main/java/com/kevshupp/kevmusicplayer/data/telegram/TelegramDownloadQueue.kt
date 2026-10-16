@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
+import com.kevshupp.kevmusicplayer.playback.copyAudioVerified
 import kotlin.coroutines.resume
 
 sealed interface DownloadStatus {
@@ -138,7 +139,7 @@ object TelegramDownloadQueue {
     }
 
     /**
-     * Copia la descarga junto al original (hermano oculto), verifica el tamaño, borra el original y renombra.
+     * Copia la descarga junto al original (hermano oculto), verifica el contenido, borra el original y renombra.
      * Mismo nombre y carpeta; si la extensión cambia (p. ej. .m4a → .mp3) se usa la nueva.
      */
     private fun replaceSongFile(source: File, original: File): File {
@@ -146,9 +147,7 @@ object TelegramDownloadQueue {
         val ext = source.extension.ifBlank { original.extension }.lowercase()
         val target = File(dir, "${original.nameWithoutExtension}.$ext")
         val temp = File(dir, ".kmp_dl_${target.name}")
-        source.inputStream().use { input -> temp.outputStream().use { input.copyTo(it) } }
-        if (temp.length() != source.length() || temp.length() == 0L) {
-            temp.delete()
+        if (!copyAudioVerified(source, temp)) {
             throw java.io.IOException("No se pudo copiar la canción nueva")
         }
         if (original.exists() && !original.delete()) {
@@ -181,10 +180,9 @@ object TelegramDownloadQueue {
         var n = 2
         while (target.exists()) target = File(dir, "$stem ($n).$ext").also { n++ }
 
-        // Copia a un hermano oculto, verifica el tamaño y solo entonces renombra
+        // Copia a un hermano oculto, verifica el contenido y solo entonces renombra
         val temp = File(dir, ".kmp_dl_${target.name}")
-        source.inputStream().use { input -> temp.outputStream().use { input.copyTo(it) } }
-        if (temp.length() != source.length() || !temp.renameTo(target)) {
+        if (!copyAudioVerified(source, temp) || !temp.renameTo(target)) {
             temp.delete()
             throw java.io.IOException("No se pudo guardar el archivo")
         }
