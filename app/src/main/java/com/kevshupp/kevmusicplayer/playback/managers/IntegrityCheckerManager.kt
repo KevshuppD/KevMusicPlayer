@@ -8,6 +8,7 @@ import com.kevshupp.kevmusicplayer.data.AudioFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -46,75 +47,24 @@ class IntegrityCheckerManager(
             val processedCount = java.util.concurrent.atomic.AtomicInteger(0)
             var lastUiUpdateTime = 0L
 
-            // Process songs in parallel chunks of 16 for high throughput
-            val chunkSize = 16
-            songsToVerify.chunked(chunkSize).forEach { chunk ->
+            // 4 a la vez: con 16 en paralelo (cada una con su extractor y su buffer) la memoria llegaba al límite
+            val limiter = kotlinx.coroutines.sync.Semaphore(4)
+            try {
                 coroutineScope {
-                    chunk.map { song ->
+                    songsToVerify.map { song ->
                         async {
-                            var isDamaged = false
-                            var reason = ""
-                            
-                            // 1. Check if the URI is readable
+                            limiter.acquire()
                             try {
-                                val uri = Uri.parse(song.uriString)
-                                context.contentResolver.openAssetFileDescriptor(uri, "r")?.use {
-                                    // Successfully opened file descriptor
-                                } ?: run {
-                                    isDamaged = true
-                                    reason = if (isEs) "Archivo inaccesible o eliminado" else "File inaccessible or deleted"
-                                }
-                            } catch (e: Exception) {
-                                isDamaged = true
-                                reason = if (isEs) "No se puede abrir el archivo" else "Cannot open file"
+                                // Un archivo dañado puede bloquear la lectura nativa sin responder a la cancelación:
+                                // se analiza aparte y, si no termina, se informa en lugar de esperar para siempre
+                                val check = checkerScope.async { checkSongIntegrity(context, song, isEs) }
+                                val reason = kotlinx.coroutines.withTimeoutOrNull(SONG_TIMEOUT_MS) { check.await() }
+                                    ?: if (check.isCompleted) null
+                                    else if (isEs) "El archivo no responde al leerlo" else "The file does not respond when read"
+                                if (reason != null) damaged.add(Pair(song, reason))
+                            } finally {
+                                limiter.release()
                             }
-
-                            // 2. If it is readable, try parsing metadata to see if it's corrupted/damaged
-                            if (!isDamaged) {
-                                val retriever = android.media.MediaMetadataRetriever()
-                                try {
-                                    val uri = Uri.parse(song.uriString)
-                                    retriever.setDataSource(context, uri)
-                                    val hasAudio = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
-                                    if (hasAudio == null) {
-                                        isDamaged = true
-                                        reason = if (isEs) "Archivo de audio sin pistas válidas" else "Audio file has no valid tracks"
-                                    }
-                                } catch (e: Exception) {
-                                    isDamaged = true
-                                    reason = if (isEs) "Archivo de audio dañado o corrupto" else "Corrupted or damaged audio file"
-                                } finally {
-                                    try { retriever.release() } catch (e: Exception) {}
-                                }
-                            }
-
-                            // 3. A file can open fine and still be cut short: check that the audio really reaches the end
-                            if (!isDamaged) {
-                                val truncation = findAudioTruncation(context, Uri.parse(song.uriString))
-                                if (truncation != null) {
-                                    isDamaged = true
-                                    val endsAt = formatIntegrityTime(truncation.audioEndsAtMs)
-                                    val total = formatIntegrityTime(truncation.declaredDurationMs)
-                                    reason = if (isEs) "Archivo incompleto: el audio termina en $endsAt de $total"
-                                    else "Incomplete file: audio ends at $endsAt of $total"
-                                }
-                            }
-
-                            // 4. Blocks lost while copying: same size, but part of the audio reads as zeros
-                            if (!isDamaged) {
-                                val gap = findZeroGap(context, Uri.parse(song.uriString), song.duration)
-                                if (gap != null) {
-                                    isDamaged = true
-                                    val kb = gap.lengthBytes / 1024
-                                    reason = if (isEs) "Audio perdido: faltan $kb KB cerca de ${formatIntegrityTime(gap.atMs)}"
-                                    else "Lost audio: $kb KB missing near ${formatIntegrityTime(gap.atMs)}"
-                                }
-                            }
-
-                            if (isDamaged) {
-                                damaged.add(Pair(song, reason))
-                            }
-
                             val count = processedCount.incrementAndGet()
                             val now = System.currentTimeMillis()
                             if (now - lastUiUpdateTime > 80L || count == totalSize) {
@@ -125,15 +75,72 @@ class IntegrityCheckerManager(
                                 }
                             }
                         }
-                    }.forEach { it.await() }
+                    }.awaitAll()
+                }
+            } catch (e: Throwable) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(context, "Integrity", "El verificador falló", e)
+            } finally {
+                // Pase lo que pase el diálogo termina: antes un error dejaba "Analizando…" para siempre
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                    isVerifyingIntegrity.value = false
+                    onComplete(damaged.toList())
                 }
             }
-
-            withContext(Dispatchers.Main) {
-                isVerifyingIntegrity.value = false
-                onComplete(damaged.toList())
-            }
         }
+    }
+
+    private val checkerScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+    /** Motivo por el que la canción está dañada, o null si está bien. Nunca lanza: un fallo cuenta como daño. */
+    private fun checkSongIntegrity(context: Context, song: AudioFile, isEs: Boolean): String? = try {
+        checkSongIntegrityUnsafe(context, song, isEs)
+    } catch (e: Throwable) {
+        if (isEs) "No se pudo analizar el archivo" else "The file could not be analyzed"
+    }
+
+    private fun checkSongIntegrityUnsafe(context: Context, song: AudioFile, isEs: Boolean): String? {
+        val uri = Uri.parse(song.uriString)
+        // 1. Check if the URI is readable
+        try {
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { }
+                ?: return if (isEs) "Archivo inaccesible o eliminado" else "File inaccessible or deleted"
+        } catch (e: Exception) {
+            return if (isEs) "No se puede abrir el archivo" else "Cannot open file"
+        }
+
+        // 2. If it is readable, try parsing metadata to see if it's corrupted/damaged
+        val retriever = android.media.MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, uri)
+            if (retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == null) {
+                return if (isEs) "Archivo de audio sin pistas válidas" else "Audio file has no valid tracks"
+            }
+        } catch (e: Exception) {
+            return if (isEs) "Archivo de audio dañado o corrupto" else "Corrupted or damaged audio file"
+        } finally {
+            try { retriever.release() } catch (e: Exception) {}
+        }
+
+        // 3. A file can open fine and still be cut short: check that the audio really reaches the end
+        findAudioTruncation(context, uri)?.let { truncation ->
+            val endsAt = formatIntegrityTime(truncation.audioEndsAtMs)
+            val total = formatIntegrityTime(truncation.declaredDurationMs)
+            return if (isEs) "Archivo incompleto: el audio termina en $endsAt de $total"
+            else "Incomplete file: audio ends at $endsAt of $total"
+        }
+
+        // 4. Blocks lost while copying: same size, but part of the audio reads as zeros
+        findZeroGap(context, uri, song.duration)?.let { gap ->
+            val kb = gap.lengthBytes / 1024
+            return if (isEs) "Audio perdido: faltan $kb KB cerca de ${formatIntegrityTime(gap.atMs)}"
+            else "Lost audio: $kb KB missing near ${formatIntegrityTime(gap.atMs)}"
+        }
+        return null
+    }
+
+    private companion object {
+        const val SONG_TIMEOUT_MS = 60_000L
     }
 }
 
@@ -203,7 +210,8 @@ fun findAudioTruncation(context: Context, uri: Uri): AudioTruncation? {
         if (durationUs < 15_000_000L) return null
         extractor.selectTrack(track)
 
-        val buffer = java.nio.ByteBuffer.allocate(4 * 1024 * 1024)
+        // Una muestra de audio comprimido ocupa pocos KB; 1 MB sobra y no satura la memoria con varias a la vez
+        val buffer = java.nio.ByteBuffer.allocate(1024 * 1024)
         // Time of the last sample readable from [fromUs] on, or -1 if there is nothing left to read there
         fun lastSampleTimeFrom(fromUs: Long, maxSamples: Int): Long {
             extractor.seekTo(fromUs, android.media.MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
