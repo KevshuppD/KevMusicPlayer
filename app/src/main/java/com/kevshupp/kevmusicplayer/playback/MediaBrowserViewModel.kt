@@ -313,18 +313,18 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
                 
                 browser.value = connectedBrowser
+                if (playCountJob == null) {
+                    // El servicio decide qué cuenta como reproducción; aquí solo se refleja
+                    playCountJob = viewModelScope.launch {
+                        PlaybackService.playCounted.collect { (id, at) -> incrementSongPlayCount(id, at) }
+                    }
+                }
 
                 connectedBrowser.addListener(object : Player.Listener {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         savePlaybackState()
                         fetchLyricsForCurrentSong()
                         preloadUpcomingArtwork()
-                        if (mediaItem != null && reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
-                            val id = mediaItem.mediaId.toLongOrNull()
-                            if (id != null) {
-                                incrementSongPlayCount(id)
-                            }
-                        }
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         savePlaybackState()
@@ -434,7 +434,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         idStrings.forEach { idStr ->
                             val idLong = idStr.toLongOrNull()
                             if (idLong != null) {
-                                val song = songsMap[idLong]
+                                val song = songsMap[idLong] ?: com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks.audioFileFor(getApplication(), idLong)
                                 if (song != null) {
                                     val trackUri = Uri.parse(song.uriString)
                                     val mediaItem = MediaItem.Builder()
@@ -1652,12 +1652,14 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         triggerAutoSync()
     }
 
-    fun incrementSongPlayCount(id: Long) {
+    private var playCountJob: kotlinx.coroutines.Job? = null
+
+    fun incrementSongPlayCount(id: Long, playedAt: Long = System.currentTimeMillis()) {
         // PlaybackService is the one that persists the play in Room (it also runs while the app is in the
         // background). Here we only mirror it in memory, without touching the song list.
         val base = playStatsOverrides[id]?.playCount ?: audioFileMap[id.toString()]?.playCount
         if (base != null) {
-            playStatsOverrides[id] = PlayStats(base + 1, System.currentTimeMillis())
+            playStatsOverrides[id] = PlayStats(base + 1, playedAt)
             statsVersion.intValue++
         }
 
@@ -1831,6 +1833,34 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     val queueManager = com.kevshupp.kevmusicplayer.playback.managers.QueueManager(browser, localAudioFiles) { savePlaybackState() }
 
     fun addToQueue(file: AudioFile) = queueManager.addToQueue(file)
+
+    /** La canción local si ya se descargó a la biblioteca; si no, la remota. */
+    private fun onDemandFile(track: com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack): AudioFile {
+        val od = com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks
+        od.localIdFor(getApplication(), track.id)?.let { id -> audioFileMap[id.toString()]?.let { return it } }
+        return od.register(getApplication(), track)
+    }
+
+    /** Modo bajo demanda: reproduce ya una canción de Deezer (la pide al bot si no está descargada). */
+    fun playOnDemand(track: com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack) {
+        val b = browser.value ?: return
+        val file = onDemandFile(track)
+        if (b.mediaItemCount == 0) {
+            queueManager.addToQueue(file)
+            b.seekTo(0, 0L)
+        } else {
+            queueManager.playNext(file)
+            b.seekTo(b.currentMediaItemIndex + 1, 0L)
+        }
+        b.prepare()
+        b.play()
+    }
+
+    /** Modo bajo demanda: añade una canción de Deezer al final de la cola o justo después de la actual. */
+    fun queueOnDemand(track: com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack, next: Boolean) {
+        val file = onDemandFile(track)
+        if (next) queueManager.playNext(file) else queueManager.addToQueue(file)
+    }
     fun playNext(file: AudioFile) = queueManager.playNext(file)
     fun getPlayerQueue(): List<AudioFile> = queueManager.getPlayerQueue()
     fun removeFromQueue(index: Int) = queueManager.removeFromQueue(index)

@@ -404,6 +404,8 @@ fun AboutSettingsSection(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(8.dp))
+                UpdatePreferenceSwitches(context, getLocalized)
                 Spacer(modifier = Modifier.height(12.dp))
 
                 // Developer GitHub Link Button
@@ -679,3 +681,46 @@ fun AboutSettingsSection(
     }
 }
 
+
+/** Aviso automático de actualizaciones al abrir la app y descarga automática de la nueva versión. */
+@Composable
+private fun UpdatePreferenceSwitches(context: android.content.Context, getLocalized: (String, String) -> String) {
+    val prefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
+    var autoCheck by remember { mutableStateOf(prefs.getBoolean(com.kevshupp.kevmusicplayer.data.AppUpdater.KEY_AUTO_CHECK, true)) }
+    var autoDownload by remember { mutableStateOf(prefs.getBoolean(com.kevshupp.kevmusicplayer.data.AppUpdater.KEY_AUTO_DOWNLOAD, false)) }
+
+    @Composable
+    fun row(title: String, subtitle: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(enabled = enabled) { onChange(!checked) }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = settingsTextColor().copy(alpha = if (enabled) 1f else 0.4f))
+                Text(subtitle, fontSize = 11.sp, color = settingsTextMutedColor().copy(alpha = if (enabled) 1f else 0.4f))
+            }
+            Switch(checked = checked, enabled = enabled, onCheckedChange = onChange)
+        }
+    }
+
+    row(
+        getLocalized("Avisar de actualizaciones", "Notify about updates"),
+        getLocalized("Al abrir la app, comprueba si hay una versión nueva.", "Checks for a new version when the app opens."),
+        autoCheck, true
+    ) {
+        autoCheck = it
+        prefs.edit().putBoolean(com.kevshupp.kevmusicplayer.data.AppUpdater.KEY_AUTO_CHECK, it).apply()
+    }
+    row(
+        getLocalized("Descargar automáticamente", "Download automatically"),
+        getLocalized("Descarga la nueva versión sin preguntar; luego solo confirmas la instalación.", "Downloads the new version without asking; you only confirm the install."),
+        autoDownload && autoCheck, autoCheck
+    ) {
+        autoDownload = it
+        prefs.edit().putBoolean(com.kevshupp.kevmusicplayer.data.AppUpdater.KEY_AUTO_DOWNLOAD, it).apply()
+    }
+}

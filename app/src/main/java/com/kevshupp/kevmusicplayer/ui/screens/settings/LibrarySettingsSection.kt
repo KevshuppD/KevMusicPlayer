@@ -136,6 +136,9 @@ fun LibrarySettingsSection(
         }
     }
 
+    OnDemandSettingsCard(context, getLocalized)
+    Spacer(modifier = Modifier.height(12.dp))
+
     // Single unified card for Statistics and Maintenance Sections
     Card(
         shape = RoundedCornerShape(24.dp),

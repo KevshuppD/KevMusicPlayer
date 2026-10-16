@@ -798,9 +798,13 @@ fun LibraryScreen(
                         ) { tab ->
                             when (tab) {
                                 "Songs" -> {
+                                    val onDemand = rememberOnDemandSearch(searchQuery, audioFiles)
                                     SongListView(
                                         songs = filteredFiles,
                                         listState = songsListState,
+                                        footerContent = if (searchQuery.isBlank()) null else {
+                                            { onDemandSection(onDemand, Int.MAX_VALUE, viewModel, getLocalized) }
+                                        },
                                         isCompact = isCompact,
                                         songStyle = librarySongStyle,
                                         bottomPadding = bottomBarPadding,

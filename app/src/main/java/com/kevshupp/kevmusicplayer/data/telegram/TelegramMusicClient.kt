@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.math.abs
 
@@ -63,6 +64,35 @@ object TelegramMusicClient {
     private val _bot = MutableStateFlow("")
     val bot: StateFlow<String> = _bot.asStateFlow()
 
+    /** Una petición al bot a la vez (descargas, reparaciones y bajo demanda): cada respuesta es de su enlace. */
+    private val botMutex = kotlinx.coroutines.sync.Mutex()
+
+    /** Sesión iniciada, bot configurado y Telegram activado en Ajustes: se pueden pedir canciones. */
+    val isReady: Boolean get() = _enabled.value && _authState.value == TelegramAuthState.Ready && _bot.value.isNotBlank()
+
+    const val KEY_ENABLED = "telegram_enabled"
+
+    /**
+     * Interruptor general de Ajustes. Apagado no arranca TDLib (la sesión se conserva en disco), oculta el
+     * botón de descarga de Inicio y los de reparación, y desactiva el modo bajo demanda.
+     */
+    private val _enabled = MutableStateFlow(true)
+    val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
+
+    fun loadEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, true).also { _enabled.value = it }
+
+    fun setEnabled(context: Context, on: Boolean) {
+        val edit = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, on)
+        if (!on) edit.putBoolean(OnDemandTracks.KEY_ENABLED, false)
+        edit.apply()
+        _enabled.value = on
+        if (on) start(context)
+    }
+
+    /** Silencia una vez por sesión el chat del bot: cada canción enviada generaba una notificación. */
+    private var mutedChatId = 0L
+
     private var botChatId: Long = 0L
     private var botChatUsername: String = ""
 
@@ -94,6 +124,7 @@ object TelegramMusicClient {
                 appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_BOT, clean).apply()
                 botChatId = chat.id
                 botChatUsername = clean
+                muteChat(c, chat)
                 _bot.value = clean
                 kotlinx.coroutines.withContext(Dispatchers.Main) { onSaved() }
             } catch (e: Exception) {
@@ -111,6 +142,7 @@ object TelegramMusicClient {
     /** Arranca TDLib la primera vez que se abre el descargador. */
     @Synchronized
     fun start(context: Context) {
+        if (!loadEnabled(context)) return
         if (client != null) return
         appContext = context.applicationContext
         _bot.value = botUsername(appContext)
@@ -191,14 +223,49 @@ object TelegramMusicClient {
         val chat = c.searchPublicChat(username = username).getOrThrow()
         botChatId = chat.id
         botChatUsername = username
+        muteChat(c, chat)
         return chat.id
+    }
+
+    private suspend fun muteChat(c: TdlClient, chat: Chat) {
+        if (mutedChatId == chat.id) return
+        val current = chat.notificationSettings
+        if (!current.useDefaultMuteFor && current.muteFor > 0) {
+            mutedChatId = chat.id
+            return
+        }
+        val muted = ChatNotificationSettings(
+            useDefaultMuteFor = false,
+            muteFor = Int.MAX_VALUE,
+            useDefaultSound = current.useDefaultSound,
+            soundId = current.soundId,
+            useDefaultShowPreview = current.useDefaultShowPreview,
+            showPreview = current.showPreview,
+            useDefaultMuteStories = current.useDefaultMuteStories,
+            muteStories = current.muteStories,
+            useDefaultStorySound = current.useDefaultStorySound,
+            storySoundId = current.storySoundId,
+            useDefaultShowStoryPoster = current.useDefaultShowStoryPoster,
+            showStoryPoster = current.showStoryPoster,
+            useDefaultDisablePinnedMessageNotifications = current.useDefaultDisablePinnedMessageNotifications,
+            disablePinnedMessageNotifications = current.disablePinnedMessageNotifications,
+            useDefaultDisableMentionNotifications = current.useDefaultDisableMentionNotifications,
+            disableMentionNotifications = current.disableMentionNotifications
+        )
+        if (c.setChatNotificationSettings(chatId = chat.id, notificationSettings = muted) is TdlResult.Success) {
+            mutedChatId = chat.id
+            TelemetryLogger.logInfo(appContext, "Telegram", "Chat del bot silenciado")
+        }
     }
 
     /**
      * Envía el enlace de Deezer al bot y espera su respuesta de audio con una duración parecida
      * (±5 s, el bot a veces manda antes mensajes de texto). Después descarga el archivo.
      */
-    suspend fun requestTrack(track: DeezerTrack, onProgress: (Float) -> Unit): TelegramAudio {
+    suspend fun requestTrack(track: DeezerTrack, onProgress: (Float) -> Unit): TelegramAudio =
+        botMutex.withLock { requestTrackLocked(track, onProgress) }
+
+    private suspend fun requestTrackLocked(track: DeezerTrack, onProgress: (Float) -> Unit): TelegramAudio {
         val c = client ?: throw IllegalStateException("Telegram no está iniciado")
         if (_authState.value != TelegramAuthState.Ready) throw IllegalStateException("Inicia sesión en Telegram")
         val chatId = resolveBotChat(c)
@@ -232,7 +299,10 @@ object TelegramMusicClient {
      * de botones "N. Artista - Título"; [choose] elige uno (o null si ninguno sirve), la app lo pulsa y
      * espera el audio.
      */
-    suspend fun requestByText(query: String, choose: (List<String>) -> Int?, onProgress: (Float) -> Unit): TelegramAudio {
+    suspend fun requestByText(query: String, choose: (List<String>) -> Int?, onProgress: (Float) -> Unit): TelegramAudio =
+        botMutex.withLock { requestByTextLocked(query, choose, onProgress) }
+
+    private suspend fun requestByTextLocked(query: String, choose: (List<String>) -> Int?, onProgress: (Float) -> Unit): TelegramAudio {
         val c = client ?: throw IllegalStateException("Telegram no está iniciado")
         if (_authState.value != TelegramAuthState.Ready) throw IllegalStateException("Inicia sesión en Telegram")
         val chatId = resolveBotChat(c)

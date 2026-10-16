@@ -25,6 +25,11 @@ object AppUpdater {
      * Convierte las notas de la versión (Markdown de GitHub) en texto con formato: viñetas anidadas
      * por sangría, títulos y **negrita** en negrita, y `código` sin las comillas invertidas.
      */
+    /** settings_prefs: buscar actualizaciones al abrir la app y avisar. */
+    const val KEY_AUTO_CHECK = "update_auto_check"
+    /** settings_prefs: al encontrar una, descargarla sin preguntar (al terminar se abre el instalador). */
+    const val KEY_AUTO_DOWNLOAD = "update_auto_download"
+
     fun formatChangelog(markdown: String): androidx.compose.ui.text.AnnotatedString {
         val bold = androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
         return androidx.compose.ui.text.buildAnnotatedString {

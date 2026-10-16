@@ -28,6 +28,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.mp3.Mp3Extractor
 import androidx.media3.extractor.ts.AdtsExtractor
@@ -100,6 +101,9 @@ class PlaybackService : MediaLibraryService() {
     companion object {
         const val CHANNEL_ID = "playback_channel"
         private const val MAX_MISSING_FILE_STREAK = 10
+
+        /** Reproducciones ya guardadas en Room (id, fecha): el ViewModel solo las refleja en memoria. */
+        val playCounted = kotlinx.coroutines.flow.MutableSharedFlow<Pair<Long, Long>>(extraBufferCapacity = 32)
     }
 
     override fun onCreate() {
@@ -140,7 +144,16 @@ class PlaybackService : MediaLibraryService() {
                 AdtsExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING
             )
 
-        val mediaSourceFactory = DefaultMediaSourceFactory(this, extractorsFactory)
+        // Canciones bajo demanda (kmpremote://deezer/<id>): el cargador espera a que el bot entregue el archivo
+        val appContext = applicationContext
+        val dataSourceFactory = androidx.media3.datasource.ResolvingDataSource.Factory(
+            androidx.media3.datasource.DefaultDataSource.Factory(this)
+        ) { spec ->
+            val deezerId = OnDemandTracks.deezerIdOf(spec.uri) ?: return@Factory spec
+            val file = kotlinx.coroutines.runBlocking { OnDemandTracks.ensureFile(appContext, deezerId) }
+            spec.withUri(Uri.fromFile(file))
+        }
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory)
 
         val player = ExoPlayer.Builder(this, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -191,24 +204,8 @@ class PlaybackService : MediaLibraryService() {
                     audioEffectsManager.setupAudioEffects(sessionId)
                 }
 
-                if (mediaItem != null && reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
-                    val songId = mediaItem.mediaId.toLongOrNull()
-                    if (songId != null) {
-                        val now = System.currentTimeMillis()
-                        serviceScope.launch(Dispatchers.IO) {
-                            try {
-                                val database = AppDatabase.getDatabase(this@PlaybackService)
-                                database.audioDao().incrementPlayCount(songId, now)
-                                // Después de Room: el oyente de la nube encuentra la cuenta local ya sumada
-                                database.audioDao().getAudioFileById(songId)?.let {
-                                    com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.recordPlay(this@PlaybackService, it, now)
-                                }
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                            }
-                        }
-                    }
-                }
+                onTrackChangedForStats(player, mediaItem, reason)
+                prefetchOnDemand(player)
 
                 savePlaybackState(player)
                 checkNotificationUpToDate(player)
@@ -234,6 +231,8 @@ class PlaybackService : MediaLibraryService() {
                 )
 
                 widgetStateHelper.updateWidgetState(title, artist, isPlaying, uriString)
+
+                if (isPlaying) commitPendingPlay(player)
 
                 if (isPlaying) {
                     audioFocusHelper.requestAudioFocus()
@@ -313,6 +312,7 @@ class PlaybackService : MediaLibraryService() {
                 // Queue edits (add, remove, reorder) don't fire any of the other callbacks
                 if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
                     savePlaybackState(player)
+                    prefetchOnDemand(player)
                 }
             }
 
@@ -390,7 +390,13 @@ class PlaybackService : MediaLibraryService() {
                         return@launch
                     }
 
-                    Toast.makeText(this@PlaybackService, msg, Toast.LENGTH_LONG).show()
+                    val isOnDemand = player.currentMediaItem?.mediaId?.toLongOrNull()?.let(OnDemandTracks::isRemoteId) == true
+                    val reason = generateSequence(error.cause) { it.cause }.firstOrNull { it is java.io.IOException }?.message
+                    Toast.makeText(
+                        this@PlaybackService,
+                        if (isOnDemand && reason != null) "$msg ($reason)" else msg,
+                        Toast.LENGTH_LONG
+                    ).show()
                     if (player.hasNextMediaItem()) {
                         player.seekToNextMediaItem()
                         player.prepare()
@@ -400,6 +406,9 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         player.addListener(playerListener!!)
+        serviceScope.launch {
+            OnDemandTracks.savedToLibrary.collect { (deezerId, localId) -> swapToLocal(player, deezerId, localId) }
+        }
 
         val analyticsListener = object : AnalyticsListener {
             override fun onAudioSinkError(
@@ -698,7 +707,7 @@ class PlaybackService : MediaLibraryService() {
                         idStrings.forEach { idStr ->
                             val idLong = idStr.toLongOrNull()
                             if (idLong != null) {
-                                val song = songsMap[idLong]
+                                val song = songsMap[idLong] ?: OnDemandTracks.audioFileFor(this@PlaybackService, idLong)
                                 if (song != null) {
                                     val trackUri = Uri.parse(song.uriString)
                                     val mediaItem = MediaItem.Builder()
@@ -885,6 +894,94 @@ class PlaybackService : MediaLibraryService() {
             try {
                 getSystemService(NotificationManager::class.java)
                     .notify(notification.notificationId, notification.notification)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    /** Pide al bot por adelantado las 2 próximas canciones bajo demanda de la cola. */
+    private fun prefetchOnDemand(player: Player) {
+        val start = player.currentMediaItemIndex
+        if (start < 0) return
+        val ids = (start until minOf(start + 3, player.mediaItemCount))
+            .mapNotNull { player.getMediaItemAt(it).mediaId.toLongOrNull()?.takeIf(OnDemandTracks::isRemoteId) }
+            .map(OnDemandTracks::deezerIdOf)
+        if (ids.isEmpty()) return
+        val (local, remote) = ids.partition { OnDemandTracks.localIdFor(this, it) != null }
+        local.forEach { swapToLocal(player, it, OnDemandTracks.localIdFor(this, it)!!) }
+        if (remote.isNotEmpty()) OnDemandTracks.prefetch(this, remote)
+    }
+
+    /** Cambia en la cola la canción remota por la local ya descargada, sin perder la posición. */
+    private fun swapToLocal(player: Player, deezerId: Long, localId: Long) {
+        serviceScope.launch {
+            val song = withContext(Dispatchers.IO) {
+                AppDatabase.getDatabase(this@PlaybackService).audioDao().getAudioFileById(localId)
+            } ?: return@launch
+            val remoteMediaId = (-deezerId).toString()
+            for (i in 0 until player.mediaItemCount) {
+                if (player.getMediaItemAt(i).mediaId != remoteMediaId) continue
+                val uri = Uri.parse(song.uriString)
+                val item = MediaItem.Builder()
+                    .setMediaId(song.id.toString())
+                    .setUri(uri)
+                    .setRequestMetadata(MediaItem.RequestMetadata.Builder().setMediaUri(uri).build())
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(song.title).setArtist(song.artist).setAlbumTitle(song.album)
+                            .setIsPlayable(true).setIsBrowsable(false)
+                            .build()
+                    )
+                    .build()
+                if (i == player.currentMediaItemIndex) {
+                    val position = player.currentPosition
+                    player.replaceMediaItem(i, item)
+                    if (player.currentMediaItemIndex == i) player.seekTo(i, position)
+                } else {
+                    player.replaceMediaItem(i, item)
+                }
+            }
+        }
+    }
+
+    // Reproducción pendiente de contar: se fija al cambiar de pista y se cuenta cuando de verdad suena.
+    private var pendingPlayId: String? = null
+
+    /**
+     * Decide si el cambio de pista es una reproducción nueva. Restaurar la cola (setMediaItems + seekTo)
+     * produce una transición SEEK hacia la canción en pausa: antes contaba +1 en cada arranque del servicio.
+     * Ahora la canción ya contada (`last_counted_media_id`, persistido) solo vuelve a contar al repetirse
+     * o al terminar la anterior y empezar sola.
+     */
+    private fun onTrackChangedForStats(player: Player, mediaItem: MediaItem?, reason: Int) {
+        // Las remotas no tienen fila en Room: cuentan cuando se cambian por la canción local descargada
+        val id = mediaItem?.mediaId?.takeIf { (it.toLongOrNull() ?: -1L) > 0 }
+        if (id == null) { pendingPlayId = null; return }
+        val lastCounted = getSharedPreferences("playback_prefs", MODE_PRIVATE).getString("last_counted_media_id", null)
+        val isNewPlay = id != lastCounted ||
+            reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT ||
+            reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
+        pendingPlayId = if (isNewPlay) id else null
+        if (player.isPlaying) commitPendingPlay(player)
+    }
+
+    private fun commitPendingPlay(player: Player) {
+        val id = pendingPlayId ?: return
+        if (player.currentMediaItem?.mediaId != id) return
+        pendingPlayId = null
+        val songId = id.toLongOrNull() ?: return
+        getSharedPreferences("playback_prefs", MODE_PRIVATE).edit().putString("last_counted_media_id", id).apply()
+        val now = System.currentTimeMillis()
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val database = AppDatabase.getDatabase(this@PlaybackService)
+                database.audioDao().incrementPlayCount(songId, now)
+                playCounted.tryEmit(songId to now)
+                // Después de Room: el oyente de la nube encuentra la cuenta local ya sumada
+                database.audioDao().getAudioFileById(songId)?.let {
+                    com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.recordPlay(this@PlaybackService, it, now)
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }

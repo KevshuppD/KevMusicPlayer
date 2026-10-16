@@ -273,7 +273,8 @@ fun SongListView(
     isCompact: Boolean = false,
     songStyle: String = "modern",
     bottomPadding: androidx.compose.ui.unit.Dp = 160.dp,
-    headerContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
+    headerContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null,
+    footerContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
 ) {
     val isModern = songStyle == "modern"
     Box(modifier = Modifier.fillMaxSize()) {
@@ -315,6 +316,7 @@ fun SongListView(
                     onPlayDirectly = onPlayDirectly
                 )
             }
+            footerContent?.invoke(this)
         }
         val songTitles = remember(songs) { songs.map { it.title } }
         FastScrollSidebar(
@@ -1113,7 +1115,29 @@ private class ArtDecodeResult(
     val sourceReadable: Boolean
 )
 
+/** Carátula de Deezer de una canción bajo demanda (id negativo, o uri kmpremote://deezer/<id>). */
+private fun decodeRemoteArt(context: android.content.Context, uriString: String, res: Int): ArtDecodeResult? {
+    val id = if (uriString.startsWith("${com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks.SCHEME}://")) {
+        uriString.substringAfterLast("/").toLongOrNull()?.let { -it }
+    } else {
+        uriString.substringAfterLast("/").toLongOrNull()
+    }
+    if (id == null || !com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks.isRemoteId(id)) return null
+    val url = com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks.coverUrl(context, id, large = res > 300)
+        ?: return ArtDecodeResult(null, sourceReadable = true)
+    return try {
+        val bytes = com.kevshupp.kevmusicplayer.data.HttpClients.shared
+            .newCall(okhttp3.Request.Builder().url(url).build()).execute()
+            .use { if (it.isSuccessful) it.body?.bytes() else null }
+        // Un fallo de red no se recuerda como "sin carátula"
+        ArtDecodeResult(bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }, sourceReadable = bytes != null)
+    } catch (e: Exception) {
+        ArtDecodeResult(null, sourceReadable = false)
+    }
+}
+
 private fun decodeAlbumArtFromSources(context: android.content.Context, uriString: String, res: Int): ArtDecodeResult {
+    decodeRemoteArt(context, uriString, res)?.let { return it }
     var decodedResult: android.graphics.Bitmap? = null
 
     // Resolved at most once and shared by every tier that needs it

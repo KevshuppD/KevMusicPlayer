@@ -56,6 +56,8 @@ fun UniversalSearchOverlay(
         }
     }
 
+    val onDemand = rememberOnDemandSearch(query, audioFiles)
+
     // Process search results
     val searchResults = remember(query, audioFiles, viewModel?.playlists, viewModel?.smartPlaylists) {
         val cleanQuery = query.stripAccents().trim()
@@ -258,7 +260,7 @@ fun UniversalSearchOverlay(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Check if everything is empty
-                    if (searchResults.isEmpty()) {
+                    if (searchResults.isEmpty() && onDemand.tracks.isEmpty() && !onDemand.loading) {
                         item {
                             Box(
                                 modifier = Modifier
@@ -387,6 +389,10 @@ fun UniversalSearchOverlay(
                                     )
                                 }
                             }
+                        }
+
+                        if (selectedCategoryTab == "All" || selectedCategoryTab == "Songs") {
+                            onDemandSection(onDemand, if (selectedCategoryTab == "All") 5 else Int.MAX_VALUE, viewModel, getLocalized)
                         }
                     }
                 }
@@ -609,3 +615,4 @@ data class SearchResults(
 ) {
     fun isEmpty() = songs.isEmpty() && albums.isEmpty() && artists.isEmpty() && playlists.isEmpty()
 }
+

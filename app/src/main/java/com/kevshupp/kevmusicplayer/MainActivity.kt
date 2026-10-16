@@ -441,12 +441,43 @@ fun AppNavigation() {
         var downloadProgress by remember { mutableStateOf<Float?>(null) }
         var showUpdateDialog by remember { mutableStateOf(false) }
 
+        val startUpdateDownload: (com.kevshupp.kevmusicplayer.data.UpdateInfo) -> Unit = { info ->
+            downloadProgress = 0f
+            scope.launch {
+                val targetFile = java.io.File(context.cacheDir, "KevMusicPlayer-update.apk")
+                val success = com.kevshupp.kevmusicplayer.data.AppUpdater.downloadApk(
+                    context = context,
+                    downloadUrl = info.downloadUrl,
+                    targetFile = targetFile
+                ) { progress ->
+                    downloadProgress = progress
+                }
+                if (success) {
+                    showUpdateDialog = false
+                    downloadProgress = null
+                    com.kevshupp.kevmusicplayer.data.AppUpdater.installApk(context, targetFile)
+                } else {
+                    downloadProgress = null
+                    android.widget.Toast.makeText(
+                        context,
+                        "Error al descargar la actualización",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+
         LaunchedEffect(permissionsGranted, isFirstRun) {
-            if (permissionsGranted && !isFirstRun) {
+            // Ajustes › Acerca de: aviso automático (por defecto sí) y descarga automática (por defecto no)
+            val autoCheck = settingsPrefs.getBoolean(com.kevshupp.kevmusicplayer.data.AppUpdater.KEY_AUTO_CHECK, true)
+            if (permissionsGranted && !isFirstRun && autoCheck) {
                 val info = com.kevshupp.kevmusicplayer.data.AppUpdater.checkUpdate(context)
                 if (info != null) {
                     updateInfo = info
                     showUpdateDialog = true
+                    if (settingsPrefs.getBoolean(com.kevshupp.kevmusicplayer.data.AppUpdater.KEY_AUTO_DOWNLOAD, false)) {
+                        startUpdateDownload(info)
+                    }
                 }
             }
         }
@@ -522,31 +553,7 @@ fun AppNavigation() {
                 confirmButton = {
                     if (!isDownloading) {
                         Button(
-                            onClick = {
-                                downloadProgress = 0f
-                                scope.launch {
-                                    val targetFile = java.io.File(context.cacheDir, "KevMusicPlayer-update.apk")
-                                    val success = com.kevshupp.kevmusicplayer.data.AppUpdater.downloadApk(
-                                        context = context,
-                                        downloadUrl = info.downloadUrl,
-                                        targetFile = targetFile
-                                    ) { progress ->
-                                        downloadProgress = progress
-                                    }
-                                    if (success) {
-                                        showUpdateDialog = false
-                                        downloadProgress = null
-                                        com.kevshupp.kevmusicplayer.data.AppUpdater.installApk(context, targetFile)
-                                    } else {
-                                        downloadProgress = null
-                                        android.widget.Toast.makeText(
-                                            context,
-                                            "Error al descargar la actualización",
-                                            android.widget.Toast.LENGTH_LONG
-                                        ).show()
-                                    }
-                                }
-                            },
+                            onClick = { startUpdateDownload(info) },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
                                 contentColor = Color.Black

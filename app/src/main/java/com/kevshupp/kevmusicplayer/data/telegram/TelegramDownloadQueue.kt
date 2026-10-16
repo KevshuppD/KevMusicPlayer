@@ -165,7 +165,7 @@ object TelegramDownloadQueue {
     }
 
     /** `<carpeta principal>/Artista/Álbum/Artista - Título.ext`; nunca sobrescribe un archivo existente. */
-    private fun saveToMusicFolder(context: Context, source: File, track: DeezerTrack): File {
+    internal fun saveToMusicFolder(context: Context, source: File, track: DeezerTrack): File {
         val prefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
         val base = MusicFolders.main(prefs)?.let { File(it) }
             ?: Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
@@ -191,7 +191,7 @@ object TelegramDownloadQueue {
 
     private fun clean(text: String) = text.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().trimEnd('.')
 
-    private suspend fun scanFile(context: Context, file: File): android.net.Uri? = suspendCancellableCoroutine { cont ->
+    internal suspend fun scanFile(context: Context, file: File): android.net.Uri? = suspendCancellableCoroutine { cont ->
         MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), null) { _, uri ->
             if (cont.isActive) cont.resume(uri)
         }

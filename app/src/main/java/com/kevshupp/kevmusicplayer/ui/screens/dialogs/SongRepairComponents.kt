@@ -32,7 +32,8 @@ fun rememberSongRepairAvailable(): Boolean {
     LaunchedEffect(Unit) { TelegramMusicClient.start(context) }
     val auth by TelegramMusicClient.authState.collectAsState()
     val bot by TelegramMusicClient.bot.collectAsState()
-    return auth == TelegramAuthState.Ready && bot.isNotBlank()
+    val enabled by TelegramMusicClient.enabled.collectAsState()
+    return enabled && auth == TelegramAuthState.Ready && bot.isNotBlank()
 }
 
 /** Estado de la reparación de una canción, o nada si no se ha pedido. */

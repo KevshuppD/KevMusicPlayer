@@ -220,7 +220,9 @@ fun HomeScreen(
                         }
                     }
 
-                    IconButton(
+                    val telegramEnabled by com.kevshupp.kevmusicplayer.data.telegram.TelegramMusicClient.enabled.collectAsState()
+                    LaunchedEffect(Unit) { com.kevshupp.kevmusicplayer.data.telegram.TelegramMusicClient.loadEnabled(context) }
+                    if (telegramEnabled) IconButton(
                         onClick = { showDownloader = true },
                         colors = IconButtonDefaults.iconButtonColors(
                             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
