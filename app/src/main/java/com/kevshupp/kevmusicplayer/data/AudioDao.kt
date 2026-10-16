@@ -94,6 +94,14 @@ interface AudioDao {
     @Query("UPDATE audio_files SET playCount = 0, lastPlayed = 0")
     suspend fun resetAllPlayStats()
 
+    @Query("UPDATE audio_files SET playCount = :playCount, lastPlayed = :lastPlayed WHERE id = :id")
+    suspend fun setPlayStats(id: Long, playCount: Int, lastPlayed: Long)
+
+    @Query("SELECT id, lyrics, translatedLyrics FROM audio_files WHERE id = :id")
+    suspend fun getLyricsOnly(id: Long): StoredLyrics?
+
     @Query("UPDATE audio_files SET playCount = playCount + 1, lastPlayed = :timestamp WHERE id = :id")
     suspend fun incrementPlayCount(id: Long, timestamp: Long)
 }
+
+data class StoredLyrics(val id: Long, val lyrics: String?, val translatedLyrics: String?)

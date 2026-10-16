@@ -171,6 +171,23 @@ sequenceDiagram
 4. **Almacenamiento Privado en Firestore:** Se guarda exclusivamente en la ruta `users/<userId>/backups/latest` con reglas de seguridad que impiden el acceso a otros usuarios.
 5. **Redundancia y Restauración:** Si no hay conexión o se restaura el backup en un dispositivo nuevo, `restoreBackupFromCloud()` descarga el paquete, lo descomprime y reconcilia las listas con las canciones presentes en el nuevo terminal.
 
+### Listas en tiempo real (`data/cloud/RealtimePlaylistSync.kt`)
+- Además de la copia comprimida, las listas (normales e inteligentes) se sincronizan **en tiempo real**, un documento por lista en `users/<uid>/playlists/<sha1(nombre)>` con `name`, `songs` (claves), `smart` (config JSON de las inteligentes), `deleted` y `updatedAt`. Se activa con sesión de Google y "Listas" incluidas en la sincronización (`includePlaylists`); el ViewModel lo arranca al observar `cloudUser`.
+- **Claves de canción, no `_id`:** `songKey()` = `normalize(artista)|normalizeTitle(título)` (`LibraryMatcher`), porque el `_id` de MediaStore cambia entre teléfonos. Las claves sin canción local se conservan en la nube; al aplicarlas, con canciones repetidas se mantiene el id que ya estaba en la lista.
+- **Escrituras por cambio:** crear (`set merge`), añadir (`arrayUnion`), quitar (`arrayRemove`) y borrar (lápida `deleted = true` con `songs` vacío, para que otro dispositivo no la resucite al unir). Las portadas de lista no viajan (son rutas locales). Firestore guarda los cambios sin conexión y los sube al volver la red.
+- **Oyente:** `addSnapshotListener` reescribe `playlists_prefs` con lo que dice la nube y llama a `loadPlaylists()`. No aplica nada con la biblioteca vacía; tras un escaneo con cambios, `reapply()` vuelve a aplicar la última instantánea.
+- **Primera vez por cuenta y dispositivo** (`cloud_sync_state/realtime_playlists_<uid>`): espera una instantánea del servidor (no de caché) y **une** las listas locales con las de la nube con `arrayUnion` (nunca borra; una lista con lápida no se sube). Después la nube manda. Restaurar una copia (local o la antigua de la nube) llama a `mergeLocalIntoCloud()`, que repite esa unión para que el oyente no sustituya las listas restauradas.
+
+### Reproducciones y letras en tiempo real (`data/cloud/RealtimeSongSync.kt`)
+- Un documento por canción en `users/<uid>/songs/<sha1(clave)>` con `key`, `artist`, `title`, `playCount`, `lastPlayed`, `lyrics`, `translatedLyrics` y `updatedAt`. Se activa con sesión de Google según `includeStats` / `includeLyrics`.
+- **Reproducciones:** `PlaybackService` llama a `recordPlay()` **después** de `incrementPlayCount()` en Room, con `FieldValue.increment(1)`: las de dos teléfonos se suman. Si el servicio vive sin la pantalla, toma el uid de `FirebaseAuth`. El oyente copia `playCount` y el `lastPlayed` más reciente a Room (`setPlayStats`); ambos a cero significa reinicio (`resetStats()` desde "Reiniciar estadísticas" del Wrapped).
+- **Letras:** `updateSongLyrics`, `updateSongTranslatedLyrics`, `deleteSongTranslatedLyrics` y la descarga masiva llaman a `syncLyricsToCloud()`; el oyente las escribe en Room y refresca `loadedLyrics`.
+- **Lecturas mínimas:** el oyente solo pide `updatedAt > realtime_songs_seen_<uid>` (marca en `cloud_sync_state`), para no leer toda la biblioteca en cada arranque.
+- **Primera vez por cuenta y dispositivo** (`realtime_songs_<uid>`): lee la nube del servidor, sube el **máximo** entre local y nube (sumar contaría dos veces un historial restaurado de la misma copia) y las letras que falten en la nube, vuelve a leer y aplica el resultado. Restaurar una copia llama a `mergeLocalIntoCloud()`. Un `startJob` evita uniones y oyentes duplicados cuando `cloudUser` emite dos veces.
+- **Comprobado** (16/10/2026): con la base de datos de la app debug borrada, el reescaneo recuperó de la nube las reproducciones (243 canciones) y las letras (259).
+- **Ajustes y ecualizador no van en tiempo real**, a propósito: muchos son propios del dispositivo (carpetas, tasa de refresco, rendimiento) y la app los lee al arrancar. Siguen en la copia comprimida.
+- **Probar sin romper la base de datos:** no copiar `kev_music_player_db` al teléfono sin sus `-wal`/`-shm`; Room la toma por dañada y la recrea vacía.
+
 ---
 
 ## 5. Decisiones de Arquitectura y Reglas Críticas

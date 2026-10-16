@@ -199,6 +199,10 @@ class PlaybackService : MediaLibraryService() {
                             try {
                                 val database = AppDatabase.getDatabase(this@PlaybackService)
                                 database.audioDao().incrementPlayCount(songId, now)
+                                // Después de Room: el oyente de la nube encuentra la cuenta local ya sumada
+                                database.audioDao().getAudioFileById(songId)?.let {
+                                    com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.recordPlay(this@PlaybackService, it, now)
+                                }
                             } catch (e: Exception) {
                                 e.printStackTrace()
                             }

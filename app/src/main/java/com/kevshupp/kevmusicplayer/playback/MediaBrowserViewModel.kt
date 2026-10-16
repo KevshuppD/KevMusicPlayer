@@ -168,6 +168,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         onLyricsSaved = { songId, lyrics ->
             // Only songs already loaded this session are kept in memory; the rest are read from SQLite when played
             loadedLyrics[songId]?.let { loadedLyrics[songId] = it.copy(lyrics = lyrics) }
+            syncLyricsToCloud(songId)
         },
         onAllLyricsDeleted = {
             loadedLyrics.clear()
@@ -916,6 +917,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                             remapLiveQueue(outcome.idRemap, outcome.files)
                         }
                         com.kevshupp.kevmusicplayer.ui.screens.clearNoArtCache()
+                        // Songs added or re-indexed can now match keys of the cloud playlists
+                        realtimePlaylists.reapply()
                         loadPlaylists() // also refreshes the smart playlists
                     }
                 }
@@ -1137,6 +1140,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 audioDao.updateLyrics(id, newLyrics)
                 audioDao.updateTranslatedLyrics(id, null)
                 putLoadedLyrics(id, SongLyrics(newLyrics, null))
+                syncLyricsToCloud(id)
                 val file = audioFileMap[id.toString()]
                 if (file != null) {
                     // Physically write lyrics inside the song metadata and LRC file next to it!
@@ -1162,6 +1166,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             try {
                 audioDao.updateTranslatedLyrics(id, null)
                 loadedLyrics[id]?.let { loadedLyrics[id] = it.copy(translatedLyrics = null) }
+                syncLyricsToCloud(id)
                 triggerAutoSync()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -1174,6 +1179,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             try {
                 audioDao.updateTranslatedLyrics(id, newTranslatedLyrics)
                 loadedLyrics[id]?.let { loadedLyrics[id] = it.copy(translatedLyrics = newTranslatedLyrics) }
+                syncLyricsToCloud(id)
                 val file = audioFileMap[id.toString()]
                 if (file != null) {
                     if (!newTranslatedLyrics.isNullOrBlank()) {
@@ -1255,6 +1261,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     localAudioFiles.addAll(updatedFiles)
                     clearPerSongOverlays()
                     loadPlaylists() // Reload playlists and smart playlists state instantly!
+                    realtimePlaylists.mergeLocalIntoCloud()
+                    com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.mergeLocalIntoCloud(getApplication())
 
                     ignoreSavePlaybackState = true
 
@@ -1532,6 +1540,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     localAudioFiles.addAll(updatedFiles)
                     clearPerSongOverlays()
                     loadPlaylists() // also refreshes the smart playlists
+                    realtimePlaylists.mergeLocalIntoCloud()
+                    com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.mergeLocalIntoCloud(getApplication())
 
                     ignoreSavePlaybackState = true
                     val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
@@ -1667,6 +1677,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         context, orphans.map { it.copy(playCount = 0, lastPlayed = 0L) }
                     )
                 }
+                com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.resetStats(context)
                 withContext(Dispatchers.Main) {
                     for (song in localAudioFiles) playStatsOverrides[song.id] = PlayStats(0, 0L)
                     statsVersion.intValue++
@@ -1724,14 +1735,64 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     val smartPlaylists get() = playlistManager.smartPlaylists
     val smartPlaylistConfigs get() = playlistManager.smartPlaylistConfigs
 
+    // Playlists synced in real time with Firestore (one document per playlist, see RealtimePlaylistSync)
+    val realtimePlaylists = com.kevshupp.kevmusicplayer.data.cloud.RealtimePlaylistSync(
+        context = application,
+        library = { ArrayList(localAudioFiles) },
+        onRemoteApplied = { viewModelScope.launch(Dispatchers.Main) { playlistManager.loadPlaylists() } }
+    )
+
+    init {
+        viewModelScope.launch {
+            cloudUser.collect { user ->
+                if (user != null && user.isAuthenticated && user.includePlaylists) realtimePlaylists.start(user.uid)
+                else realtimePlaylists.stop()
+                if (user != null && user.isAuthenticated) {
+                    com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.start(application, user.uid, user.includeStats, user.includeLyrics)
+                } else {
+                    com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.stop()
+                }
+            }
+        }
+    }
+
+    init {
+        com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.onRemoteApplied = { lyricsChanged ->
+            viewModelScope.launch(Dispatchers.Main) {
+                lyricsChanged.forEach { id ->
+                    if (loadedLyrics.containsKey(id)) {
+                        audioDao.getLyricsOnly(id)?.let { putLoadedLyrics(id, SongLyrics(it.lyrics, it.translatedLyrics)) }
+                    }
+                }
+                refreshStatsFromDb()
+            }
+        }
+    }
+
+    private fun syncLyricsToCloud(id: Long) {
+        val song = audioFileMap[id.toString()] ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val stored = audioDao.getLyricsOnly(id) ?: return@launch
+            com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.recordLyrics(getApplication(), song, stored.lyrics, stored.translatedLyrics)
+        }
+    }
+
+    private fun songsById(ids: List<Long>): List<AudioFile> {
+        val wanted = ids.toHashSet()
+        return localAudioFiles.filter { it.id in wanted }
+    }
+
     fun updateSmartPlaylists() = playlistManager.updateSmartPlaylists()
     fun loadPlaylists() = playlistManager.loadPlaylists()
     fun createPlaylist(name: String) {
         playlistManager.createPlaylist(name)
+        realtimePlaylists.onPlaylistCreated(name)
         triggerAutoSync()
     }
     fun createSmartPlaylist(name: String, rule: SmartPlaylistRule, limit: Int, isAdvanced: Boolean = false, advancedRule: SmartRuleNode? = null) {
         playlistManager.createSmartPlaylist(name, rule, limit, isAdvanced, advancedRule)
+        getApplication<android.app.Application>().getSharedPreferences("playlists_prefs", Context.MODE_PRIVATE)
+            .getString("smart_playlist_config_$name", null)?.let { realtimePlaylists.onSmartPlaylistCreated(name, it) }
         triggerAutoSync()
     }
     fun setPlaylistCover(name: String, imageUriStr: String) {
@@ -1740,18 +1801,22 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
     fun addSongToPlaylist(playlistName: String, songId: Long) {
         playlistManager.addSongToPlaylist(playlistName, songId)
+        realtimePlaylists.onSongsAdded(playlistName, songsById(listOf(songId)))
         triggerAutoSync()
     }
     fun addSongsToPlaylist(playlistName: String, songIds: List<Long>) {
         playlistManager.addSongsToPlaylist(playlistName, songIds)
+        realtimePlaylists.onSongsAdded(playlistName, songsById(songIds))
         triggerAutoSync()
     }
     fun removeSongFromPlaylist(playlistName: String, songId: Long) {
         playlistManager.removeSongFromPlaylist(playlistName, songId)
+        realtimePlaylists.onSongsRemoved(playlistName, songsById(listOf(songId)))
         triggerAutoSync()
     }
     fun deletePlaylist(name: String) {
         playlistManager.deletePlaylist(name)
+        realtimePlaylists.onPlaylistDeleted(name)
         triggerAutoSync()
     }
 
@@ -2235,6 +2300,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     override fun onCleared() {
         super.onCleared()
+        realtimePlaylists.stop()
         com.kevshupp.kevmusicplayer.ui.screens.KnownSongDurations.lookup = { 0L }
         com.kevshupp.kevmusicplayer.data.telegram.TelegramDownloadQueue.onSongSaved = null
         backupPrefsFiles.forEach { name ->
