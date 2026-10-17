@@ -41,14 +41,8 @@ class OnDemandSearchState(
 
 @Composable
 fun rememberOnDemandSearch(query: String, librarySongs: List<AudioFile>): OnDemandSearchState {
-    val context = LocalContext.current
     // Se vuelve a leer al cambiar la búsqueda, para notar el interruptor de Ajustes sin reiniciar
-    val enabled = remember(query.isBlank()) { OnDemandTracks.isEnabled(context) }
-    LaunchedEffect(enabled) { if (enabled) TelegramMusicClient.start(context) }
-    val auth by TelegramMusicClient.authState.collectAsState()
-    val bot by TelegramMusicClient.bot.collectAsState()
-    val telegramEnabled by TelegramMusicClient.enabled.collectAsState()
-    val ready = enabled && telegramEnabled && auth == TelegramAuthState.Ready && bot.isNotBlank()
+    val ready = rememberOnDemandReady(query.isBlank())
     val statuses by OnDemandTracks.statuses.collectAsState()
     val matcher = remember(librarySongs) { LibraryMatcher(librarySongs) }
     var tracks by remember { mutableStateOf<List<DeezerTrack>>(emptyList()) }
@@ -67,6 +61,18 @@ fun rememberOnDemandSearch(query: String, librarySongs: List<AudioFile>): OnDema
         loading = false
     }
     return OnDemandSearchState(tracks, loading, statuses)
+}
+
+/** El modo bajo demanda está activo y Telegram listo; el interruptor de Ajustes se vuelve a leer cuando cambia [key]. */
+@Composable
+fun rememberOnDemandReady(key: Any?): Boolean {
+    val context = LocalContext.current
+    val enabled = remember(key) { OnDemandTracks.isEnabled(context) }
+    LaunchedEffect(enabled) { if (enabled) TelegramMusicClient.start(context) }
+    val auth by TelegramMusicClient.authState.collectAsState()
+    val bot by TelegramMusicClient.bot.collectAsState()
+    val telegramEnabled by TelegramMusicClient.enabled.collectAsState()
+    return enabled && telegramEnabled && auth == TelegramAuthState.Ready && bot.isNotBlank()
 }
 
 /** Sección "En línea · bajo demanda" al final de una lista de resultados. */
@@ -106,7 +112,7 @@ fun LazyListScope.onDemandSection(
 
 /** Fila de una canción de Deezer en modo bajo demanda: tocar la reproduce; los botones la ponen en cola. */
 @Composable
-private fun OnDemandSearchResultItem(
+internal fun OnDemandSearchResultItem(
     track: DeezerTrack,
     status: DownloadStatus?,
     getLocalized: (String, String) -> String,

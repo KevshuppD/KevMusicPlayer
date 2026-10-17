@@ -301,39 +301,8 @@ fun CloudSyncCard(
                     )
                 }
 
-                // Auto sync main switch
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = getLocalized("Sincronización en tiempo real", "Real-time sync"),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = if (user.isAutoSyncEnabled) {
-                                getLocalized("Listas, reproducciones y letras al instante en todos tus dispositivos", "Playlists, plays and lyrics instantly on all your devices")
-                            } else {
-                                getLocalized("Desactivada: solo copias manuales", "Off: manual backups only")
-                            },
-                            fontSize = 11.sp,
-                            color = settingsTextMutedColor()
-                        )
-                    }
-
-                    Switch(
-                        checked = user.isAutoSyncEnabled,
-                        onCheckedChange = { enabled ->
-                            viewModel.setCloudAutoSync(context, enabled)
-                        }
-                    )
-                }
-
-                // Advanced sync options when auto-sync is enabled
-                AnimatedVisibility(visible = user.isAutoSyncEnabled) {
+                // Contenido de la sincronización (el interruptor de tiempo real está en el perfil de Inicio)
+                run {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(10.dp)

@@ -81,6 +81,9 @@ fun SettingsScreen(
     var isScanning by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val appVersionName = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+    }
     val localeManager = remember { context.getSystemService(LocaleManager::class.java) }
     val settingsPrefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
     
@@ -171,7 +174,8 @@ fun SettingsScreen(
             Triple("audio", getLocalized("Audio y Sonido", "Audio & Sound"), Icons.Rounded.Equalizer),
             Triple("performance", getLocalized("Rendimiento y Memoria", "Performance & Memory"), Icons.Rounded.Speed),
             Triple("system", getLocalized("Sistema y Permisos", "System & Permissions"), Icons.Rounded.Tune),
-            Triple("about", getLocalized("Acerca de KevMusic", "About KevMusic"), Icons.Rounded.Info)
+            Triple("about", getLocalized("Acerca de KevMusic", "About KevMusic"), Icons.Rounded.Info),
+            Triple("cloud", getLocalized("Cuenta y Copias", "Account & Backups"), Icons.Rounded.CloudSync)
         )
     }
 
@@ -422,7 +426,7 @@ fun SettingsScreen(
             SettingSearchItem(
                 title = getLocalized("Sincronización en la Nube", "Cloud Synchronization"),
                 description = getLocalized("Copia de seguridad en Firestore vinculada a tu cuenta de Google", "Cloud backup on Firestore linked to your Google account"),
-                categoryKey = "library",
+                categoryKey = "cloud",
                 icon = Icons.Rounded.CloudSync
             ),
             SettingSearchItem(
@@ -755,10 +759,20 @@ fun SettingsScreen(
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        // 1. Google Cloud Backup & Sync Hero Card
-                        CloudSyncCard(
-                            viewModel = viewModel,
-                            getLocalized = getLocalized
+                        // 1. Cuenta de Google y copias (la sincronización en tiempo real está en el perfil de Inicio)
+                        val hubCloudUser by viewModel.cloudUser.collectAsState()
+                        SettingsCategoryHubCard(
+                            icon = Icons.Rounded.CloudSync,
+                            iconColor = Color(0xFF4285F4),
+                            title = getLocalized("Cuenta y Copias", "Account & Backups"),
+                            subtitle = hubCloudUser?.let { it.displayName ?: it.email }
+                                ?: getLocalized("Sin sesión de Google", "Not signed in to Google"),
+                            chips = listOf(
+                                "Google",
+                                getLocalized("Contenido", "Content"),
+                                getLocalized("Copia manual", "Manual backup")
+                            ),
+                            onClick = { activeCategory = "cloud" }
                         )
 
                         // 2. Settings Hub Section Categories
@@ -951,7 +965,7 @@ fun SettingsScreen(
                             icon = Icons.Rounded.Info,
                             iconColor = Color(0xFF2979FF),
                             title = getLocalized("Acerca de KevMusic", "About KevMusic"),
-                            subtitle = "${getLocalized("Versión", "Version")} 1.0.0 • Desarrollado por Kevshupp",
+                            subtitle = "${getLocalized("Versión", "Version")} $appVersionName • Desarrollado por Kevshupp",
                             chips = listOf(
                                 "GitHub",
                                 getLocalized("Novedades", "Changelog"),
@@ -1048,6 +1062,12 @@ fun SettingsScreen(
                                     onCheckIntegrity = { showIntegrityChecker = true },
                                     onFindShortSongs = { showShortSongsFinder = true },
                                     onFindMissingCovers = { showMissingCoverFinder = true }
+                                )
+                            }
+                            "cloud" -> {
+                                CloudSyncCard(
+                                    viewModel = viewModel,
+                                    getLocalized = getLocalized
                                 )
                             }
                             "about" -> {

@@ -934,6 +934,8 @@ fun LibraryScreen(
                     is SubView.HistoryDetail -> if (systemLang == "es") "Historial" else "History"
                     is SubView.RecentlyAddedDetail -> if (systemLang == "es") "Nuevas" else "New Added"
                 }
+                 // Modo bajo demanda: populares y discografía de Deezer del artista (en caché 7 días)
+                 val artistOnline = rememberArtistOnline((subView as? SubView.ArtistDetail)?.artistName, audioFiles)
                  // Play stats live outside the song list, so only the history view needs to follow them
                  val historyStatsVersion = if (subView is SubView.HistoryDetail) viewModel?.statsVersion?.intValue ?: 0 else 0
                  val subSongs = remember(filteredFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy, historyStatsVersion) {
@@ -1608,8 +1610,12 @@ fun LibraryScreen(
                                         }
                                     }
                                 }
+                                if (subView is SubView.ArtistDetail) {
+                                    artistOnlineSection(artistOnline, viewModel, { onFileClick(it, subSongs) }, getLocalized)
+                                }
                             }
                         )
+                        ArtistOnlineAlbumDialog(artistOnline, viewModel, { onFileClick(it, subSongs) }, getLocalized)
                     }
                 }
             }

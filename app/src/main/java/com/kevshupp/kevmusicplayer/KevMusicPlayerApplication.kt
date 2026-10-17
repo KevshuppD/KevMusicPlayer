@@ -16,6 +16,7 @@ class KevMusicPlayerApplication : Application(), ImageLoaderFactory {
     
     override fun onCreate() {
         super.onCreate()
+        com.kevshupp.kevmusicplayer.data.telegram.DeezerTrackSearch.cacheDir = cacheDir
         instance = this
         
         // Setup global uncaught exception handler to log any app crashes to telemetry

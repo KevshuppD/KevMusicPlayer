@@ -40,6 +40,30 @@ data class DeezerArtist(
 /** Búsqueda de canciones, álbumes y artistas en la API pública de Deezer (la misma fuente que usa el bot). */
 object DeezerTrackSearch {
     private const val API = "https://api.deezer.com"
+    private const val ARTIST_CACHE_TTL_MS = 7L * 24 * 60 * 60 * 1000
+
+    /** Carpeta de la caché en disco de los perfiles de artista; la asigna la Application al arrancar. */
+    @Volatile
+    var cacheDir: java.io.File? = null
+
+    /** Artista de Deezer con ese nombre (normalizado), o null. Nunca toma "el primer resultado" sin más. */
+    suspend fun findArtist(name: String): DeezerArtist? {
+        if (name.isBlank()) return null
+        val data = getData("$API/search/artist", "q" to name.trim(), "limit" to "10", cacheTtlMs = ARTIST_CACHE_TTL_MS)
+        val wanted = LibraryMatcher.normalize(name)
+        return (0 until data.length()).mapNotNull { i -> data.optJSONObject(i) }
+            .filter { LibraryMatcher.normalize(it.optString("name")) == wanted }
+            .maxByOrNull { it.optInt("nb_fan") }
+            ?.let { a ->
+                DeezerArtist(
+                    id = a.optLong("id"),
+                    name = a.optString("name"),
+                    picture = a.optString("picture_medium"),
+                    albumCount = a.optInt("nb_album"),
+                    fans = a.optInt("nb_fan")
+                )
+            }
+    }
 
     suspend fun search(query: String, limit: Int = 30): List<DeezerTrack> =
         if (query.isBlank()) emptyList()
@@ -67,8 +91,8 @@ object DeezerTrackSearch {
     }
 
     /** Pistas de un álbum; las de `/album/{id}` no traen todos los datos del álbum, se completan con los del padre. */
-    suspend fun albumTracks(album: DeezerAlbum): List<DeezerTrack> {
-        val json = getObject("$API/album/${album.id}")
+    suspend fun albumTracks(album: DeezerAlbum, cached: Boolean = false): List<DeezerTrack> {
+        val json = getObject("$API/album/${album.id}", cacheTtlMs = if (cached) ARTIST_CACHE_TTL_MS else 0)
         val cover = json.optString("cover_medium").ifBlank { album.cover }
         val coverXl = json.optString("cover_xl")
         val title = json.optString("title").ifBlank { album.title }
@@ -76,11 +100,11 @@ object DeezerTrackSearch {
         return parseTracks(data).map { it.copy(album = title, coverSmall = cover, coverXl = coverXl.ifBlank { it.coverXl }) }
     }
 
-    suspend fun artistTopTracks(artistId: Long, limit: Int = 25): List<DeezerTrack> =
-        parseTracks(getData("$API/artist/$artistId/top", "limit" to "$limit"))
+    suspend fun artistTopTracks(artistId: Long, limit: Int = 25, cached: Boolean = false): List<DeezerTrack> =
+        parseTracks(getData("$API/artist/$artistId/top", "limit" to "$limit", cacheTtlMs = if (cached) ARTIST_CACHE_TTL_MS else 0))
 
-    suspend fun artistAlbums(artistId: Long, artistName: String, limit: Int = 100): List<DeezerAlbum> {
-        val data = getData("$API/artist/$artistId/albums", "limit" to "$limit")
+    suspend fun artistAlbums(artistId: Long, artistName: String, limit: Int = 100, cached: Boolean = false): List<DeezerAlbum> {
+        val data = getData("$API/artist/$artistId/albums", "limit" to "$limit", cacheTtlMs = if (cached) ARTIST_CACHE_TTL_MS else 0)
         return (0 until data.length()).mapNotNull { i ->
             data.optJSONObject(i)?.let(::parseAlbum)?.let { if (it.artist.isBlank()) it.copy(artist = artistName) else it }
         }
@@ -112,17 +136,43 @@ object DeezerTrackSearch {
         )
     }
 
-    private suspend fun getData(url: String, vararg params: Pair<String, String>): JSONArray =
-        getObject(url, *params).optJSONArray("data") ?: JSONArray()
+    private suspend fun getData(url: String, vararg params: Pair<String, String>, cacheTtlMs: Long = 0): JSONArray =
+        getObject(url, *params, cacheTtlMs = cacheTtlMs).optJSONArray("data") ?: JSONArray()
 
-    private suspend fun getObject(url: String, vararg params: Pair<String, String>): JSONObject = withContext(Dispatchers.IO) {
+    /**
+     * Con [cacheTtlMs] > 0 la respuesta se guarda en `cacheDir/deezer_cache/` y se reutiliza durante ese tiempo;
+     * si la red falla se usa la copia caducada antes que no mostrar nada.
+     */
+    private suspend fun getObject(url: String, vararg params: Pair<String, String>, cacheTtlMs: Long = 0): JSONObject = withContext(Dispatchers.IO) {
         val builder = url.toHttpUrl().newBuilder()
         params.forEach { (k, v) -> builder.addQueryParameter(k, v) }
-        HttpClients.shared.newCall(Request.Builder().url(builder.build()).build()).execute().use { response ->
-            if (!response.isSuccessful) throw java.io.IOException("Deezer HTTP ${response.code}")
-            val json = JSONObject(response.body?.string() ?: "{}")
-            json.optJSONObject("error")?.let { throw java.io.IOException(it.optString("message", "Deezer")) }
-            json
+        val httpUrl = builder.build()
+        val cacheFile = if (cacheTtlMs > 0) cacheDir?.let { dir -> java.io.File(dir, "deezer_cache/${sha1(httpUrl.toString())}.json") } else null
+        if (cacheFile != null && cacheFile.length() > 0 && System.currentTimeMillis() - cacheFile.lastModified() < cacheTtlMs) {
+            runCatching { return@withContext JSONObject(cacheFile.readText()) }
+        }
+        try {
+            HttpClients.shared.newCall(Request.Builder().url(httpUrl).build()).execute().use { response ->
+                if (!response.isSuccessful) throw java.io.IOException("Deezer HTTP ${response.code}")
+                val body = response.body?.string() ?: "{}"
+                val json = JSONObject(body)
+                json.optJSONObject("error")?.let { throw java.io.IOException(it.optString("message", "Deezer")) }
+                if (cacheFile != null) runCatching {
+                    cacheFile.parentFile?.mkdirs()
+                    val tmp = java.io.File(cacheFile.parentFile, cacheFile.name + ".tmp")
+                    tmp.writeText(body)
+                    if (!tmp.renameTo(cacheFile)) tmp.delete()
+                }
+                json
+            }
+        } catch (e: java.io.IOException) {
+            if (cacheFile != null && cacheFile.length() > 0) {
+                runCatching { return@withContext JSONObject(cacheFile.readText()) }
+            }
+            throw e
         }
     }
+
+    private fun sha1(text: String): String =
+        java.security.MessageDigest.getInstance("SHA-1").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 }

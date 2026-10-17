@@ -11,9 +11,9 @@ import kotlin.math.abs
  * una canción del mismo álbum con la misma duración (±4 s).
  */
 class LibraryMatcher(songs: List<AudioFile>) {
-    private val titleArtist = HashSet<String>()
-    private val titlesByAlbum = HashMap<String, MutableSet<String>>()
-    private val durationsByAlbum = HashMap<String, MutableList<Int>>()
+    private val titleArtist = HashMap<String, AudioFile>()
+    private val titlesByAlbum = HashMap<String, MutableMap<String, AudioFile>>()
+    private val durationsByAlbum = HashMap<String, MutableList<Pair<Int, AudioFile>>>()
     private val artistsByAlbum = HashMap<String, MutableSet<String>>()
     private val songsByAlbum = HashMap<String, Int>()
 
@@ -22,23 +22,27 @@ class LibraryMatcher(songs: List<AudioFile>) {
             val title = normalizeTitle(song.title)
             val artist = normalize(song.artist)
             val album = normalizeTitle(song.album)
-            titleArtist += "$title|$artist"
+            titleArtist.putIfAbsent("$title|$artist", song)
             if (album.isNotEmpty()) {
-                titlesByAlbum.getOrPut(album) { HashSet() } += title
-                durationsByAlbum.getOrPut(album) { ArrayList() } += (song.duration / 1000).toInt()
+                titlesByAlbum.getOrPut(album) { HashMap() }.putIfAbsent(title, song)
+                durationsByAlbum.getOrPut(album) { ArrayList() } += (song.duration / 1000).toInt() to song
                 artistsByAlbum.getOrPut(album) { HashSet() } += artist
                 songsByAlbum[album] = (songsByAlbum[album] ?: 0) + 1
             }
         }
     }
 
-    fun hasTrack(track: DeezerTrack): Boolean {
+    fun hasTrack(track: DeezerTrack): Boolean = findTrack(track) != null
+
+    /** La canción de la biblioteca que corresponde a ese resultado de Deezer, o null si no la tienes. */
+    fun findTrack(track: DeezerTrack): AudioFile? {
         val title = normalizeTitle(track.title)
-        if ("$title|${normalize(track.artist)}" in titleArtist) return true
+        titleArtist["$title|${normalize(track.artist)}"]?.let { return it }
         val album = normalizeTitle(track.album)
-        if (album.isEmpty() || !albumBelongsTo(album, track.artist)) return false
-        if (titlesByAlbum[album]?.contains(title) == true) return true
-        return track.durationSec > 0 && durationsByAlbum[album]?.any { abs(it - track.durationSec) <= 4 } == true
+        if (album.isEmpty() || !albumBelongsTo(album, track.artist)) return null
+        titlesByAlbum[album]?.get(title)?.let { return it }
+        if (track.durationSec <= 0) return null
+        return durationsByAlbum[album]?.firstOrNull { abs(it.first - track.durationSec) <= 4 }?.second
     }
 
     /** Canciones de la biblioteca en un álbum con ese nombre y artista (0 si no lo tienes). */
