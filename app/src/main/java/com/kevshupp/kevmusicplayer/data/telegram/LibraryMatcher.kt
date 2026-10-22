@@ -42,8 +42,13 @@ class LibraryMatcher(songs: List<AudioFile>) {
         if (album.isEmpty() || !albumBelongsTo(album, track.artist)) return null
         titlesByAlbum[album]?.get(title)?.let { return it }
         if (track.durationSec <= 0) return null
-        return durationsByAlbum[album]?.firstOrNull { abs(it.first - track.durationSec) <= 4 }?.second
+        // Solo si el título local está en otro alfabeto y no se puede comparar: con dos títulos latinos distintos son
+        // canciones distintas, y en un álbum es fácil que dos duren lo mismo (Jumpsuit y Neon Gravestones de Trench)
+        return durationsByAlbum[album]?.firstOrNull { abs(it.first - track.durationSec) <= 4 && !isLatin(normalizeTitle(it.second.title)) }?.second
     }
+
+    private fun isLatin(normalized: String): Boolean =
+        normalized.isNotEmpty() && normalized.all { it.code < 0x250 }
 
     /** Canciones de la biblioteca en un álbum con ese nombre y artista (0 si no lo tienes). */
     fun albumSongCount(album: DeezerAlbum): Int {

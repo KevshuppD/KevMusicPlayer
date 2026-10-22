@@ -268,7 +268,8 @@ fun HomeScreen(
 
             if (showDownloader) {
                 com.kevshupp.kevmusicplayer.ui.screens.dialogs.TelegramDownloadDialog(
-                    librarySongs = audioFiles,
+                    // Con las reproducciones al día, para ordenar los resultados por los artistas que escuchas
+                    librarySongs = viewModel?.audioFilesWithStats ?: audioFiles,
                     onDismiss = { showDownloader = false }
                 )
             }

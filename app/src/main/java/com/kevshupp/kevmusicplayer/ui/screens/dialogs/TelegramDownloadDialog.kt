@@ -260,8 +260,13 @@ private fun SearchContent(librarySongs: List<AudioFile>) {
     val details = remember { mutableStateListOf<SearchDetail>() }
     val statuses by TelegramDownloadQueue.statuses.collectAsState()
 
+    val downloads by TelegramDownloadQueue.downloads.collectAsState()
+    var showQueue by rememberSaveable { mutableStateOf(false) }
+
     // Qué resultados ya están en la biblioteca (comparación tolerante a nombres distintos)
     val matcher = remember(librarySongs) { LibraryMatcher(librarySongs) }
+    // Primero los artistas que ya escuchas, luego los que tienes y al final el resto
+    val affinity = remember(librarySongs) { ArtistAffinity(librarySongs) }
 
     fun runSearch() {
         val q = query.trim()
@@ -274,9 +279,9 @@ private fun SearchContent(librarySongs: List<AudioFile>) {
         scope.launch {
             try {
                 when (m) {
-                    SearchMode.Tracks -> tracks = DeezerTrackSearch.search(q)
-                    SearchMode.Albums -> albums = DeezerTrackSearch.searchAlbums(q)
-                    SearchMode.Artists -> artists = DeezerTrackSearch.searchArtists(q)
+                    SearchMode.Tracks -> tracks = affinity.rank(DeezerTrackSearch.search(q)) { it.artist }
+                    SearchMode.Albums -> albums = affinity.rank(DeezerTrackSearch.searchAlbums(q)) { it.artist }
+                    SearchMode.Artists -> artists = affinity.rank(DeezerTrackSearch.searchArtists(q)) { it.name }
                 }
                 searchedFor = q to m
             } catch (e: Exception) {
@@ -296,6 +301,31 @@ private fun SearchContent(librarySongs: List<AudioFile>) {
     val enqueue: (DeezerTrack) -> Unit = { TelegramDownloadQueue.enqueue(context, it) }
 
     Column(Modifier.fillMaxSize()) {
+        val active = downloads.count { statuses[it.id].let { st -> st == DownloadStatus.Queued || st == DownloadStatus.Requesting || st is DownloadStatus.Downloading } }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+            FilterChip(
+                selected = !showQueue,
+                onClick = { showQueue = false },
+                label = { Text("Buscar") },
+                leadingIcon = { Icon(Icons.Rounded.Search, null, Modifier.size(18.dp)) },
+                shape = RoundedCornerShape(12.dp)
+            )
+            FilterChip(
+                selected = showQueue,
+                onClick = { showQueue = true },
+                label = { Text(if (active > 0) "Cola · $active" else "Cola") },
+                leadingIcon = {
+                    if (active > 0) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Rounded.Download, null, Modifier.size(18.dp))
+                },
+                shape = RoundedCornerShape(12.dp)
+            )
+        }
+        if (showQueue) {
+            QueueContent(downloads, statuses, matcher, enqueue)
+            return@Column
+        }
+
         val detail = details.lastOrNull()
         if (detail != null) {
             when (detail) {
@@ -508,6 +538,61 @@ private fun ArtistDetail(
                     }
                 }
             }
+        }
+    }
+}
+
+/** Pestaña "Cola": lo que se está descargando, lo que espera y cómo terminó cada descarga. */
+@Composable
+private fun QueueContent(
+    downloads: List<DeezerTrack>,
+    statuses: Map<Long, DownloadStatus>,
+    matcher: LibraryMatcher,
+    enqueue: (DeezerTrack) -> Unit
+) {
+    if (downloads.isEmpty()) {
+        CenterMessage("No hay descargas. Busca una canción, álbum o artista y pulsa descargar: aquí verás su progreso.")
+        return
+    }
+    fun order(status: DownloadStatus?) = when (status) {
+        DownloadStatus.Requesting, is DownloadStatus.Downloading -> 0
+        DownloadStatus.Queued, null -> 1
+        is DownloadStatus.Failed -> 2
+        is DownloadStatus.Done -> 3
+    }
+    val sorted = downloads.sortedBy { order(statuses[it.id]) }
+    val working = downloads.count { order(statuses[it.id]) == 0 }
+    val waiting = downloads.count { order(statuses[it.id]) == 1 }
+    val failed = downloads.count { statuses[it.id] is DownloadStatus.Failed }
+    val done = downloads.count { statuses[it.id] is DownloadStatus.Done }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            listOfNotNull(
+                "$working descargando".takeIf { working > 0 },
+                "$waiting en espera".takeIf { waiting > 0 },
+                (if (done == 1) "1 lista" else "$done listas").takeIf { done > 0 },
+                (if (failed == 1) "1 fallida" else "$failed fallidas").takeIf { failed > 0 }
+            ).joinToString(" · "),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        if (done + failed > 0) {
+            TextButton(onClick = { TelegramDownloadQueue.clearFinished() }) { Text("Limpiar terminadas") }
+        }
+    }
+    if (failed > 0) {
+        TextButton(onClick = { downloads.filter { statuses[it.id] is DownloadStatus.Failed }.forEach(enqueue) }) {
+            Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Reintentar las fallidas")
+        }
+    }
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+        items(sorted, key = { it.id }) { track ->
+            val status = statuses[track.id]
+            TrackRow(track, status, status !is DownloadStatus.Done && matcher.hasTrack(track)) { enqueue(track) }
         }
     }
 }

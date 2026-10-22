@@ -639,8 +639,15 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    // A scan requested while another runs (e.g. songs saved one after another by Telegram) runs right after it,
+    // instead of being dropped and leaving the last songs out of the library until the next scan
+    private var rescanRequested = false
+
     fun scanFiles(isManual: Boolean = false) {
-        if (isScanning.value) return
+        if (isScanning.value) {
+            rescanRequested = true
+            return
+        }
         isScanning.value = true
         viewModelScope.launch {
             try {
@@ -932,6 +939,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 )
             } finally {
                 isScanning.value = false
+                if (rescanRequested) {
+                    rescanRequested = false
+                    scanFiles(isManual = true)
+                }
             }
         }
     }

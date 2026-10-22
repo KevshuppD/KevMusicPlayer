@@ -45,6 +45,7 @@ fun rememberOnDemandSearch(query: String, librarySongs: List<AudioFile>): OnDema
     val ready = rememberOnDemandReady(query.isBlank())
     val statuses by OnDemandTracks.statuses.collectAsState()
     val matcher = remember(librarySongs) { LibraryMatcher(librarySongs) }
+    val affinity = remember(librarySongs) { com.kevshupp.kevmusicplayer.data.telegram.ArtistAffinity(librarySongs) }
     var tracks by remember { mutableStateOf<List<DeezerTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     LaunchedEffect(query, ready, matcher) {
@@ -54,7 +55,7 @@ fun rememberOnDemandSearch(query: String, librarySongs: List<AudioFile>): OnDema
         kotlinx.coroutines.delay(600)
         loading = true
         tracks = try {
-            DeezerTrackSearch.search(query.trim(), 25).filterNot { matcher.hasTrack(it) }
+            affinity.rank(DeezerTrackSearch.search(query.trim(), 25).filterNot { matcher.hasTrack(it) }) { it.artist }
         } catch (e: Exception) {
             emptyList()
         }

@@ -51,6 +51,18 @@ object TelegramDownloadQueue {
     private val _statuses = MutableStateFlow<Map<Long, DownloadStatus>>(emptyMap())
     val statuses: StateFlow<Map<Long, DownloadStatus>> = _statuses.asStateFlow()
 
+    /** Descargas pedidas en esta sesión, en el orden en que se encolaron (la pestaña "Cola" las muestra). */
+    private val _downloads = MutableStateFlow<List<DeezerTrack>>(emptyList())
+    val downloads: StateFlow<List<DeezerTrack>> = _downloads.asStateFlow()
+
+    /** Quita de la cola visible las descargas terminadas o fallidas. */
+    fun clearFinished() {
+        val statuses = _statuses.value
+        _downloads.update { list ->
+            list.filterNot { statuses[it.id] is DownloadStatus.Done || statuses[it.id] is DownloadStatus.Failed }
+        }
+    }
+
     /** Estado de las reparaciones, por id de la canción de la biblioteca. */
     private val _repairs = MutableStateFlow<Map<Long, DownloadStatus>>(emptyMap())
     val repairs: StateFlow<Map<Long, DownloadStatus>> = _repairs.asStateFlow()
@@ -63,6 +75,7 @@ object TelegramDownloadQueue {
     fun enqueue(context: Context, track: DeezerTrack) {
         val current = _statuses.value[track.id]
         if (current != null && current !is DownloadStatus.Failed) return
+        _downloads.update { list -> if (list.any { it.id == track.id }) list else list + track }
         submit(context, Request(track, null, null))
     }
 

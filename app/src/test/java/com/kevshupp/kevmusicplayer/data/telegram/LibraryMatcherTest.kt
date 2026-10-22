@@ -33,5 +33,10 @@ class LibraryMatcherTest {
     @Test fun cancionQueNoTienes() = assertFalse(matcher.hasTrack(track("Interlude: Wings", "BTS", "Wings", 144)))
     @Test fun otroArtistaMismoAlbum() = assertFalse(matcher.hasTrack(track("Begin", "Otro", "Wings", 229)))
     @Test fun albumConOtrasMayusculas() = assertEquals(5, matcher.albumSongCount(DeezerAlbum(1, "Wings", "BTS", "", 15, "album")))
+
+    @Test fun otraCancionDelAlbumConLaMismaDuracion() {
+        val trench = LibraryMatcher(listOf(song("Neon Gravestones", "Twenty One Pilots", "Trench", 240_300)))
+        assertFalse(trench.hasTrack(track("Jumpsuit", "Twenty One Pilots", "Trench", 238)))
+    }
     @Test fun albumDeOtroArtista() = assertEquals(0, matcher.albumSongCount(DeezerAlbum(2, "Wings", "Little Mix", "", 10, "album")))
 }
