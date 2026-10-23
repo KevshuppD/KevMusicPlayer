@@ -1,0 +1,80 @@
+name: Build and Publish Desktop Release
+
+# Versiones del PC (KevMusic Desktop): tags desktop-vX.Y.Z, independientes de las v* de Android
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Release .deb
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+          cache-dependency-path: desktop/*.gradle.kts
+
+      - name: Check version matches tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#desktop-v}"
+          FILE_VERSION=$(grep -m1 -oP '^version = "\K[^"]+' build.gradle.kts)
+          if [ "$VERSION" != "$FILE_VERSION" ]; then
+            echo "El tag $TAG no coincide con version = \"$FILE_VERSION\" en desktop/build.gradle.kts"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build .deb and portable bundle
+        run: |
+          chmod +x gradlew
+          ./gradlew packageDeb createDistributable --no-daemon
+          DEB=$(find build/compose/binaries/main/deb -name "*.deb" | head -n 1)
+          cp "$DEB" "../kevmusic-desktop_${{ steps.version.outputs.version }}_amd64.deb"
+          tar -C build/compose/binaries/main/app -czf "../kevmusic-desktop-${{ steps.version.outputs.version }}-linux-x64.tar.gz" kevmusic-desktop
+
+      - name: Locate Release Notes
+        id: notes
+        working-directory: .
+        run: |
+          NOTES="changelog/${{ steps.version.outputs.tag }}.md"
+          if [ -f "$NOTES" ]; then
+            echo "body_path=$NOTES" >> "$GITHUB_OUTPUT"
+            echo "generate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # make_latest=false: la app Android busca su actualización en /releases/latest y no debe ver estas
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            kevmusic-desktop_${{ steps.version.outputs.version }}_amd64.deb
+            kevmusic-desktop-${{ steps.version.outputs.version }}-linux-x64.tar.gz
+          name: KevMusic Desktop ${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          body_path: ${{ steps.notes.outputs.body_path }}
+          generate_release_notes: ${{ steps.notes.outputs.generate }}
+          make_latest: false
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

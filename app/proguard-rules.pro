@@ -69,3 +69,6 @@
 # TDLib (tdl-coroutines): JNI y DTO deserializados por nombre
 -keep class org.drinkless.tdlib.** { *; }
 -keep class dev.g000sha256.tdl.dto.** { *; }
+
+# NanoHTTPD (servidor de KevMusic Desktop)
+-keep class fi.iki.elonen.** { *; }

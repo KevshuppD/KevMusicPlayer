@@ -71,6 +71,8 @@ com/kevshupp/kevmusicplayer/
 │   ├── HttpClients.kt                   # OkHttpClient compartido (un solo pool de conexiones)
 │   ├── BackgroundRestriction.kt         # Detecta si Android tiene la app en batería "Restringida"
 │   ├── MusicFolders.kt                  # Carpeta principal + carpetas de música adicionales
+│   ├── remote/
+│   │   └── RemoteControlServer.kt       # Servidor HTTP + WebSocket (NanoHTTPD) para KevMusic Desktop
 │   ├── telegram/                        # Descargas a través de un bot de Telegram (TDLib)
 │   │   ├── DeezerTrackSearch.kt         # Búsqueda de canciones en api.deezer.com/search
 │   │   ├── TelegramMusicClient.kt       # Sesión de usuario TDLib, login y petición del audio al bot
@@ -140,6 +142,22 @@ com/kevshupp/kevmusicplayer/
         ├── Color.kt                     # Paletas de color (Cyberpunk, Petrol, Turquoise, Obsidian, Mono)
         ├── Theme.kt                     # Configuración de MaterialTheme y Glassmorphism
         └── Type.kt                      # Tipografías del sistema
+```
+
+Fuera de `app/`, la carpeta `desktop/` es **KevMusic Desktop** (ver §5.H), un proyecto Gradle independiente:
+
+```text
+desktop/
+├── build.gradle.kts                     # Kotlin 2.2.21 + Compose Multiplatform 1.9.3, packageDeb / AppImage
+└── src/main/kotlin/com/kevshupp/kevmusic/desktop/
+    ├── Main.kt                          # Ventana, menú con atajos, conexión o pantalla principal
+    ├── RemoteClient.kt                  # WebSocket (OkHttp), biblioteca y carátulas por HTTP, reconexión
+    ├── Discovery.kt                     # Búsqueda del teléfono por mDNS (JmDNS)
+    ├── Config.kt                        # ~/.config/kevmusic-desktop/config.json (host, puerto, token)
+    ├── Mpris.kt                         # Teclas multimedia y applet de sonido (D-Bus MPRIS)
+    ├── Updater.kt                       # Actualizaciones desde GitHub Releases (tags desktop-v*)
+    ├── Models.kt                        # Estado, cola, biblioteca y parser de letras LRC
+    └── ui/                              # Conexión, Reproduciendo + letra, Canciones, Artistas, Álbumes, Listas, Cola
 ```
 
 ---
@@ -365,6 +383,20 @@ sequenceDiagram
   - Insignia flotante superior en el video (`💌 [Mensaje / Dedicatoria]`).
   - Formateo automático de texto personalizado al compartir mediante `Intent.ACTION_SEND` a WhatsApp, Instagram, Telegram o TikTok.
 - **Formatos:** 9:16 (Historias/Reels/TikTok) y 1:1 (Feed/Chats) con fondo de color ambiental orgánico extraído de la carátula (`androidx.palette.graphics.Palette`) o Negro Puro AMOLED.
+
+### H. KevMusic Desktop (control remoto desde el PC)
+- **Qué es:** app de escritorio para Linux (Debian) en `desktop/` que maneja el teléfono por la red local; el audio sigue sonando en el teléfono. Muestra lo que suena con letra sincronizada (tocar una línea salta ahí) y traducción, controles, posición, volumen del teléfono, repetición, cola (saltar, quitar, poner a continuación) y la biblioteca (canciones con búsqueda y orden, artistas, álbumes, listas normales) para reproducir o encolar.
+- **Servidor en la app (`data/remote/RemoteControlServer.kt`):** lo crea `PlaybackService.updateRemoteControlServer()` cuando `settings_prefs/remote_enabled` está activo (tarjeta "Control desde el PC" al principio de Ajustes › Sistema, `RemoteControlSettingsCard`), y lo para al apagarlo o al destruirse el servicio. Solo funciona mientras vive el servicio (app abierta o reproduciendo). NanoHTTPD/NanoWSD 2.3.1 en el puerto **47820**, arrancado con timeout 0 (con el de 5 s el WebSocket inactivo se cerraba). Se anuncia por mDNS (`NsdManager`) como `_kevmusic._tcp`.
+- **Emparejamiento:** código de 6 cifras en memoria (`pairingCode`, se renueva al usarse y en cada arranque); al acertar se genera un token aleatorio de 24 bytes guardado en `remote_prefs/tokens` (`token|nombre`). "Olvidar todos" los borra y el escritorio vuelve a la pantalla de emparejar. Todo va sin cifrar: solo para la LAN.
+- **Protocolo:** WebSocket `/ws` (primer mensaje `pair` o `hello`, respuesta `auth`); el teléfono emite `state` en cada evento del reproductor y cada segundo mientras suena (el escritorio interpola la posición con su propia hora de llegada), `queue` al cambiar la línea temporal y `lyrics` al cambiar de pista. Comandos: `toggle`, `play`, `pause`, `next`/`prev` (por `VolumeFadeHelper.performManualSkip`), `seek`, `volume` (`STREAM_MUSIC`), `repeat`, `playIds`, `enqueue` (`next` = a continuación), `jump`, `remove` (nunca la actual), `move`, `getLyrics`. HTTP con `?token=`: `/library` (canciones ligeras y listas normales; las inteligentes no) y `/art/<id>?size=small|big` (JPEG 160/640 px desde `loadAlbumArtBitmap`, sin reciclar el bitmap de la caché).
+- **Inicio del PC (`ui/HomeScreen.kt`, sección por defecto):** saludo, accesos rápidos (Modo aleatorio, Favoritas, Historial, Nuevas), "Escuchado recientemente", "Lo que más escuchas", "Agregado recientemente" y "Tus artistas". `/library` incluye `last` (`lastPlayed`) y el servidor reenvía cada `PlaybackService.playCounted` como mensaje `played`, con el que el escritorio suma la reproducción en memoria sin volver a pedir la biblioteca.
+- **Teclas multimedia (`Mpris.kt`):** el escritorio se publica en D-Bus como `org.mpris.MediaPlayer2.kevmusic` (dbus-java 5.2.2 con transporte de socket Unix nativo); GNOME/Cinnamon le mandan las teclas multimedia y lo muestran en el applet de sonido y la pantalla de bloqueo. Implementa `Properties` a mano y emite `PropertiesChanged` solo con lo que cambió; la carátula (`mpris:artUrl`, `file:///…`) se descarga a `~/.cache/kevmusic-desktop/art/`. El ejecutable empaquetado necesita los módulos `jdk.security.auth` y `jdk.net` en `nativeDistributions.modules` (sin ellos: `NoClassDefFoundError: com/sun/security/auth/module/UnixSystem` y MPRIS no arranca).
+- **Descargas de Telegram desde el PC (`data/remote/RemoteTelegramBridge.kt` + `desktop/.../ui/DownloadsScreen.kt`, sección "Descargar"):** el PC solo busca y pide; la búsqueda en Deezer, `LibraryMatcher` ("La tienes", "Tienes N"), el orden por `ArtistAffinity`, el bot y `TelegramDownloadQueue` corren en el teléfono, y lo descargado se guarda en su carpeta principal como desde la app. Mensajes `tgSearch` (tracks/albums/artists), `tgAlbum`, `tgArtist` → `tgResult` con el mismo `req` (el escritorio espera 30 s); `tgDownload` (lista de pistas), `tgClearFinished`. El teléfono emite `tgStatus` (listo o el motivo según `TelegramAuthState`: apagado, sin credenciales, arrancando, sin sesión, sin bot) y `tgQueue` (descargas de la sesión con estado y progreso, muestreado cada 400 ms). Las portadas de los resultados las baja el PC directamente de la CDN de Deezer. `AudioDao.observeSongCount()` (Flow de Room, sin cambio de esquema) avisa con `libraryChanged` cuando cambia el número de canciones (tras el escaneo de cada descarga), y el PC vuelve a pedir `/library`; las reproducciones no cambian el número y no lo disparan. El escaneo tras la descarga lo hace el ViewModel (`onSongSaved`): con la app cerrada y solo el servicio vivo, la canción queda guardada pero no entra en la biblioteca hasta el siguiente escaneo.
+- **Letra que llega tarde:** el servidor envía la letra de Room al cambiar de pista, pero la app suele conseguirla después (.lrc, etiquetas, LrcLib, nube). `MediaBrowserViewModel.putLoadedLyrics()` (único punto que escribe `loadedLyrics`) emite `RemoteControlServer.lyricsChanged` si cambió, y el servidor la reenvía si es la canción que suena. Antes el PC decía "sin letra" hasta el siguiente cambio de pista.
+- **Versiones y actualizaciones (independientes de Android):** la versión está en `version = "X.Y.Z"` de `desktop/build.gradle.kts` (la tarea `generateBuildInfo` la expone como `BuildInfo.VERSION`). `desktop/publicar.sh X.Y.Z` exige `changelog/desktop-vX.Y.Z.md`, sube la versión, hace commit y empuja el tag `desktop-vX.Y.Z`; `.github/workflows/desktop-release.yml` comprueba que el tag coincide con el archivo, compila `packageDeb` + `createDistributable` y publica `kevmusic-desktop_X.Y.Z_amd64.deb` y un `.tar.gz` portable con **`make_latest: false`**: `AppUpdater` de Android consulta `/releases/latest` y no debe tomar una release del PC. El workflow de Android solo se dispara con `v*`, que no coincide con `desktop-v*`. `Updater.check()` corre al abrir, lee `/releases?per_page=30`, toma la `desktop-v*` más alta con un `_amd64.deb` y, si es más nueva, `UpdateDialog` muestra las notas (mismo Markdown que Android) y "Descargar e instalar": descarga a `~/.cache/kevmusic-desktop/updates/` (verifica el tamaño) e instala con `pkexec apt-get install -y` (ventana de contraseña; códigos 126/127 = cancelado), y "Reiniciar" abre `/opt/kevmusic-desktop/bin/kevmusic-desktop`. La barra lateral muestra la versión y "(desarrollo)" si no se ejecuta desde `/opt`.
+- **Barras de desplazamiento:** `KevTheme` define `LocalScrollbarStyle` (10 dp, blanca translúcida, rosa al pasar el ratón); la de serie es negra translúcida e invisible sobre el fondo oscuro.
+- **Cola desde el PC:** `playIds` reemplaza la cola en el servicio directamente (limitada por `ipc_queue_limit`); el "Aleatorio" del escritorio baraja la lista antes de enviarla, igual que el modo aleatorio propio de la app (el shuffle de ExoPlayer sigue desactivado).
+- **Compilar:** `desktop/probar.sh` (recompila con `createDistributable` y abre el ejecutable; el lanzador "KevMusic Desktop (pruebas)" del escritorio y del menú lo llama), `cd desktop && ./gradlew run` o `./gradlew packageDeb` (JDK 21 del sistema, `/usr/lib/jvm/java-21-openjdk-amd64`; el `.deb` sale en `build/compose/binaries/main/deb/`, ~85 MB con el runtime incluido). No forma parte de la compilación de Android ni de la release de GitHub Actions.
 
 ---
 

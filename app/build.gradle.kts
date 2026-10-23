@@ -148,6 +148,7 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.okhttp)
+    implementation("org.nanohttpd:nanohttpd-websocket:2.3.1")
     implementation("dev.g000sha256:tdl-coroutines:13.0.0")
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)

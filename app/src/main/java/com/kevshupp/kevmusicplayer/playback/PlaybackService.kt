@@ -90,6 +90,8 @@ class PlaybackService : MediaLibraryService() {
         WidgetStateHelper(this, serviceScope)
     }
 
+    private var remoteControlServer: com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer? = null
+
     private val volumeFadeHelper: VolumeFadeHelper by lazy {
         VolumeFadeHelper(
             context = this,
@@ -582,6 +584,7 @@ class PlaybackService : MediaLibraryService() {
             sessionBuilder.setSessionActivity(pendingIntent)
         }
         mediaLibrarySession = sessionBuilder.build()
+        updateRemoteControlServer()
 
         val defaultNotificationProvider = DefaultMediaNotificationProvider.Builder(this)
             .setChannelId(CHANNEL_ID)
@@ -1020,6 +1023,8 @@ class PlaybackService : MediaLibraryService() {
         }
 
         notificationCheckJob?.cancel()
+        remoteControlServer?.stop()
+        remoteControlServer = null
         serviceScope.cancel()
 
         val eqPrefs = PreferenceConstants.getEqualizerPrefs(this)
@@ -1143,11 +1148,32 @@ class PlaybackService : MediaLibraryService() {
             val settingsPrefs = PreferenceConstants.getSettingsPrefs(this)
             val pauseOnNoisy = settingsPrefs.getBoolean(PreferenceConstants.KEY_PAUSE_ON_HEADPHONE_UNPLUG, true)
             player?.setHandleAudioBecomingNoisy(pauseOnNoisy)
+        } else if (key == com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.KEY_ENABLED) {
+            updateRemoteControlServer()
         } else if (key == PreferenceConstants.KEY_CROSSFADE_DURATION) {
             val player = mediaLibrarySession?.player as? ExoPlayer
             if (player != null) {
                 volumeFadeHelper.startFadeCheckLoop(player)
             }
+        }
+    }
+
+    /** Arranca o para el servidor de KevMusic Desktop según `settings_prefs/remote_enabled`. */
+    private fun updateRemoteControlServer() {
+        val enabled = com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.isEnabled(this)
+        if (enabled && remoteControlServer == null) {
+            remoteControlServer = com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer(
+                this,
+                serviceScope,
+                playerProvider = { mediaLibrarySession?.player },
+                onSkip = { next ->
+                    val player = mediaLibrarySession?.player as? ExoPlayer
+                    if (player != null) volumeFadeHelper.performManualSkip(player, next = next)
+                }
+            ).also { it.start() }
+        } else if (!enabled && remoteControlServer != null) {
+            remoteControlServer?.stop()
+            remoteControlServer = null
         }
     }
 

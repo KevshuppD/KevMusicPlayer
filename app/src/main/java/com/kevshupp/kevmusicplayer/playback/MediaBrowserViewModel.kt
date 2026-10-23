@@ -93,7 +93,11 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     private val lyricsLoadOrder = LinkedHashSet<Long>()
 
     private fun putLoadedLyrics(id: Long, lyrics: SongLyrics) {
+        val changed = loadedLyrics[id] != lyrics
         loadedLyrics[id] = lyrics
+        // KevMusic Desktop recibió la letra al empezar la canción; si llega después, se la reenvía
+        if (changed) com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.lyricsChanged
+            .tryEmit(Triple(id, lyrics.lyrics, lyrics.translatedLyrics))
         lyricsLoadOrder.remove(id)
         lyricsLoadOrder.add(id)
         val playingId = browser.value?.currentMediaItem?.mediaId?.toLongOrNull()
@@ -167,7 +171,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         coroutineScope = viewModelScope,
         onLyricsSaved = { songId, lyrics ->
             // Only songs already loaded this session are kept in memory; the rest are read from SQLite when played
-            loadedLyrics[songId]?.let { loadedLyrics[songId] = it.copy(lyrics = lyrics) }
+            loadedLyrics[songId]?.let { putLoadedLyrics(songId, it.copy(lyrics = lyrics)) }
             syncLyricsToCloud(songId)
         },
         onAllLyricsDeleted = {
@@ -1176,7 +1180,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             try {
                 audioDao.updateTranslatedLyrics(id, null)
-                loadedLyrics[id]?.let { loadedLyrics[id] = it.copy(translatedLyrics = null) }
+                loadedLyrics[id]?.let { putLoadedLyrics(id, it.copy(translatedLyrics = null)) }
                 syncLyricsToCloud(id)
                 triggerAutoSync()
             } catch (e: Exception) {
@@ -1189,7 +1193,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             try {
                 audioDao.updateTranslatedLyrics(id, newTranslatedLyrics)
-                loadedLyrics[id]?.let { loadedLyrics[id] = it.copy(translatedLyrics = newTranslatedLyrics) }
+                loadedLyrics[id]?.let { putLoadedLyrics(id, it.copy(translatedLyrics = newTranslatedLyrics)) }
                 syncLyricsToCloud(id)
                 val file = audioFileMap[id.toString()]
                 if (file != null) {
