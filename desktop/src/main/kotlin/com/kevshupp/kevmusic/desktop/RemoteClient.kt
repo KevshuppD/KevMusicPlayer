@@ -172,6 +172,7 @@ class RemoteClient(private val scope: CoroutineScope) {
                 buffering = msg.optBoolean("buffering"),
                 index = msg.optInt("index", -1),
                 repeat = msg.optInt("repeat"),
+                shuffle = msg.optBoolean("shuffle"),
                 volume = msg.optInt("volume"),
                 volumeMax = msg.optInt("volumeMax", 15).coerceAtLeast(1),
                 receivedAt = System.currentTimeMillis()
@@ -259,6 +260,12 @@ class RemoteClient(private val scope: CoroutineScope) {
     fun setVolume(value: Int) {
         cmd("volume") { put("value", value) }
         _state.value = _state.value?.copy(volume = value)
+    }
+
+    fun toggleShuffle() {
+        cmd("shuffle")
+        // Respuesta inmediata; el teléfono confirma con el siguiente "state"
+        _state.value = _state.value?.let { it.copy(shuffle = !it.shuffle) }
     }
 
     fun setRepeat(mode: Int) = cmd("repeat") { put("mode", mode.coerceIn(0, 2)) }

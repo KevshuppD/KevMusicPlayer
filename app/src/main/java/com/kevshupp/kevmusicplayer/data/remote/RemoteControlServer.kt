@@ -70,6 +70,14 @@ class RemoteControlServer(
          */
         val lyricsChanged = kotlinx.coroutines.flow.MutableSharedFlow<Triple<Long, String?, String?>>(extraBufferCapacity = 16)
 
+        /**
+         * Modo aleatorio propio de la app (la cola se reordena físicamente; el shuffle de ExoPlayer siempre está apagado).
+         * Lo escribe MediaBrowserViewModel; null hasta que la pantalla de la app existe.
+         */
+        val shuffleEnabled = MutableStateFlow<Boolean?>(null)
+        /** Peticiones del escritorio para cambiar el aleatorio; MediaBrowserViewModel las atiende con toggleShuffle(). */
+        val shuffleToggleRequests = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+
         /** Equipos conectados ahora mismo (nombres). */
         val connectedClients = MutableStateFlow<List<String>>(emptyList())
 
@@ -105,6 +113,7 @@ class RemoteControlServer(
     private var tickJob: Job? = null
     private var playsJob: Job? = null
     private var lyricsJob: Job? = null
+    private var shuffleJob: Job? = null
     private var nsdListener: NsdManager.RegistrationListener? = null
     // Tema de la app (settings_prefs/app_theme): el escritorio lo copia si está en "Igual que el teléfono"
     private fun themeJson() = JSONObject().put("type", "theme")
@@ -160,6 +169,9 @@ class RemoteControlServer(
                 broadcast(JSONObject().put("type", "played").put("id", id).put("at", at))
             }
         }
+        shuffleJob = scope.launch(Dispatchers.Main) {
+            shuffleEnabled.collect { playerProvider()?.let { broadcast(buildState(it)) } }
+        }
         lyricsJob = scope.launch(Dispatchers.Main) {
             lyricsChanged.collect { (id, lyrics, translated) ->
                 if (sockets.isEmpty() || playerProvider()?.currentMediaItem?.mediaId?.toLongOrNull() != id) return@collect
@@ -186,6 +198,8 @@ class RemoteControlServer(
         playsJob = null
         lyricsJob?.cancel()
         lyricsJob = null
+        shuffleJob?.cancel()
+        shuffleJob = null
         playerProvider()?.removeListener(playerListener)
         unregisterNsd()
         telegram.stop()
@@ -225,6 +239,7 @@ class RemoteControlServer(
             .put("buffering", player.playbackState == Player.STATE_BUFFERING)
             .put("index", player.currentMediaItemIndex)
             .put("repeat", player.repeatMode)
+            .put("shuffle", shuffleEnabled.value ?: PreferenceConstants.getPlaybackPrefs(context).getBoolean(PreferenceConstants.KEY_LAST_SHUFFLE_ENABLED, false))
             .put("volume", am.getStreamVolume(AudioManager.STREAM_MUSIC))
             .put("volumeMax", am.getStreamMaxVolume(AudioManager.STREAM_MUSIC))
             .put("ts", System.currentTimeMillis())
@@ -307,6 +322,7 @@ class RemoteControlServer(
                     "prev" -> onSkip(false)
                     "seek" -> player.seekTo(msg.optLong("position").coerceAtLeast(0L))
                     "repeat" -> player.repeatMode = msg.optInt("mode").coerceIn(0, 2)
+                    "shuffle" -> toggleShuffle(player)
                     "jump" -> msg.optInt("index", -1).takeIf { it in 0 until player.mediaItemCount }?.let { player.seekTo(it, 0L); player.play() }
                     "remove" -> msg.optInt("index", -1).takeIf { it in 0 until player.mediaItemCount && it != player.currentMediaItemIndex }?.let { player.removeMediaItem(it) }
                     "move" -> {
@@ -317,6 +333,29 @@ class RemoteControlServer(
                 }
             }
         }
+    }
+
+    /**
+     * Con la pantalla de la app viva, el ViewModel baraja (y al apagar restaura el orden original).
+     * Sin ella solo se puede barajar lo que viene después; al apagar, el orden barajado se queda.
+     */
+    private fun toggleShuffle(player: Player) {
+        if (shuffleToggleRequests.subscriptionCount.value > 0) {
+            shuffleToggleRequests.tryEmit(Unit)
+            return
+        }
+        val prefs = PreferenceConstants.getPlaybackPrefs(context)
+        val enable = !(shuffleEnabled.value ?: prefs.getBoolean(PreferenceConstants.KEY_LAST_SHUFFLE_ENABLED, false))
+        if (enable) {
+            val start = player.currentMediaItemIndex + 1
+            val count = player.mediaItemCount - start
+            if (count > 1) {
+                val upcoming = (start until player.mediaItemCount).map { player.getMediaItemAt(it) }.shuffled()
+                player.replaceMediaItems(start, player.mediaItemCount, upcoming)
+            }
+        }
+        prefs.edit().putBoolean(PreferenceConstants.KEY_LAST_SHUFFLE_ENABLED, enable).apply()
+        shuffleEnabled.value = enable
     }
 
     private suspend fun mediaItemsFor(ids: List<Long>): List<MediaItem> {

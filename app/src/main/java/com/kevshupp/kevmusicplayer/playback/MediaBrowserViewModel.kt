@@ -208,6 +208,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }.flow.cachedIn(viewModelScope)
 
     init {
+        bridgeShuffleToRemote()
         // Lets the player UI show a song's length before ExoPlayer has prepared it
         com.kevshupp.kevmusicplayer.ui.screens.KnownSongDurations.lookup = { mediaId ->
             audioFileMap[mediaId]?.duration ?: 0L
@@ -1135,6 +1136,18 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         b.play()
         preloadUpcomingArtwork()
         return queue.firstOrNull()
+    }
+
+    private fun bridgeShuffleToRemote() {
+        // KevMusic Desktop muestra y cambia el aleatorio propio de la app
+        viewModelScope.launch {
+            androidx.compose.runtime.snapshotFlow { isShuffleActive.value }.collect {
+                com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.shuffleEnabled.value = it
+            }
+        }
+        viewModelScope.launch {
+            com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.shuffleToggleRequests.collect { toggleShuffle() }
+        }
     }
 
     fun toggleShuffle() {

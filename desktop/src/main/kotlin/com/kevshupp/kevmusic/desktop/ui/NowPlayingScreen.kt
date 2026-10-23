@@ -97,7 +97,7 @@ private fun LyricsPanel(lyrics: Lyrics?, state: PlayerState) {
                     color = color
                 )
                 if (translation != null) {
-                    Text(translation, fontSize = (fontSize * 0.62f).sp, color = MaterialTheme.colorScheme.secondary.copy(alpha = if (i == active) 1f else 0.6f))
+                    Text(translation, fontSize = (fontSize * 0.62f).sp, color = if (i == active) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f))
                 }
             }
         }
@@ -105,8 +105,10 @@ private fun LyricsPanel(lyrics: Lyrics?, state: PlayerState) {
 }
 
 private fun translationFor(lyrics: Lyrics, line: LyricLine): String? {
-    if (lyrics.translated.isEmpty()) return null
-    val match = if (line.timeMs >= 0) lyrics.translated.firstOrNull { it.timeMs == line.timeMs }
-    else lyrics.translated.getOrNull(lyrics.lines.indexOf(line))
-    return match?.text?.takeIf { it.isNotBlank() && it != line.text }
+    if (lyrics.translations.isEmpty() || line.timeMs < 0) return null
+    // Mismo tiempo que la app; si su redondeo de las centésimas difiere, la clave más cercana a menos de 100 ms
+    val text = lyrics.translations[line.timeMs]
+        ?: lyrics.translations.entries.minByOrNull { kotlin.math.abs(it.key - line.timeMs) }
+            ?.takeIf { kotlin.math.abs(it.key - line.timeMs) < 100 }?.value
+    return text?.takeIf { it.isNotBlank() && it.trim() != line.text.trim() }
 }

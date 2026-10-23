@@ -145,7 +145,7 @@ class Mpris(
             "PlaybackStatus" to Variant(if (s?.playing == true) "Playing" else if (s != null && s.id != 0L) "Paused" else "Stopped"),
             "LoopStatus" to Variant(when (s?.repeat) { 1 -> "Track"; 2 -> "Playlist"; else -> "None" }),
             "Rate" to Variant(1.0),
-            "Shuffle" to Variant(false),
+            "Shuffle" to Variant(s?.shuffle == true),
             "Metadata" to Variant(metadata, "a{sv}"),
             "Volume" to Variant(if (s != null) s.volume.toDouble() / s.volumeMax else 0.0),
             "MinimumRate" to Variant(1.0),
@@ -170,6 +170,7 @@ class Mpris(
         val v = (value as? Variant<*>)?.value ?: value
         when (propertyName) {
             "Volume" -> client.state.value?.let { s -> client.setVolume(((v as? Double ?: 0.0) * s.volumeMax).toInt().coerceIn(0, s.volumeMax)) }
+            "Shuffle" -> if ((v as? Boolean ?: false) != (client.state.value?.shuffle == true)) client.toggleShuffle()
             "LoopStatus" -> client.setRepeat(when (v) { "Track" -> 1; "Playlist" -> 2; else -> 0 })
         }
     }

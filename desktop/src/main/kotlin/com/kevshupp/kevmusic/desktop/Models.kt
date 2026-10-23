@@ -31,6 +31,8 @@ data class PlayerState(
     val buffering: Boolean,
     val index: Int,
     val repeat: Int,
+    /** Aleatorio propio de la app (reordena la cola en el teléfono). */
+    val shuffle: Boolean,
     val volume: Int,
     val volumeMax: Int,
     /** Hora local de llegada: la posición se interpola desde aquí mientras suena. */
@@ -46,14 +48,23 @@ data class QueueState(val index: Int = -1, val items: List<QueueItem> = emptyLis
 
 data class LyricLine(val timeMs: Long, val text: String)
 
-data class Lyrics(val id: Long, val lines: List<LyricLine>, val synced: Boolean, val translated: List<LyricLine>) {
+/** [translations]: inicio de la línea en ms → texto traducido, como lo guarda la app (`LyricsRepository.serializeTranslations`). */
+data class Lyrics(val id: Long, val lines: List<LyricLine>, val synced: Boolean, val translations: Map<Long, String>) {
     companion object {
         private val tag = Regex("""\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?]""")
 
         fun parse(id: Long, raw: String, translatedRaw: String): Lyrics {
             val synced = tag.containsMatchIn(raw)
-            return Lyrics(id, parseLines(raw, synced), synced, parseLines(translatedRaw, tag.containsMatchIn(translatedRaw)))
+            return Lyrics(id, parseLines(raw, synced), synced, parseTranslations(translatedRaw))
         }
+
+        // La app guarda la traducción como JSON {"<ms>": "texto"}, no como LRC
+        private fun parseTranslations(raw: String): Map<Long, String> = runCatching {
+            if (raw.isBlank()) return emptyMap()
+            val json = org.json.JSONObject(raw)
+            json.keys().asSequence().mapNotNull { k -> k.toLongOrNull()?.let { it to json.optString(k) } }
+                .filter { it.second.isNotBlank() }.toMap()
+        }.getOrDefault(emptyMap())
 
         private fun parseLines(raw: String, synced: Boolean): List<LyricLine> {
             if (raw.isBlank()) return emptyList()

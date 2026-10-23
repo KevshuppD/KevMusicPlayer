@@ -200,10 +200,11 @@ private fun PlayerBar(state: PlayerState?, onOpenNowPlaying: () -> Unit) {
         Column(Modifier.weight(1.4f), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val repeat = state?.repeat ?: 0
-                IconButton(onClick = { client.cycleRepeat() }) {
+                val shuffle = state?.shuffle == true
+                IconButton(onClick = { client.toggleShuffle() }) {
                     Icon(
-                        if (repeat == 1) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repetir",
-                        tint = if (repeat == 0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
+                        Icons.Rounded.Shuffle, if (shuffle) "Aleatorio activado" else "Aleatorio",
+                        tint = if (shuffle) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 IconButton(onClick = { client.previous() }) { Icon(Icons.Rounded.SkipPrevious, "Anterior", Modifier.size(30.dp)) }
@@ -212,7 +213,12 @@ private fun PlayerBar(state: PlayerState?, onOpenNowPlaying: () -> Unit) {
                     else Icon(if (state?.playing == true) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Reproducir/Pausa", Modifier.size(30.dp))
                 }
                 IconButton(onClick = { client.next() }) { Icon(Icons.Rounded.SkipNext, "Siguiente", Modifier.size(30.dp)) }
-                Spacer(Modifier.width(48.dp))
+                IconButton(onClick = { client.cycleRepeat() }) {
+                    Icon(
+                        if (repeat == 1) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repetir",
+                        tint = if (repeat == 0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
+                    )
+                }
             }
             val duration = state?.duration ?: 0L
             var dragging by remember { mutableStateOf<Float?>(null) }
