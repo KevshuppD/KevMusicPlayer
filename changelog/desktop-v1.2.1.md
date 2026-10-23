@@ -1,0 +1,2 @@
+- **Canciones y listas al día:** tras organizar o migrar la música en el teléfono, las canciones movidas vuelven a sonar desde Canciones y Listas (necesita la app 1.8.1).
+- La biblioteca se recarga cada vez que el PC se reconecta al teléfono.
