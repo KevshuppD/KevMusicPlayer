@@ -1139,6 +1139,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private fun bridgeShuffleToRemote() {
+        // Las listas inteligentes solo se calculan aquí; KevMusic Desktop las recibe ya resueltas (ids)
+        viewModelScope.launch {
+            androidx.compose.runtime.snapshotFlow { smartPlaylists.mapValues { (_, songs) -> songs.map { it.id } } }.collect {
+                com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.smartPlaylists.value = it
+            }
+        }
         // KevMusic Desktop muestra y cambia el aleatorio propio de la app
         viewModelScope.launch {
             androidx.compose.runtime.snapshotFlow { isShuffleActive.value }.collect {

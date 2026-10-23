@@ -27,6 +27,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
@@ -83,6 +85,11 @@ class RemoteControlServer(
          * Lo escribe MediaBrowserViewModel; null hasta que la pantalla de la app existe.
          */
         val shuffleEnabled = MutableStateFlow<Boolean?>(null)
+        /**
+         * Listas inteligentes ya calculadas (nombre → ids), las publica MediaBrowserViewModel. Vacío mientras la
+         * pantalla de la app no ha existido en este proceso (solo el servicio): las reglas viven en el ViewModel.
+         */
+        val smartPlaylists = MutableStateFlow<Map<String, List<Long>>>(emptyMap())
         /** Peticiones del escritorio para cambiar el aleatorio; MediaBrowserViewModel las atiende con toggleShuffle(). */
         val shuffleToggleRequests = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 4)
 
@@ -122,6 +129,7 @@ class RemoteControlServer(
     private var playsJob: Job? = null
     private var lyricsJob: Job? = null
     private var shuffleJob: Job? = null
+    private var smartJob: Job? = null
     private var nsdListener: NsdManager.RegistrationListener? = null
     // Tema de la app (settings_prefs/app_theme): el escritorio lo copia si está en "Igual que el teléfono"
     private fun themeJson() = JSONObject().put("type", "theme")
@@ -155,6 +163,7 @@ class RemoteControlServer(
         }
     }
 
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
     fun start() {
         if (server != null) return
         pairingCode.value = newPairingCode()
@@ -179,6 +188,10 @@ class RemoteControlServer(
         }
         shuffleJob = scope.launch(Dispatchers.Main) {
             shuffleEnabled.collect { playerProvider()?.let { broadcast(buildState(it)) } }
+        }
+        // Cambian con cada reproducción (más escuchadas, historial): se agrupan y se envían sin recargar la biblioteca
+        smartJob = scope.launch(Dispatchers.Main) {
+            smartPlaylists.drop(1).debounce(2000).collect { broadcast(JSONObject().put("type", "smartPlaylists").put("playlists", smartPlaylistsJson())) }
         }
         lyricsJob = scope.launch(Dispatchers.Main) {
             lyricsChanged.collect { (id, lyrics, translated) ->
@@ -207,6 +220,8 @@ class RemoteControlServer(
         lyricsJob?.cancel()
         lyricsJob = null
         shuffleJob?.cancel()
+        smartJob?.cancel()
+        smartJob = null
         shuffleJob = null
         playerProvider()?.removeListener(playerListener)
         unregisterNsd()
@@ -564,6 +579,13 @@ class RemoteControlServer(
         }
     }
 
+    private fun smartPlaylistsJson(known: Set<Long>? = null) = JSONArray().apply {
+        smartPlaylists.value.toSortedMap().forEach { (name, ids) ->
+            val valid = if (known != null) ids.filter { it in known } else ids
+            put(JSONObject().put("name", name).put("smart", true).put("songs", JSONArray(valid)))
+        }
+    }
+
     private suspend fun buildLibrary(): String {
         val songs = AppDatabase.getDatabase(context).audioDao().getAllAudioFilesLightweight()
         val songsJson = JSONArray()
@@ -585,6 +607,7 @@ class RemoteControlServer(
                 .mapNotNull { it.trim().toLongOrNull() }.filter { it in known }
             playlistsJson.put(JSONObject().put("name", name).put("songs", JSONArray(ids)))
         }
+        smartPlaylistsJson(known).let { smart -> for (i in 0 until smart.length()) playlistsJson.put(smart.get(i)) }
         return JSONObject()
             .put("version", PROTOCOL_VERSION)
             .put("device", Build.MODEL)

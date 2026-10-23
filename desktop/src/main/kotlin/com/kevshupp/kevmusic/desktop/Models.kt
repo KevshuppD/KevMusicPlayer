@@ -14,7 +14,8 @@ data class Song(
     val lastPlayed: Long = 0L
 )
 
-data class Playlist(val name: String, val songIds: List<Long>)
+/** [smart]: lista inteligente de la app, ya calculada por el teléfono (no se edita desde el PC). */
+data class Playlist(val name: String, val songIds: List<Long>, val smart: Boolean = false)
 
 data class Library(val device: String, val songs: List<Song>, val playlists: List<Playlist>) {
     val byId: Map<Long, Song> = songs.associateBy { it.id }

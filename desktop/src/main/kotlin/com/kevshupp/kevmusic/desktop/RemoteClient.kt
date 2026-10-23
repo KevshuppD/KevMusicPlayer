@@ -199,6 +199,12 @@ class RemoteClient(private val scope: CoroutineScope) {
                 }
             }
             "libraryChanged" -> refreshLibrary()
+            // Las inteligentes cambian con cada reproducción: se sustituyen sin volver a pedir la biblioteca
+            "smartPlaylists" -> _library.value?.let { lib ->
+                val smart = parsePlaylists(msg.optJSONArray("playlists") ?: JSONArray())
+                    .map { p -> p.copy(songIds = p.songIds.filter { it in lib.byId }) }
+                _library.value = lib.copy(playlists = lib.playlists.filterNot { it.smart } + smart)
+            }
             "theme" -> _phoneTheme.value = msg.optString("theme", "cyberpunk")
             "tgStatus" -> _telegram.value = TelegramStatus(msg.optBoolean("ready"), msg.optString("reason"))
             "tgQueue" -> {
@@ -450,6 +456,12 @@ class RemoteClient(private val scope: CoroutineScope) {
         }
     }
 
+    private fun parsePlaylists(arr: JSONArray) = (0 until arr.length()).map { i ->
+        val o = arr.getJSONObject(i)
+        val ids = o.getJSONArray("songs")
+        Playlist(o.getString("name"), (0 until ids.length()).map { ids.getLong(it) }, o.optBoolean("smart"))
+    }
+
     private fun parseLibrary(j: JSONObject): Library {
         val songs = j.getJSONArray("songs").let { arr ->
             (0 until arr.length()).map { i ->
@@ -461,13 +473,7 @@ class RemoteClient(private val scope: CoroutineScope) {
                 )
             }
         }
-        val playlists = j.optJSONArray("playlists")?.let { arr ->
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                val ids = o.getJSONArray("songs")
-                Playlist(o.getString("name"), (0 until ids.length()).map { ids.getLong(it) })
-            }
-        } ?: emptyList()
+        val playlists = j.optJSONArray("playlists")?.let { parsePlaylists(it) } ?: emptyList()
         return Library(j.optString("device"), songs, playlists)
     }
 

@@ -226,8 +226,8 @@ fun PlaylistsScreen(lib: Library, onOpen: (String) -> Unit) {
             Text("No hay listas en el teléfono.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             return@Column
         }
-        // Favoritos primero, como en la app
-        val ordered = lib.playlists.sortedWith(compareBy({ it.name != "Favoritos" }, { normalize(it.name) }))
+        // Favoritos primero, como en la app; las inteligentes después de las normales
+        val ordered = lib.playlists.sortedWith(compareBy({ it.name != "Favoritos" }, { it.smart }, { normalize(it.name) }))
         val state = rememberLazyListState()
         ScrollableList(state, Modifier.fillMaxSize()) {
             items(ordered, key = { it.name }) { pl ->
@@ -240,13 +240,21 @@ fun PlaylistsScreen(lib: Library, onOpen: (String) -> Unit) {
                             Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
                             contentAlignment = Alignment.Center
                         ) { Icon(Icons.Rounded.Favorite, null, tint = MaterialTheme.colorScheme.primary) }
+                    } else if (pl.smart) {
+                        Box(
+                            Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.22f)),
+                            contentAlignment = Alignment.Center
+                        ) { Icon(Icons.Rounded.AutoAwesome, null, tint = MaterialTheme.colorScheme.secondary) }
                     } else {
                         AlbumArt(pl.songIds.firstOrNull(), 52.dp, corner = 12.dp, seed = pl.name)
                     }
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Text(pl.name, fontWeight = FontWeight.Medium)
-                        Text("${pl.songIds.size} canciones", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            (if (pl.smart) "Inteligente · " else "") + "${pl.songIds.size} canciones",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     IconButton(onClick = { client.playSongs(pl.songIds) }, enabled = pl.songIds.isNotEmpty()) {
                         Icon(Icons.Rounded.PlayCircle, null, tint = MaterialTheme.colorScheme.primary)
