@@ -1,0 +1,1 @@
+- **Listas inteligentes:** aparecen en Listas, después de las normales, con su propio icono, y se actualizan solas mientras escuchas (necesita la app 1.8.2).
