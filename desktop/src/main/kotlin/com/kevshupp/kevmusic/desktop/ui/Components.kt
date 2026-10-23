@@ -87,7 +87,7 @@ fun SongRow(
                 .background(
                     when {
                         isCurrent -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                        hovered -> Color.White.copy(alpha = 0.05f)
+                        hovered -> MaterialTheme.colorScheme.onBackground.copy(alpha = 0.05f)
                         else -> Color.Transparent
                     }
                 )

@@ -31,7 +31,19 @@ enum class Section(val label: String, val icon: ImageVector) {
     Albums("Álbumes", Icons.Rounded.Album),
     Playlists("Listas", Icons.Rounded.QueueMusic),
     Queue("Cola", Icons.Rounded.FormatListNumbered),
-    Download("Descargar", Icons.Rounded.CloudDownload)
+    Download("Descargar", Icons.Rounded.CloudDownload),
+    Settings("Ajustes", Icons.Rounded.Settings)
+}
+
+/** Posición interpolada desde el último mensaje del teléfono, recalculada cada [periodMs] solo mientras suena. */
+@Composable
+fun rememberPosition(state: PlayerState?, periodMs: Long): Long {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(state) {
+        now = System.currentTimeMillis()
+        while (state?.playing == true) { delay(periodMs); now = System.currentTimeMillis() }
+    }
+    return state?.positionAt(now) ?: 0L
 }
 
 /** Vista de detalle abierta encima de una sección (artista, álbum o lista). */
@@ -53,12 +65,6 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
     val loading by client.libraryLoading.collectAsState()
     var detail by remember { mutableStateOf<Detail?>(null) }
 
-    // Reloj para interpolar la posición entre los mensajes del teléfono
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(state?.playing) {
-        while (state?.playing == true) { now = System.currentTimeMillis(); delay(200) }
-        now = System.currentTimeMillis()
-    }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(Modifier.weight(1f)) {
@@ -66,7 +72,7 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
             Box(Modifier.weight(1f).fillMaxHeight().padding(start = 28.dp, end = 28.dp, top = 24.dp)) {
                 val lib = library
                 val currentId = state?.id
-                if (section != Section.NowPlaying && section != Section.Queue && section != Section.Download && lib == null) {
+                if (section in setOf(Section.Home, Section.Songs, Section.Artists, Section.Albums, Section.Playlists) && lib == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         if (loading) CircularProgressIndicator()
                         else TextButton(onClick = { client.refreshLibrary() }) { Text("Cargar la biblioteca del teléfono") }
@@ -107,18 +113,19 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
                             onOpenHistory = { detail = Detail.History },
                             onOpenNew = { detail = Detail.NewSongs }
                         )
-                        Section.NowPlaying -> NowPlayingScreen(state, lyrics, now)
+                        Section.NowPlaying -> NowPlayingScreen(state, lyrics)
                         Section.Songs -> SongsScreen(lib!!, currentId)
                         Section.Artists -> ArtistsScreen(lib!!) { detail = Detail.Artist(it) }
                         Section.Albums -> AlbumsScreen(lib!!) { detail = Detail.AlbumDetail(it) }
                         Section.Playlists -> PlaylistsScreen(lib!!) { detail = Detail.PlaylistDetail(it) }
                         Section.Queue -> QueueScreen(queue, lib)
                         Section.Download -> DownloadsScreen()
+                        Section.Settings -> SettingsScreen(status)
                     }
                 }
             }
         }
-        PlayerBar(state, now) { detail = null; onSection(Section.NowPlaying) }
+        PlayerBar(state) { detail = null; onSection(Section.NowPlaying) }
     }
 }
 
@@ -173,7 +180,7 @@ private fun Sidebar(status: ConnStatus, section: Section, onSection: (Section) -
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PlayerBar(state: PlayerState?, now: Long, onOpenNowPlaying: () -> Unit) {
+private fun PlayerBar(state: PlayerState?, onOpenNowPlaying: () -> Unit) {
     val client = LocalClient.current
     Row(
         Modifier.fillMaxWidth().height(92.dp).background(MaterialTheme.colorScheme.surface).padding(horizontal = 18.dp),
@@ -209,7 +216,8 @@ private fun PlayerBar(state: PlayerState?, now: Long, onOpenNowPlaying: () -> Un
             }
             val duration = state?.duration ?: 0L
             var dragging by remember { mutableStateOf<Float?>(null) }
-            val pos = state?.positionAt(now) ?: 0L
+            // Un tic por segundo: cada tic redibuja la ventana entera, y a 5 por segundo se notaba en gráficas integradas
+            val pos = rememberPosition(state, 1000)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(formatTime(dragging?.let { (it * duration).toLong() } ?: pos), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(44.dp))
                 Slider(

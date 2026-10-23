@@ -20,9 +20,11 @@ import androidx.compose.ui.unit.sp
 import com.kevshupp.kevmusic.desktop.LyricLine
 import com.kevshupp.kevmusic.desktop.Lyrics
 import com.kevshupp.kevmusic.desktop.PlayerState
+import com.kevshupp.kevmusic.desktop.Settings
+import kotlinx.coroutines.delay
 
 @Composable
-fun NowPlayingScreen(state: PlayerState?, lyrics: Lyrics?, now: Long) {
+fun NowPlayingScreen(state: PlayerState?, lyrics: Lyrics?) {
     if (state == null || state.id == 0L) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("No hay nada sonando. Elige una canción en la biblioteca.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -41,13 +43,13 @@ fun NowPlayingScreen(state: PlayerState?, lyrics: Lyrics?, now: Long) {
             if (state.album.isNotBlank()) Text(state.album, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }
         Box(Modifier.weight(1.1f).fillMaxHeight()) {
-            LyricsPanel(lyrics?.takeIf { it.id == state.id }, state.positionAt(now))
+            LyricsPanel(lyrics?.takeIf { it.id == state.id }, state)
         }
     }
 }
 
 @Composable
-private fun LyricsPanel(lyrics: Lyrics?, position: Long) {
+private fun LyricsPanel(lyrics: Lyrics?, state: PlayerState) {
     val client = LocalClient.current
     if (lyrics == null || lyrics.lines.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -56,7 +58,19 @@ private fun LyricsPanel(lyrics: Lyrics?, position: Long) {
         return
     }
     val listState = rememberLazyListState()
-    val active = if (lyrics.synced) lyrics.lines.indexOfLast { it.timeMs <= position + 250 } else -1
+    // La línea activa se recalcula justo cuando empieza la siguiente, no con un reloj fijo
+    val active by produceState(-1, lyrics, state) {
+        if (!lyrics.synced) return@produceState
+        while (true) {
+            val pos = state.positionAt(System.currentTimeMillis())
+            val idx = lyrics.lines.indexOfLast { it.timeMs <= pos + 250 }
+            value = idx
+            if (!state.playing) break
+            val next = lyrics.lines.getOrNull(idx + 1)?.timeMs ?: break
+            delay((next - 250 - pos).coerceIn(40, 5000))
+        }
+    }
+    val fontSize = when (Settings.lyricsSize) { 0 -> 18; 2 -> 32; else -> 24 }
     LaunchedEffect(active, lyrics.id) {
         if (active >= 0) listState.animateScrollToItem((active - 3).coerceAtLeast(0))
     }
@@ -65,12 +79,12 @@ private fun LyricsPanel(lyrics: Lyrics?, position: Long) {
             val color by animateColorAsState(
                 when {
                     !lyrics.synced -> MaterialTheme.colorScheme.onSurface
-                    i == active -> Color.White
-                    i < active -> Color.White.copy(alpha = 0.35f)
-                    else -> Color.White.copy(alpha = 0.5f)
+                    i == active -> MaterialTheme.colorScheme.onBackground
+                    i < active -> MaterialTheme.colorScheme.onBackground.copy(alpha = 0.35f)
+                    else -> MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
                 }
             )
-            val translation = translationFor(lyrics, line)
+            val translation = if (Settings.showTranslation) translationFor(lyrics, line) else null
             Column(
                 Modifier.fillMaxWidth().then(
                     if (lyrics.synced && line.timeMs >= 0) Modifier.clickable { client.seek(line.timeMs) } else Modifier
@@ -78,12 +92,12 @@ private fun LyricsPanel(lyrics: Lyrics?, position: Long) {
             ) {
                 Text(
                     line.text.ifBlank { "♪" },
-                    fontSize = if (lyrics.synced) 24.sp else 18.sp,
+                    fontSize = if (lyrics.synced) fontSize.sp else (fontSize - 6).sp,
                     fontWeight = if (i == active) FontWeight.ExtraBold else FontWeight.SemiBold,
                     color = color
                 )
                 if (translation != null) {
-                    Text(translation, fontSize = 15.sp, color = MaterialTheme.colorScheme.secondary.copy(alpha = if (i == active) 1f else 0.6f))
+                    Text(translation, fontSize = (fontSize * 0.62f).sp, color = MaterialTheme.colorScheme.secondary.copy(alpha = if (i == active) 1f else 0.6f))
                 }
             }
         }

@@ -106,6 +106,14 @@ class RemoteControlServer(
     private var playsJob: Job? = null
     private var lyricsJob: Job? = null
     private var nsdListener: NsdManager.RegistrationListener? = null
+    // Tema de la app (settings_prefs/app_theme): el escritorio lo copia si está en "Igual que el teléfono"
+    private fun themeJson() = JSONObject().put("type", "theme")
+        .put("theme", PreferenceConstants.getSettingsPrefs(context).getString("app_theme", "cyberpunk") ?: "cyberpunk")
+    // Referencia fuerte: SharedPreferences solo guarda los oyentes con referencias débiles
+    private val themeListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "app_theme") broadcast(themeJson())
+    }
+
     private val telegram = RemoteTelegramBridge(context, scope) { broadcast(it) }
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running
@@ -144,6 +152,7 @@ class RemoteControlServer(
         playerProvider()?.addListener(playerListener)
         registerNsd()
         telegram.start()
+        PreferenceConstants.getSettingsPrefs(context).registerOnSharedPreferenceChangeListener(themeListener)
         _running.value = true
         // Reproducciones ya guardadas en Room: el escritorio actualiza Inicio (recientes, más escuchadas) sin recargar
         playsJob = scope.launch {
@@ -180,6 +189,7 @@ class RemoteControlServer(
         playerProvider()?.removeListener(playerListener)
         unregisterNsd()
         telegram.stop()
+        PreferenceConstants.getSettingsPrefs(context).unregisterOnSharedPreferenceChangeListener(themeListener)
         sockets.forEach { runCatching { it.close(NanoWSD.WebSocketFrame.CloseCode.GoingAway, "stop", false) } }
         sockets.clear()
         server?.stop()
@@ -248,6 +258,7 @@ class RemoteControlServer(
     private fun sendSnapshot(socket: ClientSocket) {
         mainHandler.post {
             val player = playerProvider() ?: return@post
+            socket.post(themeJson().toString())
             telegram.snapshot().forEach { socket.post(it.toString()) }
             socket.post(buildQueue(player).toString())
             socket.post(buildState(player).toString())

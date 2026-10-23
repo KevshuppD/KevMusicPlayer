@@ -17,7 +17,12 @@ import com.kevshupp.kevmusic.desktop.ui.MainScreen
 import com.kevshupp.kevmusic.desktop.ui.Section
 import com.kevshupp.kevmusic.desktop.ui.UpdateDialog
 
-fun main() = application {
+fun main() {
+    Settings.load()
+    app()
+}
+
+private fun app() = application {
     val scope = rememberCoroutineScope()
     val client = remember { RemoteClient(scope) }
     val discovery = remember { Discovery() }
@@ -38,7 +43,7 @@ fun main() = application {
         Config.load()?.let { client.resume(it) }
         discovery.start()
         mpris.start()
-        Updater.check()
+        if (Settings.autoCheckUpdates) Updater.check()
     }
     LaunchedEffect(status) {
         if (status is ConnStatus.Connected) paired = true
@@ -80,7 +85,8 @@ fun main() = application {
                 }
             }
         }
-        KevTheme {
+        val phoneTheme by client.phoneTheme.collectAsState()
+        KevTheme(if (Settings.theme == Settings.THEME_PHONE) phoneTheme else Settings.theme) {
             CompositionLocalProvider(LocalClient provides client) {
                 if (paired) MainScreen(status, section) { section = it }
                 else ConnectScreen(discovery, status)

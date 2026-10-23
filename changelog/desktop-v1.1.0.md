@@ -1,0 +1,10 @@
+- **Más fluida:** la ventana ya no se redibuja varias veces por segundo mientras suena una canción, y las cuadrículas usan carátulas más livianas. Se nota sobre todo en gráficas integradas.
+- **Ajustes** con buscador:
+  - **Apariencia:** tema con vista previa
+  - **Letras:** mostrar la traducción y elegir el tamaño
+  - **Rendimiento:** carátulas en alta calidad y vaciar la caché
+  - **Teléfono:** estado, reconectar, recargar la biblioteca y desvincular
+  - **Actualizaciones:** buscar al abrir o buscar ahora
+  - Atajos de teclado y Acerca de
+- **Tema sincronizado con el teléfono:** por defecto usa el mismo tema que la app (requiere KevMusicPlayer 1.7.1) y cambia al instante. También puedes fijar uno distinto.
+- Los 6 temas de la app: Cyberpunk Rosa, Cyberpunk Púrpura, Azul Petróleo, Turquesa, Obsidiana AMOLED y Monocromo.

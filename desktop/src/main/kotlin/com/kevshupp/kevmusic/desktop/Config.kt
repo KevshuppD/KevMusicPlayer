@@ -7,7 +7,7 @@ import java.io.File
 data class SavedDevice(val host: String, val port: Int, val token: String, val name: String)
 
 object Config {
-    private val dir = File(System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() } ?: (System.getProperty("user.home") + "/.config"), "kevmusic-desktop")
+    val dir = File(System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() } ?: (System.getProperty("user.home") + "/.config"), "kevmusic-desktop")
     private val file = File(dir, "config.json")
 
     fun load(): SavedDevice? = runCatching {

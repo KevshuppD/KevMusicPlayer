@@ -51,6 +51,10 @@ class RemoteClient(private val scope: CoroutineScope) {
     private val _libraryLoading = MutableStateFlow(false)
     val libraryLoading: StateFlow<Boolean> = _libraryLoading
 
+    /** Tema elegido en el teléfono (settings_prefs/app_theme). */
+    private val _phoneTheme = MutableStateFlow("cyberpunk")
+    val phoneTheme: StateFlow<String> = _phoneTheme
+
     private val _telegram = MutableStateFlow(TelegramStatus(false, "Conectando con el teléfono…"))
     val telegram: StateFlow<TelegramStatus> = _telegram
     private val _downloads = MutableStateFlow<List<DownloadItem>>(emptyList())
@@ -191,6 +195,7 @@ class RemoteClient(private val scope: CoroutineScope) {
                 }
             }
             "libraryChanged" -> refreshLibrary()
+            "theme" -> _phoneTheme.value = msg.optString("theme", "cyberpunk")
             "tgStatus" -> _telegram.value = TelegramStatus(msg.optBoolean("ready"), msg.optString("reason"))
             "tgQueue" -> {
                 val arr = msg.optJSONArray("items") ?: JSONArray()
@@ -402,6 +407,12 @@ class RemoteClient(private val scope: CoroutineScope) {
 
     private val artCache = object : LinkedHashMap<String, ImageBitmap?>(256, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap?>?) = size > 600
+    }
+
+    fun clearArtCache() {
+        synchronized(artCache) { artCache.clear() }
+        synchronized(urlImages) { urlImages.clear() }
+        java.io.File(System.getProperty("user.home"), ".cache/kevmusic-desktop/art").deleteRecursively()
     }
 
     fun cachedArt(id: Long, small: Boolean): ImageBitmap? = synchronized(artCache) { artCache["$id/$small"] }

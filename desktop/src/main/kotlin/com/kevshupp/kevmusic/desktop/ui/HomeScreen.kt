@@ -98,7 +98,7 @@ fun HomeScreen(
                             Modifier.width(130.dp).clip(RoundedCornerShape(14.dp)).clickable { onOpenArtist(name) }.padding(8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Box(Modifier.clip(CircleShape)) { AlbumArt(sampleId, 110.dp, small = false, corner = 55.dp, seed = name) }
+                            Box(Modifier.clip(CircleShape)) { AlbumArt(sampleId, 110.dp, small = !com.kevshupp.kevmusic.desktop.Settings.hdGridArt, corner = 55.dp, seed = name) }
                             Spacer(Modifier.height(8.dp))
                             Text(name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("$plays reproducciones", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -166,7 +166,7 @@ private fun SongShelf(title: String, empty: String, songs: List<Song>, currentId
             }) {
                 Column(Modifier.width(160.dp).clip(RoundedCornerShape(16.dp)).clickable { client.playSongs(songs.map { it.id }, i) }.padding(8.dp)) {
                     Box {
-                        AlbumArt(song.id, 144.dp, small = false, corner = 14.dp, seed = song.album)
+                        AlbumArt(song.id, 144.dp, small = !com.kevshupp.kevmusic.desktop.Settings.hdGridArt, corner = 14.dp, seed = song.album)
                         if (song.id == currentId) {
                             Box(
                                 Modifier.align(Alignment.BottomEnd).padding(8.dp).size(30.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),

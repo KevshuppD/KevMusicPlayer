@@ -205,7 +205,7 @@ fun AlbumsScreen(lib: Library, onOpen: (Album) -> Unit) {
                 }) {
                     Column(Modifier.clip(RoundedCornerShape(14.dp)).clickable { onOpen(album) }.padding(6.dp)) {
                         BoxWithConstraints(Modifier.fillMaxWidth()) {
-                            AlbumArt(album.songs.first().id, maxWidth, small = false, corner = 14.dp, seed = album.name)
+                            AlbumArt(album.songs.first().id, maxWidth, small = !com.kevshupp.kevmusic.desktop.Settings.hdGridArt, corner = 14.dp, seed = album.name)
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(album.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
