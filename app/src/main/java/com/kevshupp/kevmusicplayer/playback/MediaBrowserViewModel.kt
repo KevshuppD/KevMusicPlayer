@@ -1650,8 +1650,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun organizeMusicByArtistFolder(
         context: Context,
         onProgress: (current: Int, total: Int, currentName: String) -> Unit,
-        onComplete: (successCount: Int, errorCount: Int) -> Unit
+        onComplete: (successCount: Int, failures: List<com.kevshupp.kevmusicplayer.playback.managers.FileOpFailure>) -> Unit
     ) = storageToolsManager.organizeMusicByArtistFolder(context, onProgress, onComplete)
+
+    fun migrateMusicFolder(
+        context: Context,
+        fromPath: String,
+        toPath: String,
+        onProgress: (current: Int, total: Int, currentName: String) -> Unit,
+        onComplete: (successCount: Int, failures: List<com.kevshupp.kevmusicplayer.playback.managers.FileOpFailure>) -> Unit
+    ) = storageToolsManager.migrateFolder(context, fromPath, toPath, onProgress, onComplete)
 
     fun deleteAllFolderCoverImages(
         context: Context,

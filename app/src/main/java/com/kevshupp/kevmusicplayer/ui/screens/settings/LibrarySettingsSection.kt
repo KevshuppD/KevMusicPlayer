@@ -81,6 +81,14 @@ fun LibrarySettingsSection(
     onFindMissingCovers: () -> Unit = {}
 ) {
     var activeOrganizerAction by remember { mutableStateOf("") }
+    // Resultado de organizar o migrar con la lista de errores (título, movidas, fallos)
+    var fileOpResult by remember { mutableStateOf<Triple<String, Int, List<com.kevshupp.kevmusicplayer.playback.managers.FileOpFailure>>?>(null) }
+    var showMigrateDialog by remember { mutableStateOf(false) }
+    var migrating by remember { mutableStateOf(false) }
+    var migrateProgress by remember { mutableStateOf("") }
+    fileOpResult?.let { (title, ok, failures) ->
+        com.kevshupp.kevmusicplayer.ui.screens.dialogs.FileOperationResultDialog(title, ok, failures) { fileOpResult = null }
+    }
     var showDeleteCoversDialog by remember { mutableStateOf(false) }
     var showDeleteNoMediaDialog by remember { mutableStateOf(false) }
     var showDeleteAllLyricsConfirmDialog by remember { mutableStateOf(false) }
@@ -559,17 +567,18 @@ fun LibrarySettingsSection(
                             setRenamingTotal(total)
                             setRenamingCurrentName(name)
                         },
-                        onComplete = { success, error ->
+                        onComplete = { success, failures ->
                             setIsRenaming(false)
                             activeOrganizerAction = ""
-                            android.widget.Toast.makeText(
-                                context,
-                                getLocalized(
-                                    "Organización finalizada: $success éxito(s), $error error(es)",
-                                    "Organization complete: $success success, $error errors"
-                                ),
-                                android.widget.Toast.LENGTH_LONG
-                            ).show()
+                            if (failures.isEmpty()) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    getLocalized("Organización finalizada: $success canción(es) movida(s)", "Organization complete: $success moved"),
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                fileOpResult = Triple(getLocalized("Organización finalizada", "Organization complete"), success, failures)
+                            }
                         }
                     )
                 },
@@ -2043,6 +2052,49 @@ fun LibrarySettingsSection(
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+
+                    OutlinedButton(
+                        onClick = { showMigrateDialog = true },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.DriveFileMove,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = getLocalized("Migrar música a otra carpeta", "Move music to another folder"),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (showMigrateDialog) {
+                        com.kevshupp.kevmusicplayer.ui.screens.dialogs.MigrateFolderDialog(
+                            folders = listOfNotNull(selectedMusicFolder) + extraMusicFolders,
+                            running = migrating,
+                            progress = migrateProgress,
+                            onDismiss = { showMigrateDialog = false }
+                        ) { from, to, removeOrigin ->
+                            migrating = true
+                            viewModel.migrateMusicFolder(
+                                context, from, to,
+                                onProgress = { current, total, name -> migrateProgress = "$current/$total: $name" },
+                                onComplete = { success, failures ->
+                                    migrating = false
+                                    showMigrateDialog = false
+                                    // Con errores, el origen sigue en la lista: aún tiene canciones
+                                    if (removeOrigin && failures.isEmpty()) {
+                                        com.kevshupp.kevmusicplayer.data.MusicFolders.remove(settingsPrefs, from)
+                                        refreshMusicFolders()
+                                    }
+                                    fileOpResult = Triple(getLocalized("Migración finalizada", "Move complete"), success, failures)
+                                }
+                            )
+                        }
                     }
                 } else {
                     Button(

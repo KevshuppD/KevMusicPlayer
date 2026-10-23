@@ -54,10 +54,10 @@ class RemoteTelegramBridge(
                 .sample(400) // el progreso cambia muchas veces por segundo
                 .collect { (list, statuses) -> broadcast(queueJson(list, statuses)) }
         }
-        // Una canción descargada (o borrada, o encontrada en un escaneo) cambia el número de filas:
+        // Canciones nuevas, borradas, con id nuevo (organizar/migrar entre volúmenes) o etiquetas editadas:
         // el escritorio vuelve a pedir la biblioteca. Las reproducciones no cuentan.
         jobs += scope.launch {
-            AppDatabase.getDatabase(context).audioDao().observeSongCount()
+            AppDatabase.getDatabase(context).audioDao().observeLibrarySignature()
                 .distinctUntilChanged()
                 .drop(1)
                 .debounce(1500)

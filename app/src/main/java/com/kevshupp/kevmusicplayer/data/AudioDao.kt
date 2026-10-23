@@ -75,9 +75,13 @@ interface AudioDao {
     @Query("UPDATE audio_files SET replayGain = :replayGain WHERE id = :id")
     suspend fun updateReplayGain(id: Long, replayGain: Float)
 
-    /** Número de canciones; emite de nuevo con cada escritura en la tabla (KevMusic Desktop detecta altas y bajas). */
-    @Query("SELECT COUNT(*) FROM audio_files")
-    fun observeSongCount(): Flow<Int>
+    /**
+     * Firma de la biblioteca (número de canciones, suma de ids y longitud de título/artista/álbum); emite de nuevo con
+     * cada escritura en la tabla. KevMusic Desktop la usa para detectar altas, bajas, ids nuevos (organizar o migrar
+     * a otro volumen) y etiquetas editadas; las reproducciones no la cambian.
+     */
+    @Query("SELECT COUNT(*) || ':' || COALESCE(SUM(id), 0) || ':' || COALESCE(SUM(LENGTH(title) + LENGTH(artist) + LENGTH(album)), 0) FROM audio_files")
+    fun observeLibrarySignature(): Flow<String>
 
     @Query("SELECT COUNT(*) FROM audio_files WHERE lyrics IS NOT NULL AND TRIM(lyrics) != ''")
     suspend fun countSongsWithLyrics(): Int

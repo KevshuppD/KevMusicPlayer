@@ -25,6 +25,9 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
+/** A file that could not be moved, with a reason the user can act on. */
+data class FileOpFailure(val name: String, val reason: String)
+
 class StorageToolsManager(
     private val application: Application,
     private val localAudioFiles: SnapshotStateList<AudioFile>,
@@ -98,13 +101,13 @@ class StorageToolsManager(
     fun organizeMusicByArtistFolder(
         context: Context,
         onProgress: (current: Int, total: Int, currentName: String) -> Unit,
-        onComplete: (successCount: Int, errorCount: Int) -> Unit
+        onComplete: (successCount: Int, failures: List<FileOpFailure>) -> Unit
     ) {
         coroutineScope.launch(Dispatchers.IO) {
             val songsToOrganize = localAudioFiles.toList()
             val total = songsToOrganize.size
             var successCount = 0
-            var errorCount = 0
+            val failures = mutableListOf<FileOpFailure>()
 
             val settingsPrefs = context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE)
             val musicFolderPath = settingsPrefs.getString("music_folder_path", null)
@@ -178,55 +181,36 @@ class StorageToolsManager(
                                     onProgress(index + 1, total, song.title)
                                 }
 
-                                var moveCompleted = false
-
-                                try {
-                                    // renameTo silently replaces an existing file: never move onto another song
-                                    val renamed = !newFile.exists() && oldFile.renameTo(newFile)
-                                    if (renamed) {
-                                        moveCompleted = true
+                                val sameVolume = !newFile.exists() && oldFile.renameTo(newFile)
+                                val reason = when {
+                                    sameVolume -> {
                                         val values = ContentValues().apply {
                                             put(MediaStore.Audio.Media.DATA, newFile.absolutePath)
                                         }
-                                        context.contentResolver.update(
-                                            android.net.Uri.parse(song.uriString),
-                                            values,
-                                            null,
-                                            null
-                                        )
-                                        MediaScannerConnection.scanFile(
-                                            context,
-                                            arrayOf(newFile.absolutePath),
-                                            null,
-                                            null
-                                        )
-                                    } else if (!newFile.exists() && moveAcrossVolumes(oldFile, newFile)) {
-                                        // Extra music folders can live on another volume (SD card vs internal),
-                                        // where renameTo always fails. MediaStore indexes the copy as a new song;
-                                        // the next scan remaps its id (SongIdentity), keeping stats and playlists.
-                                        moveCompleted = true
-                                        MediaScannerConnection.scanFile(
-                                            context,
-                                            arrayOf(oldFile.absolutePath, newFile.absolutePath),
-                                            null,
-                                            null
-                                        )
+                                        runCatching {
+                                            context.contentResolver.update(android.net.Uri.parse(song.uriString), values, null, null)
+                                        }
+                                        MediaScannerConnection.scanFile(context, arrayOf(newFile.absolutePath), null, null)
+                                        null
                                     }
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
+                                    newFile.exists() -> "Ya existe un archivo con ese nombre en $artistFolderName/$albumFolderName"
+                                    // Extra music folders can live on another volume (SD card vs internal),
+                                    // where renameTo always fails. MediaStore indexes the copy as a new song;
+                                    // the next scan remaps its id (SongIdentity), keeping stats and playlists.
+                                    else -> moveAcrossVolumes(oldFile, newFile).also { r ->
+                                        if (r == null) MediaScannerConnection.scanFile(context, arrayOf(oldFile.absolutePath, newFile.absolutePath), null, null)
+                                    }
                                 }
-
-                                if (moveCompleted) {
-                                    successCount++
-                                } else {
-                                    errorCount++
-                                }
+                                if (reason == null) successCount++ else failures += FileOpFailure(oldFile.name, reason)
                             }
+                        } else {
+                            failures += FileOpFailure(song.title, "El archivo ya no existe en ${oldFile.parent}")
                         }
+                    } else {
+                        failures += FileOpFailure(song.title, "No se encontró la ruta del archivo (vuelve a escanear)")
                     }
                 } catch (e: Exception) {
-                    e.printStackTrace()
-                    errorCount++
+                    failures += FileOpFailure(song.title, e.message ?: e.javaClass.simpleName)
                 }
             }
 
@@ -242,34 +226,123 @@ class StorageToolsManager(
 
             onTriggerScan(true)
 
-            withContext(Dispatchers.Main) {
-                onComplete(successCount, errorCount)
+            if (failures.isNotEmpty()) {
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    context, "Organize", failures.joinToString("\n") { "${it.name}: ${it.reason}" }
+                )
             }
+            withContext(Dispatchers.Main) {
+                onComplete(successCount, failures)
+            }
+        }
+    }
+
+    /**
+     * Moves a whole music folder to another one (typically SD card → internal storage) keeping the same subfolders
+     * and file names: audio, .lrc lyrics, folder images and the hidden `.covers/` folder. Nothing is ever
+     * overwritten. MediaStore gives the moved songs new ids; the scan afterwards remaps them (SongIdentity), so
+     * stats, lyrics and playlists are kept.
+     */
+    fun migrateFolder(
+        context: Context,
+        fromPath: String,
+        toPath: String,
+        onProgress: (current: Int, total: Int, currentName: String) -> Unit,
+        onComplete: (successCount: Int, failures: List<FileOpFailure>) -> Unit
+    ) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val failures = mutableListOf<FileOpFailure>()
+            var successCount = 0
+            val fromDir = File(fromPath)
+            val toDir = File(toPath)
+            val from = fromDir.canonicalPath
+            val to = toDir.canonicalPath
+            when {
+                !fromDir.isDirectory -> failures += FileOpFailure(fromDir.name, "La carpeta de origen no existe o no se puede leer")
+                from == to || to.startsWith("$from/") || from.startsWith("$to/") ->
+                    failures += FileOpFailure(fromDir.name, "El origen y el destino no pueden estar uno dentro del otro")
+                !toDir.exists() && !toDir.mkdirs() -> failures += FileOpFailure(toDir.name, "No se pudo crear la carpeta de destino")
+            }
+            if (failures.isNotEmpty()) {
+                withContext(Dispatchers.Main) { onComplete(0, failures) }
+                return@launch
+            }
+
+            val audio = setOf("mp3", "flac", "m4a", "wav", "ogg", "aac", "opus", "wma", "m4b", "aiff", "aif", "alac", "ape")
+            val extras = setOf("lrc", "jpg", "jpeg", "png", "webp")
+            val files = fromDir.walkTopDown()
+                .onEnter { it == fromDir || !it.name.startsWith(".") || it.name == ".covers" }
+                .filter { f ->
+                    f.isFile && !f.name.startsWith(".kmp_") &&
+                        (f.extension.lowercase() in audio || f.extension.lowercase() in extras || f.parentFile?.name == ".covers")
+                }
+                .toList()
+            val scanPaths = mutableListOf<String>()
+            files.forEachIndexed { index, file ->
+                withContext(Dispatchers.Main) { onProgress(index + 1, files.size, file.name) }
+                val target = File(toDir, file.relativeTo(fromDir).path)
+                val reason = try { moveFile(file, target) } catch (e: Exception) { e.message ?: e.javaClass.simpleName }
+                if (reason == null) {
+                    if (file.extension.lowercase() in audio) {
+                        successCount++
+                        scanPaths += file.absolutePath
+                        scanPaths += target.absolutePath
+                    }
+                } else {
+                    failures += FileOpFailure(file.relativeTo(fromDir).path, reason)
+                }
+            }
+            // Empty folders left behind (never the origin itself)
+            fromDir.walkBottomUp().filter { it != fromDir && it.isDirectory }.forEach { dir ->
+                if (dir.listFiles()?.isEmpty() == true) dir.delete()
+            }
+            scanPaths.chunked(100).forEach { MediaScannerConnection.scanFile(context, it.toTypedArray(), null, null) }
+            if (failures.isNotEmpty()) {
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    context, "Migrate", "$fromPath → $toPath\n" + failures.joinToString("\n") { "${it.name}: ${it.reason}" }
+                )
+            }
+            delay(1500L)
+            onTriggerScan(true)
+            withContext(Dispatchers.Main) { onComplete(successCount, failures) }
         }
     }
 
     /**
      * Copies a song to another volume through a hidden sibling file, checks its content and only then removes the
      * original. If the original cannot be deleted the copy is removed, so the song is never duplicated.
+     * Returns null on success, or the reason it failed.
      */
-    private fun moveAcrossVolumes(source: File, target: File): Boolean {
-        val targetDir = target.parentFile ?: return false
-        if (targetDir.usableSpace < source.length() + 1_048_576L) return false
+    private fun moveAcrossVolumes(source: File, target: File): String? {
+        val targetDir = target.parentFile ?: return "Carpeta de destino no válida"
+        if (targetDir.usableSpace < source.length() + 1_048_576L) return "No hay espacio suficiente en el destino"
         val temp = File(targetDir, ".kmp_move_${target.name}")
         try {
-            if (!com.kevshupp.kevmusicplayer.playback.copyAudioVerified(source, temp) || target.exists() || !temp.renameTo(target)) {
+            if (!com.kevshupp.kevmusicplayer.playback.copyAudioVerified(source, temp)) {
                 temp.delete()
-                return false
+                return "La copia no coincidió con el original (se conservó el original)"
+            }
+            if (target.exists() || !temp.renameTo(target)) {
+                temp.delete()
+                return "No se pudo guardar en el destino"
             }
             if (!source.delete()) {
                 target.delete()
-                return false
+                return "No se pudo borrar el original (¿la SD es de solo lectura?)"
             }
-            return true
+            return null
         } catch (e: Exception) {
             temp.delete()
-            return false
+            return e.message ?: e.javaClass.simpleName
         }
+    }
+
+    /** Moves within the same volume (rename) or across volumes (verified copy). Null on success, or the reason. */
+    private fun moveFile(source: File, target: File): String? {
+        if (target.exists()) return "Ya existe un archivo con ese nombre en ${target.parentFile?.name}"
+        target.parentFile?.let { if (!it.exists() && !it.mkdirs()) return "No se pudo crear la carpeta ${it.absolutePath}" }
+        if (source.renameTo(target)) return null
+        return moveAcrossVolumes(source, target)
     }
 
     fun deleteAllFolderCoverImages(

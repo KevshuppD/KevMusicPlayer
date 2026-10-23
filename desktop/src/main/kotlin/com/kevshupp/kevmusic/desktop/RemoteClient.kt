@@ -161,7 +161,8 @@ class RemoteClient(private val scope: CoroutineScope) {
                 device = saved
                 Config.save(saved)
                 _status.value = ConnStatus.Connected(name)
-                if (_library.value == null) refreshLibrary()
+                // Siempre: mientras estaba desconectado pudo cambiar (escaneo, organizar, migrar)
+                refreshLibrary()
             }
             "state" -> _state.value = PlayerState(
                 id = msg.optLong("id"),
