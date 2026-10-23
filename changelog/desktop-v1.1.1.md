@@ -1,0 +1,3 @@
+- **Botón de aleatorio** en la barra inferior: muestra si está activado y lo cambia en el teléfono (necesita la app 1.7.2).
+- **La traducción de las letras ya se muestra** al activar "Mostrar traducción".
+- **La traducción sigue el color del tema**, igual que en la app.
