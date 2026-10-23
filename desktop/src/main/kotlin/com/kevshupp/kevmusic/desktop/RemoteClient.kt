@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -155,6 +156,7 @@ class RemoteClient(private val scope: CoroutineScope) {
                     return
                 }
                 val name = msg.optString("device", "Teléfono")
+                phoneProtocol = msg.optInt("version", 1)
                 val saved = SavedDevice(host, port, msg.getString("token"), name)
                 device = saved
                 Config.save(saved)
@@ -286,6 +288,62 @@ class RemoteClient(private val scope: CoroutineScope) {
                     if (tmp.renameTo(file)) file else null
                 }
             }.getOrNull()
+        }
+    }
+
+    /** Versión del protocolo del teléfono; la 2 (app 1.8.0) acepta canciones con `PUT /upload`. */
+    @Volatile var phoneProtocol = 0
+        private set
+
+    /** Por qué no se puede enviar una canción al teléfono ahora, o null si se puede. */
+    fun uploadBlocker(): String? = when {
+        _status.value !is ConnStatus.Connected -> "Esperando a que se conecte el teléfono"
+        phoneProtocol < 2 -> "Esperando: actualiza KevMusic en el teléfono a la 1.8.0 para recibir canciones"
+        else -> null
+    }
+
+    private val uploadHttp by lazy { http.newBuilder().readTimeout(2, TimeUnit.MINUTES).writeTimeout(2, TimeUnit.MINUTES).build() }
+
+    /**
+     * Sube una canción al teléfono (`PUT /upload`), que la guarda en su carpeta principal según sus etiquetas.
+     * Bloqueante; devuelve la ruta donde quedó.
+     */
+    fun uploadSong(file: java.io.File, artistHint: String, albumHint: String, onProgress: (Long) -> Unit): String {
+        val d = device ?: throw java.io.IOException("No hay teléfono emparejado")
+        if (_status.value !is ConnStatus.Connected) throw java.io.IOException("El teléfono no está conectado")
+        val sha = java.security.MessageDigest.getInstance("SHA-256").let { md ->
+            file.inputStream().use { input ->
+                val buf = ByteArray(64 * 1024)
+                while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+            }
+            md.digest().joinToString("") { "%02x".format(it) }
+        }
+        val body = object : okhttp3.RequestBody() {
+            override fun contentType() = "application/octet-stream".toMediaType()
+            override fun contentLength() = file.length()
+            override fun writeTo(sink: okio.BufferedSink) {
+                file.inputStream().use { input ->
+                    val buf = ByteArray(64 * 1024)
+                    var sent = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        sink.write(buf, 0, n)
+                        sent += n
+                        onProgress(sent)
+                    }
+                }
+            }
+        }
+        val url = okhttp3.HttpUrl.Builder().scheme("http").host(d.host).port(d.port).addPathSegment("upload")
+            .addQueryParameter("token", d.token).addQueryParameter("name", file.name)
+            .addQueryParameter("artist", artistHint).addQueryParameter("album", albumHint).build()
+        val req = Request.Builder().url(url).put(body).header("X-Sha256", sha).build()
+        uploadHttp.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (resp.code == 404) throw java.io.IOException("actualiza KevMusic en el teléfono a la 1.8.0 o posterior")
+            if (!resp.isSuccessful) throw java.io.IOException(text.ifBlank { "HTTP ${resp.code}" })
+            return JSONObject(text).optString("path")
         }
     }
 

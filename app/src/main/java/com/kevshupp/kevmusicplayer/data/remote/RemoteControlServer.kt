@@ -2,6 +2,7 @@ package com.kevshupp.kevmusicplayer.data.remote
 
 import android.content.Context
 import android.media.AudioManager
+import android.media.MediaMetadataRetriever
 import android.net.ConnectivityManager
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
@@ -16,7 +17,9 @@ import com.kevshupp.kevmusicplayer.data.AppDatabase
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.data.PreferenceConstants
 import com.kevshupp.kevmusicplayer.data.TelemetryLogger
+import com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack
 import com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks
+import com.kevshupp.kevmusicplayer.data.telegram.TelegramDownloadQueue
 import com.kevshupp.kevmusicplayer.ui.screens.loadAlbumArtBitmap
 import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoWSD
@@ -34,8 +37,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
 import java.net.Inet4Address
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.concurrent.CopyOnWriteArraySet
 
@@ -45,7 +50,8 @@ import java.util.concurrent.CopyOnWriteArraySet
  * Vive dentro de PlaybackService mientras `settings_prefs/remote_enabled` está activo. Protocolo:
  * - WebSocket en `/ws`: el primer mensaje es `pair` (código de 6 cifras visible en Ajustes) o `hello` (token
  *   guardado). Después el teléfono emite `state`, `queue` y `lyrics`, y acepta los comandos de [handleCommand].
- * - HTTP `GET /library?token=` (canciones y listas en JSON) y `GET /art/<id>?token=&size=` (carátula JPEG).
+ * - HTTP `GET /library?token=` (canciones y listas en JSON), `GET /art/<id>?token=&size=` (carátula JPEG) y
+ *   `PUT /upload?token=&name=` (una canción descargada en el PC, p. ej. de Soulseek; ver [receiveUpload]).
  * Se anuncia en la red local por mDNS como `_kevmusic._tcp`.
  */
 class RemoteControlServer(
@@ -60,7 +66,9 @@ class RemoteControlServer(
         const val SERVICE_TYPE = "_kevmusic._tcp."
         private const val PREFS = "remote_prefs"
         private const val KEY_TOKENS = "tokens"
-        private const val PROTOCOL_VERSION = 1
+        private const val PROTOCOL_VERSION = 2
+        private const val MAX_UPLOAD_BYTES = 2L * 1024 * 1024 * 1024
+        private val UPLOAD_EXTENSIONS = setOf("mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "wma", "alac", "ape")
 
         /** Código de emparejamiento actual (null si el servidor está parado). Lo muestra Ajustes. */
         val pairingCode = MutableStateFlow<String?>(null)
@@ -449,6 +457,7 @@ class RemoteControlServer(
             return try {
                 when {
                     uri == "/library" -> json(runBlocking(Dispatchers.IO) { buildLibrary() })
+                    uri == "/upload" && session.method == Method.PUT -> receiveUpload(session)
                     uri.startsWith("/art/") -> serveArt(uri.removePrefix("/art/").toLongOrNull(), session.parameters["size"]?.firstOrNull())
                     else -> text(Response.Status.NOT_FOUND, "not found")
                 }
@@ -462,6 +471,77 @@ class RemoteControlServer(
         private fun json(body: String): Response {
             val bytes = body.toByteArray()
             return newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", ByteArrayInputStream(bytes), bytes.size.toLong())
+        }
+
+        /**
+         * Canción enviada por el PC: se recibe en la caché (comprobando tamaño y SHA-256), se guarda en
+         * `<carpeta principal>/Artista/Álbum/Artista - Título.ext` según sus etiquetas, como las descargas de
+         * Telegram, y se escanea. El cuerpo se lee a mano: `parseBody()` de NanoHTTPD lo convertiría en texto.
+         */
+        private fun receiveUpload(session: IHTTPSession): Response {
+            val length = session.headers["content-length"]?.toLongOrNull()
+                ?: return text(Response.Status.BAD_REQUEST, "Falta Content-Length")
+            if (length <= 0 || length > MAX_UPLOAD_BYTES) return text(Response.Status.BAD_REQUEST, "Tamaño no válido")
+            val name = File(session.parameters["name"]?.firstOrNull().orEmpty()).name
+            val ext = name.substringAfterLast('.', "").lowercase()
+            if (ext !in UPLOAD_EXTENSIONS) return text(Response.Status.BAD_REQUEST, "Formato no admitido")
+
+            val dir = File(context.cacheDir, "remote_upload").apply { mkdirs() }
+            val temp = File(dir, "${System.nanoTime()}.$ext")
+            try {
+                val digest = MessageDigest.getInstance("SHA-256")
+                val input = session.inputStream
+                temp.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    var left = length
+                    while (left > 0) {
+                        val n = input.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
+                        if (n < 0) throw IOException("Conexión cortada")
+                        out.write(buf, 0, n)
+                        digest.update(buf, 0, n)
+                        left -= n
+                    }
+                }
+                val expected = session.headers["x-sha256"]?.lowercase()
+                val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                if (expected != null && expected != actual) return text(Response.Status.BAD_REQUEST, "El archivo llegó dañado")
+
+                val hint = { key: String -> session.parameters[key]?.firstOrNull().orEmpty() }
+                val tags = readTags(temp)
+                val track = DeezerTrack(
+                    id = 0,
+                    title = tags[0].ifBlank { name.substringBeforeLast('.') },
+                    artist = tags[1].ifBlank { hint("artist") },
+                    album = tags[2].ifBlank { hint("album") },
+                    durationSec = 0, coverSmall = "", coverXl = "", link = ""
+                )
+                val saved = TelegramDownloadQueue.saveToMusicFolder(context, temp, track)
+                runBlocking { TelegramDownloadQueue.scanFile(context, saved) }
+                // El escaneo de la biblioteca lo hace el ViewModel (con la app cerrada, entra en el siguiente)
+                Handler(Looper.getMainLooper()).post { TelegramDownloadQueue.onSongSaved?.invoke() }
+                TelemetryLogger.logInfo(context, "Remote", "Recibida desde el PC: ${saved.absolutePath}")
+                return json(JSONObject().put("ok", true).put("path", saved.absolutePath).put("title", track.title).put("artist", track.artist).toString())
+            } finally {
+                temp.delete()
+            }
+        }
+
+        /** Título, artista (o el del álbum) y álbum de las etiquetas. */
+        private fun readTags(file: File): List<String> {
+            val r = MediaMetadataRetriever()
+            return try {
+                r.setDataSource(file.absolutePath)
+                listOf(
+                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE).orEmpty().trim(),
+                    (r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                        ?: r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)).orEmpty().trim(),
+                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM).orEmpty().trim()
+                )
+            } catch (e: Exception) {
+                listOf("", "", "")
+            } finally {
+                r.release()
+            }
         }
 
         private fun serveArt(id: Long?, size: String?): Response {

@@ -13,12 +13,17 @@ import androidx.compose.ui.window.rememberWindowState
 import com.kevshupp.kevmusic.desktop.ui.ConnectScreen
 import com.kevshupp.kevmusic.desktop.ui.KevTheme
 import com.kevshupp.kevmusic.desktop.ui.LocalClient
+import com.kevshupp.kevmusic.desktop.ui.LocalSoulseek
+import com.kevshupp.kevmusic.desktop.soulseek.PhoneTarget
+import com.kevshupp.kevmusic.desktop.soulseek.SoulseekClient
+import com.kevshupp.kevmusic.desktop.soulseek.SoulseekConfig
 import com.kevshupp.kevmusic.desktop.ui.MainScreen
 import com.kevshupp.kevmusic.desktop.ui.Section
 import com.kevshupp.kevmusic.desktop.ui.UpdateDialog
 
 fun main() {
     Settings.load()
+    SoulseekConfig.load()
     app()
 }
 
@@ -26,11 +31,21 @@ private fun app() = application {
     val scope = rememberCoroutineScope()
     val client = remember { RemoteClient(scope) }
     val discovery = remember { Discovery() }
+    val soulseek = remember {
+        SoulseekClient(scope).apply {
+            phone = object : PhoneTarget {
+                override val blocker get() = client.uploadBlocker()
+                override fun upload(file: java.io.File, artistHint: String, albumHint: String, onProgress: (Long) -> Unit) =
+                    client.uploadSong(file, artistHint, albumHint, onProgress)
+            }
+        }
+    }
     var raiseRequest by remember { mutableStateOf(0) }
     val mpris = remember {
         Mpris(client, scope, onRaise = { raiseRequest++ }, onQuit = {
             client.disconnect(forget = false)
             discovery.stop()
+            soulseek.stop()
             exitApplication()
         })
     }
@@ -43,6 +58,7 @@ private fun app() = application {
         Config.load()?.let { client.resume(it) }
         discovery.start()
         mpris.start()
+        if (SoulseekConfig.autoConnect && SoulseekConfig.hasAccount) soulseek.start()
         if (Settings.autoCheckUpdates) Updater.check()
     }
     LaunchedEffect(status) {
@@ -55,6 +71,7 @@ private fun app() = application {
             client.disconnect(forget = false)
             discovery.stop()
             mpris.stop()
+            soulseek.stop()
             exitApplication()
         },
         title = "KevMusic Desktop",
@@ -87,7 +104,7 @@ private fun app() = application {
         }
         val phoneTheme by client.phoneTheme.collectAsState()
         KevTheme(if (Settings.theme == Settings.THEME_PHONE) phoneTheme else Settings.theme) {
-            CompositionLocalProvider(LocalClient provides client) {
+            CompositionLocalProvider(LocalClient provides client, LocalSoulseek provides soulseek) {
                 if (paired) MainScreen(status, section) { section = it }
                 else ConnectScreen(discovery, status)
                 UpdateDialog(onExit = {

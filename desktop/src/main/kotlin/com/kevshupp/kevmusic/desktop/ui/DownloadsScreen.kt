@@ -40,12 +40,30 @@ private sealed interface DzPage {
     data class ArtistPage(val artist: DzArtist) : DzPage
 }
 
+/** Dos fuentes: el bot de Telegram del teléfono y Soulseek en el propio PC. */
+@Composable
+fun DownloadsScreen() {
+    var soulseek by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize()) {
+        SectionTitle(
+            "Descargar",
+            if (soulseek) "Red Soulseek · se descarga en el PC y se envía al teléfono"
+            else "Con el bot de Telegram del teléfono · se guarda en su carpeta de música"
+        ) {
+            FilterChip(selected = !soulseek, onClick = { soulseek = false }, label = { Text("Telegram") }, leadingIcon = { Icon(Icons.Rounded.Send, null, Modifier.size(16.dp)) })
+            Spacer(Modifier.width(8.dp))
+            FilterChip(selected = soulseek, onClick = { soulseek = true }, label = { Text("Soulseek") }, leadingIcon = { Icon(Icons.Rounded.Hub, null, Modifier.size(16.dp)) })
+        }
+        if (soulseek) SoulseekScreen() else TelegramDownloads()
+    }
+}
+
 /**
  * Descargas con el bot de Telegram del teléfono: el PC solo busca y pide; el teléfono descarga y guarda
  * en su carpeta principal (Artista/Álbum), como desde la app.
  */
 @Composable
-fun DownloadsScreen() {
+private fun TelegramDownloads() {
     val client = LocalClient.current
     val tg by client.telegram.collectAsState()
     val downloads by client.downloads.collectAsState()
@@ -75,7 +93,6 @@ fun DownloadsScreen() {
     val active = downloads.count { it.status != DlStatus.Done && it.status != DlStatus.Failed }
 
     Column(Modifier.fillMaxSize()) {
-        SectionTitle("Descargar", "Con el bot de Telegram del teléfono · se guarda en su carpeta de música")
         if (!tg.ready) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
                 Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
