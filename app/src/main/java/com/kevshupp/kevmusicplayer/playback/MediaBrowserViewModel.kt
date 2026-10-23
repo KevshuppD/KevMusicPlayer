@@ -1139,12 +1139,6 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private fun bridgeShuffleToRemote() {
-        // Las listas inteligentes solo se calculan aquí; KevMusic Desktop las recibe ya resueltas (ids)
-        viewModelScope.launch {
-            androidx.compose.runtime.snapshotFlow { smartPlaylists.mapValues { (_, songs) -> songs.map { it.id } } }.collect {
-                com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.smartPlaylists.value = it
-            }
-        }
         // KevMusic Desktop muestra y cambia el aleatorio propio de la app
         viewModelScope.launch {
             androidx.compose.runtime.snapshotFlow { isShuffleActive.value }.collect {
@@ -1784,6 +1778,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     val playlistCovers get() = playlistManager.playlistCovers
     val smartPlaylists get() = playlistManager.smartPlaylists
     val smartPlaylistConfigs get() = playlistManager.smartPlaylistConfigs
+
+    // Las listas inteligentes solo se calculan aquí; KevMusic Desktop las recibe ya resueltas (ids).
+    // Debe ir después de crear playlistManager: el init del principio de la clase corre antes (1.8.2 se cerraba al abrir).
+    init {
+        viewModelScope.launch {
+            androidx.compose.runtime.snapshotFlow { smartPlaylists.mapValues { (_, songs) -> songs.map { it.id } } }.collect {
+                com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.smartPlaylists.value = it
+            }
+        }
+    }
 
     // Playlists synced in real time with Firestore (one document per playlist, see RealtimePlaylistSync)
     val realtimePlaylists = com.kevshupp.kevmusicplayer.data.cloud.RealtimePlaylistSync(
