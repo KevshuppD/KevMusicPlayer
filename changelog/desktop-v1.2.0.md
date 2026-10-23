@@ -1,0 +1,6 @@
+- **Descargas con Soulseek:** nueva pestaña en Descargar para buscar en la red Soulseek y bajar canciones sueltas o carpetas completas (FLAC, MP3…), con filtros por formato (MP3, FLAC, sin pérdida, M4A, OGG/Opus), alta calidad y "Disponible ahora".
+  - **Reconoce los álbumes con Deezer:** arriba salen con su carátula y cuántos usuarios los tienen; al abrir uno ves sus fuentes de mejor a peor y "Descargar la mejor".
+  - Lo descargado queda en el PC y **se envía solo al teléfono** (necesita la app 1.8.0).
+  - Las descargas se pueden reanudar y siguen pendientes aunque cierres la app.
+- **Compartir:** comparte tu carpeta de música con la comunidad (no te bloquean y te dan prioridad), con subidas a la vez y límite de velocidad configurables.
+- **Abre el puerto del router por UPnP** y avisa si tu proveedor usa CGNAT.
