@@ -178,16 +178,27 @@ object LibraryNormalizer {
 
     /**
      * Escribe las propuestas elegidas (solo los campos de [fields]) en el archivo, MediaStore y Room.
-     * [onApplied] recibe cada canción ya actualizada para reflejarla en memoria.
+     * [onApplied] recibe las canciones ya actualizadas, en tandas de [MEMORY_BATCH], para reflejarlas en memoria:
+     * cambiar la biblioteca en memoria canción a canción relanzaba cálculos sobre toda ella cientos de veces
+     * seguidas y la app se quedó sin memoria a mitad (24/10/2026).
      */
-    fun apply(context: Context, proposals: List<Proposal>, fields: Set<Field>, onApplied: suspend (AudioFile) -> Unit, onFinished: suspend () -> Unit) {
+    fun apply(context: Context, proposals: List<Proposal>, fields: Set<Field>, onApplied: suspend (List<AudioFile>) -> Unit, onFinished: suspend () -> Unit) {
         job?.cancel()
         val app = context.applicationContext
         val list = proposals.map { p -> p.copy(changes = p.changes.filterKeys { it in fields }) }.filter { it.changes.isNotEmpty() }
         _state.value = State.Applying(0, list.size)
+        // Antes de tocar ningún archivo: claves nuevas de la nube y aviso de que falta volver a unir con ella,
+        // por si la app se cierra a mitad (ver RealtimePlaylistSync.recordKeyChanges)
+        com.kevshupp.kevmusicplayer.data.cloud.RealtimePlaylistSync.recordKeyChanges(app, list.associate { p ->
+            val s = p.song
+            val renamed = s.copy(title = p.changes[Field.Title] ?: s.title, artist = p.changes[Field.Artist] ?: s.artist)
+            com.kevshupp.kevmusicplayer.data.cloud.RealtimePlaylistSync.songKey(s) to com.kevshupp.kevmusicplayer.data.cloud.RealtimePlaylistSync.songKey(renamed)
+        })
+        setMergePending(app, true)
         job = scope.launch {
             val dao = AppDatabase.getDatabase(app).audioDao()
             val failed = ArrayList<Pair<AudioFile, String>>()
+            val batch = ArrayList<AudioFile>()
             var updated = 0
             list.forEachIndexed { i, p ->
                 val s = p.song
@@ -203,7 +214,8 @@ object LibraryNormalizer {
                     val path = getPhysicalPath(app, s.id, s.uriString)
                     val modified = path?.let { File(it).lastModified() } ?: s.dateModified
                     dao.updateTagMetadata(s.id, title, artist, album, genre, year, track, modified)
-                    onApplied(s.copy(title = title, artist = artist, album = album, genre = genre, year = year, track = track, dateModified = modified))
+                    batch += s.copy(title = title, artist = artist, album = album, genre = genre, year = year, track = track, dateModified = modified)
+                    if (batch.size >= MEMORY_BATCH) { onApplied(batch.toList()); batch.clear() }
                     updated++
                 } else {
                     failed += s to error
@@ -211,9 +223,21 @@ object LibraryNormalizer {
                 }
                 _state.value = State.Applying(i + 1, list.size)
             }
+            if (batch.isNotEmpty()) onApplied(batch.toList())
             onFinished()
             _state.value = State.Done(updated, failed)
         }
+    }
+
+    private const val MEMORY_BATCH = 50
+    private const val KEY_MERGE_PENDING = "normalize_merge_pending"
+
+    /** Quedó una normalización sin volver a unir con la nube (la app se cerró a mitad). */
+    fun isMergePending(context: Context) =
+        context.getSharedPreferences("cloud_sync_state", Context.MODE_PRIVATE).getBoolean(KEY_MERGE_PENDING, false)
+
+    fun setMergePending(context: Context, pending: Boolean) {
+        context.getSharedPreferences("cloud_sync_state", Context.MODE_PRIVATE).edit().putBoolean(KEY_MERGE_PENDING, pending).commit()
     }
 
     /** null si se escribió; si no, el motivo. */

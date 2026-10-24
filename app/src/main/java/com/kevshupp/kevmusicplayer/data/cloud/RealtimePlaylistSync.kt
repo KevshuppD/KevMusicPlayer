@@ -179,6 +179,16 @@ class RealtimePlaylistSync(
         if (songs.isEmpty()) return
         val byKey = HashMap<String, MutableList<AudioFile>>()
         songs.forEach { byKey.getOrPut(songKey(it)) { ArrayList(1) } += it }
+        val aliases = keyAliases(context)
+        // Solo para el respaldo de artista desconocido: canciones por título
+        val byTitle by lazy { songs.groupBy { songKey(it).substringAfter('|') } }
+        fun resolve(key: String): List<AudioFile>? =
+            byKey[key] ?: aliases[key]?.let { byKey[it] } ?: run {
+                // Clave escrita cuando la canción no tenía artista ("unknown|título"): si ahora hay una sola canción
+                // con ese título, es ella con el artista corregido (p. ej. por Normalizar biblioteca)
+                val artist = key.substringBefore('|', "")
+                if (artist !in UNKNOWN_ARTIST_KEYS) null else byTitle[key.substringAfter('|')]?.takeIf { it.size == 1 }
+            }
 
         val names = HashSet<String>()
         val smartNames = HashSet<String>()
@@ -197,7 +207,7 @@ class RealtimePlaylistSync(
             @Suppress("UNCHECKED_CAST")
             val keys = (doc.get("songs") as? List<String>).orEmpty()
             val ids = keys.mapNotNull { key ->
-                val matches = byKey[key] ?: return@mapNotNull null
+                val matches = resolve(key) ?: return@mapNotNull null
                 // Con canciones repetidas se mantiene la que ya estaba en la lista
                 (matches.firstOrNull { it.id in previous } ?: matches.first()).id
             }.distinct()
@@ -220,6 +230,25 @@ class RealtimePlaylistSync(
     private fun migratedKey(userId: String) = "realtime_playlists_$userId"
 
     companion object {
+        private const val ALIAS_PREFS = "song_key_aliases"
+        private val UNKNOWN_ARTIST_KEYS = setOf("", "unknown", "unknownartist", "desconocido", "artistadesconocido")
+
+        /**
+         * Claves viejas → nuevas de canciones a las que se les cambió el artista o el título (Normalizar biblioteca).
+         * Se guardan **antes** de reescribir el archivo: si la app se cierra antes de volver a unir con la nube,
+         * el oyente sigue encontrando la canción por la clave que aún tiene la lista en la nube.
+         */
+        fun recordKeyChanges(context: Context, changes: Map<String, String>) {
+            val real = changes.filter { (old, new) -> old.isNotBlank() && new.isNotBlank() && old != new }
+            if (real.isEmpty()) return
+            val editor = context.getSharedPreferences(ALIAS_PREFS, Context.MODE_PRIVATE).edit()
+            real.forEach { (old, new) -> editor.putString(old, new) }
+            editor.commit()
+        }
+
+        fun keyAliases(context: Context): Map<String, String> =
+            context.getSharedPreferences(ALIAS_PREFS, Context.MODE_PRIVATE).all.mapNotNull { (k, v) -> (v as? String)?.let { k to it } }.toMap()
+
         fun songKey(song: AudioFile): String {
             val title = LibraryMatcher.normalizeTitle(song.title)
             if (title.isBlank()) return ""

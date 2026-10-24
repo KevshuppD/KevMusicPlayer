@@ -1,5 +1,6 @@
 package com.kevshupp.kevmusicplayer.ui.screens.settings
 
+import kotlinx.coroutines.ensureActive
 import com.kevshupp.kevmusicplayer.ui.screens.*
 
 import android.Manifest
@@ -119,12 +120,15 @@ fun LibrarySettingsSection(
 
     var totalSongs by remember { mutableStateOf(settingsPrefs.getInt("cached_total_songs", viewModel.localAudioFiles.size)) }
     var totalSizeMb by remember { mutableStateOf(settingsPrefs.getFloat("cached_total_size_mb", 0f)) }
-    LaunchedEffect(viewModel.localAudioFiles.toList(), isScanning) {
-        val filesCopy = viewModel.localAudioFiles.toList()
+    // Solo cuando cambia el número de canciones o termina un escaneo: antes la clave era la lista entera y cada
+    // edición (p. ej. Normalizar, cientos seguidas) relanzaba esto, que leía todas las filas con letras y abría
+    // cada archivo; las tandas anteriores no se cancelaban y la app se quedó sin memoria (24/10/2026)
+    LaunchedEffect(viewModel.localAudioFiles.size, isScanning) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val allSongs = viewModel.audioDao.getAllAudioFiles()
+            val allSongs = viewModel.audioDao.getAllAudioFilesLightweight()
             var totalBytes = 0L
             allSongs.forEach { audioFile ->
+                ensureActive()
                 try {
                     val uri = Uri.parse(audioFile.uriString)
                     context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { fd ->

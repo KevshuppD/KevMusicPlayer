@@ -1854,6 +1854,13 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 } else {
                     com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.stop()
                 }
+                // Una normalización se cortó antes de unir con la nube: se termina ahora (une las claves nuevas)
+                if (user != null && user.isAuthenticated && user.isAutoSyncEnabled &&
+                    com.kevshupp.kevmusicplayer.data.LibraryNormalizer.isMergePending(application)) {
+                    realtimePlaylists.mergeLocalIntoCloud()
+                    com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.mergeLocalIntoCloud(application)
+                    com.kevshupp.kevmusicplayer.data.LibraryNormalizer.setMergePending(application, false)
+                }
             }
         }
     }
@@ -2308,13 +2315,16 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun applyNormalization(context: Context, proposals: List<com.kevshupp.kevmusicplayer.data.LibraryNormalizer.Proposal>, fields: Set<com.kevshupp.kevmusicplayer.data.LibraryNormalizer.Field>) {
         com.kevshupp.kevmusicplayer.data.LibraryNormalizer.apply(
             context, proposals, fields,
-            onApplied = { updated ->
+            onApplied = { batch ->
                 withContext(Dispatchers.Main) {
-                    val i = localAudioFiles.indexOfFirst { it.id == updated.id }
-                    if (i != -1) localAudioFiles[i] = updated.copy(
-                        lyrics = localAudioFiles[i].lyrics, translatedLyrics = localAudioFiles[i].translatedLyrics,
-                        playCount = localAudioFiles[i].playCount, lastPlayed = localAudioFiles[i].lastPlayed
-                    )
+                    val byId = batch.associateBy { it.id }
+                    // Una sola escritura de la lista por tanda
+                    val updated = localAudioFiles.map { old ->
+                        byId[old.id]?.copy(lyrics = old.lyrics, translatedLyrics = old.translatedLyrics, playCount = old.playCount, lastPlayed = old.lastPlayed) ?: old
+                    }
+                    androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                        updated.forEachIndexed { i, s -> if (localAudioFiles[i] !== s) localAudioFiles[i] = s }
+                    }
                 }
             },
             onFinished = {
@@ -2322,6 +2332,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     loadPlaylists()
                     realtimePlaylists.mergeLocalIntoCloud()
                     com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.mergeLocalIntoCloud(getApplication())
+                    com.kevshupp.kevmusicplayer.data.LibraryNormalizer.setMergePending(getApplication(), false)
                     triggerAutoSync()
                 }
             }
