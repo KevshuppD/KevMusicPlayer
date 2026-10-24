@@ -71,6 +71,7 @@ com/kevshupp/kevmusicplayer/
 │   ├── HttpClients.kt                   # OkHttpClient compartido (un solo pool de conexiones)
 │   ├── BackgroundRestriction.kt         # Detecta si Android tiene la app en batería "Restringida"
 │   ├── MusicFolders.kt                  # Carpeta principal + carpetas de música adicionales
+│   ├── LibraryNormalizer.kt             # Normalizar biblioteca con Deezer (rápida/completa) y escritura de etiquetas
 │   ├── remote/
 │   │   └── RemoteControlServer.kt       # Servidor HTTP + WebSocket (NanoHTTPD) para KevMusic Desktop
 │   ├── telegram/                        # Descargas a través de un bot de Telegram (TDLib)
@@ -128,7 +129,8 @@ com/kevshupp/kevmusicplayer/
     │   │   ├── SearchLyricsDialog.kt    # Búsqueda manual de letras en línea
     │   │   ├── SleepTimerDialog.kt      # Temporizador de apagado
     │   │   ├── AudioSpecsDialog.kt      # Especificaciones técnicas de audio (códec, bitrate, hz)
-    │   │   └── TelegramDownloadDialog.kt# Login de Telegram, búsqueda en Deezer y descargas vía bot
+    │   │   ├── TelegramDownloadDialog.kt# Login de Telegram, búsqueda en Deezer y descargas vía bot
+    │   │   └── LibraryNormalizerDialog.kt # Revisión y aplicación de "Normalizar biblioteca"
     │   └── settings/                    # Secciones modulares de configuración
     │       ├── GeneralSettingsSection.kt
     │       ├── LibrarySettingsSection.kt
@@ -149,16 +151,19 @@ Fuera de `app/`, la carpeta `desktop/` es **KevMusic Desktop** (ver §5.H), un p
 ```text
 desktop/
 ├── build.gradle.kts                     # Kotlin 2.2.21 + Compose Multiplatform 1.9.3, packageDeb / AppImage
+├── cds-train.sh                         # Archivo AppCDS (arranque rápido) y lanzador del .deb, ver §5.H
 └── src/main/kotlin/com/kevshupp/kevmusic/desktop/
     ├── Main.kt                          # Ventana, menú con atajos, conexión o pantalla principal
     ├── RemoteClient.kt                  # WebSocket (OkHttp), biblioteca y carátulas por HTTP, reconexión
     ├── Discovery.kt                     # Búsqueda del teléfono por mDNS (JmDNS)
     ├── Config.kt                        # ~/.config/kevmusic-desktop/config.json (host, puerto, token)
     ├── Mpris.kt                         # Teclas multimedia y applet de sonido (D-Bus MPRIS)
+    ├── StatusNotifier.kt                # Icono en la bandeja del sistema (D-Bus StatusNotifierItem)
     ├── Updater.kt                       # Actualizaciones desde GitHub Releases (tags desktop-v*)
     ├── Models.kt                        # Estado, cola, biblioteca y parser de letras LRC
     ├── soulseek/                        # Cliente de Soulseek propio (protocolo, compartidos, UPnP)
     └── ui/                              # Conexión, Reproduciendo + letra, Canciones, Artistas, Álbumes, Listas, Cola
+                                         # ArtistScreen.kt (panel de artista), LibraryEditing.kt (listas y borrado)
 ```
 
 ---
