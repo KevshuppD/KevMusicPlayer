@@ -41,6 +41,9 @@ val LocalSoulseek = staticCompositionLocalOf<SoulseekClient> { error("sin Soulse
 private enum class SlskTab(val label: String) { Search("Buscar"), Downloads("Descargas"), Uploads("Subidas"), Share("Compartir y ajustes") }
 
 /** Una carpeta de un usuario dentro de los resultados (normalmente un álbum). */
+/** Orden de las carpetas que no son álbumes reconocidos (los álbumes ordenan sus fuentes con [rankSources]). */
+private enum class ResultSort(val label: String) { Best("Mejor fuente"), Fastest("Más rápidos"), Quality("Mayor calidad"), Tracks("Más pistas") }
+
 private data class FolderGroup(val user: String, val folder: String, val files: List<SlskFile>, val free: Boolean, val speed: Long, val queue: Long) {
     val key get() = "$user|$folder"
     val title get() = folder.substringAfterLast('\\').ifBlank { folder }
@@ -70,7 +73,8 @@ fun SoulseekScreen() {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 10.dp)) {
             SlskTab.entries.forEach { t ->
                 val label = when {
-                    t == SlskTab.Downloads && activeDl > 0 -> "${t.label} ($activeDl)"
+                    t == SlskTab.Downloads && activeDl > 0 -> "${t.label} ($activeDl)" +
+                        downloads.filter { it.state == TransferState.Transferring }.sumOf { it.speed }.takeIf { it > 0 }?.let { " · ${formatSpeed(it)}" }.orEmpty()
                     t == SlskTab.Uploads && activeUl > 0 -> "${t.label} ($activeUl)"
                     else -> t.label
                 }
@@ -185,9 +189,10 @@ private fun SearchTab(downloads: List<Transfer>) {
     var format by remember { mutableStateOf(FormatFilter.All) }
     var hq by remember { mutableStateOf(false) }
     var onlyFree by remember { mutableStateOf(false) }
+    var sort by remember { mutableStateOf(ResultSort.Best) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    val groups = remember(results, format, hq, onlyFree) {
+    val groups = remember(results, format, hq, onlyFree, sort) {
         results.asSequence()
             .filter { !onlyFree || it.freeSlot }
             .flatMap { r ->
@@ -196,8 +201,16 @@ private fun SearchTab(downloads: List<Transfer>) {
                     .map { (folder, files) -> FolderGroup(r.username, folder, files.sortedBy { it.path }, r.freeSlot, r.speed, r.queue) }
             }
             .distinctBy { it.key }
-            // Primero quien está disponible ahora (hueco de subida libre), después los más rápidos
-            .sortedWith(compareByDescending<FolderGroup> { it.free }.thenByDescending { it.speed }.thenBy { it.queue })
+            .sortedWith(
+                when (sort) {
+                    // Primero quien está disponible ahora (hueco de subida libre), después los más rápidos
+                    ResultSort.Best -> compareByDescending<FolderGroup> { it.free }.thenByDescending { it.speed }.thenBy { it.queue }
+                    ResultSort.Fastest -> compareByDescending<FolderGroup> { it.speed }.thenByDescending { it.free }
+                    ResultSort.Quality -> compareByDescending<FolderGroup> { g -> g.files.any { it.extension in LOSSLESS_EXT } }
+                        .thenByDescending { it.bitrate ?: 0 }.thenByDescending { it.free }.thenByDescending { it.speed }
+                    ResultSort.Tracks -> compareByDescending<FolderGroup> { it.files.size }.thenByDescending { it.free }.thenByDescending { it.speed }
+                }
+            )
             .toList()
     }
     val state = remember(downloads) { downloads.associateBy { it.username + "|" + it.path } }
@@ -251,6 +264,14 @@ private fun SearchTab(downloads: List<Transfer>) {
             Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(32.dp).background(MaterialTheme.colorScheme.outlineVariant).align(Alignment.CenterVertically))
             FilterChip(hq, { hq = !hq }, label = { Text("Alta calidad") })
             FilterChip(onlyFree, { onlyFree = !onlyFree }, label = { Text("Disponible ahora") })
+            Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(32.dp).background(MaterialTheme.colorScheme.outlineVariant).align(Alignment.CenterVertically))
+            Box {
+                var open by remember { mutableStateOf(false) }
+                AssistChip(onClick = { open = true }, label = { Text("Orden: ${sort.label}") }, leadingIcon = { Icon(Icons.Rounded.Sort, null, Modifier.size(18.dp)) })
+                DropdownMenu(open, { open = false }) {
+                    ResultSort.entries.forEach { s -> DropdownMenuItem(text = { Text(s.label) }, onClick = { sort = s; open = false }) }
+                }
+            }
         }
         if (results.isNotEmpty() || searching) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
@@ -438,13 +459,14 @@ private fun FolderCard(g: FolderGroup, expanded: Boolean, state: Map<String, Tra
                         quality(g.bitrate, g.depth, g.rate),
                         formatSize(g.files.sumOf { it.size }),
                         g.user,
-                        if (g.free) "disponible ahora" else "cola ${g.queue}",
-                        if (g.speed > 0) formatSpeed(g.speed) else null
+                        if (g.free) "disponible ahora" else "cola ${g.queue}"
                     ).joinToString(" · "),
                     fontSize = 12.sp, color = if (g.free) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
             }
+            Spacer(Modifier.width(10.dp))
+            SpeedBadge(g.speed, g.files.sumOf { it.size })
             Spacer(Modifier.width(10.dp))
             if (queued > 0) Text("$queued en descargas", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
             else FilledTonalButton(onClick = onDownload, contentPadding = PaddingValues(horizontal = 12.dp)) {
@@ -489,7 +511,19 @@ private fun TransferList(list: List<Transfer>, upload: Boolean) {
             )
             return@Column
         }
+        val active = list.filter { it.state == TransferState.Transferring }
+        val total = active.sumOf { it.speed }
+        val remaining = active.sumOf { (it.size - it.done).coerceAtLeast(0) }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+            if (active.isNotEmpty()) {
+                Icon(if (upload) Icons.Rounded.Upload else Icons.Rounded.Download, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    formatSpeed(total) + (if (!upload && total > 0) " · quedan ${formatEta(remaining / total)}" else ""),
+                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary
+                )
+                Text(" · ", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Text("${list.size} en total · $finished terminadas", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
             if (!upload && failed.isNotEmpty()) TextButton(onClick = { failed.forEach { slsk.retry(it.id) } }) { Text("Reintentar las fallidas") }
             TextButton(onClick = { slsk.clearFinished() }, enabled = finished > 0) { Text("Limpiar terminadas") }
@@ -545,7 +579,8 @@ private fun stateLabel(t: Transfer): String = when (t.state) {
     TransferState.Queued -> t.detail.ifBlank { "Pendiente" }
     TransferState.Waiting -> t.detail.ifBlank { "En cola" }
     TransferState.Connecting -> "Conectando…"
-    TransferState.Transferring -> "${(t.progress * 100).toInt()} %" + if (t.speed > 0) " · ${formatSpeed(t.speed)}" else ""
+    TransferState.Transferring -> "${(t.progress * 100).toInt()} %" +
+        if (t.speed > 0) " · ${formatSpeed(t.speed)} · quedan ${formatEta((t.size - t.done).coerceAtLeast(0) / t.speed)}" else ""
     TransferState.Sending -> if (t.done > 0) "Enviando al teléfono · ${(t.progress * 100).toInt()} %" else t.detail
     TransferState.Done -> t.detail.ifBlank { "Lista" }
     TransferState.Failed -> t.detail.ifBlank { "Falló" }
@@ -685,6 +720,35 @@ fun formatSize(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%.1f MB".format(bytes / (1L shl 20).toDouble())
     else -> "${bytes / 1024} KB"
+}
+
+/** "1:05", "12 s" o "1 h 3 min". */
+private fun formatEta(seconds: Long): String = when {
+    seconds < 60 -> "${seconds.coerceAtLeast(1)} s"
+    seconds < 3600 -> "%d:%02d".format(seconds / 60, seconds % 60)
+    else -> "${seconds / 3600} h ${(seconds % 3600) / 60} min"
+}
+
+/**
+ * Velocidad de subida que el usuario anuncia en sus resultados (la mide el servidor de Soulseek con sus últimas
+ * subidas) y cuánto tardaría la carpeta a esa velocidad. Es una estimación: el reparto real depende de su cola.
+ */
+@Composable
+private fun SpeedBadge(speed: Long, bytes: Long) {
+    val color = when {
+        speed <= 0 -> MaterialTheme.colorScheme.onSurfaceVariant
+        speed >= 1L shl 20 -> Color(0xFF00E676)
+        speed >= 200L * 1024 -> MaterialTheme.colorScheme.primary
+        else -> Color(0xFFFFB300)
+    }
+    Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(92.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Speed, null, tint = color, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(if (speed > 0) formatSpeed(speed) else "—", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+        }
+        if (speed > 0 && bytes > 0) Text("≈ ${formatEta(bytes / speed)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+    }
 }
 
 private fun formatSpeed(bytesPerSec: Long) =
