@@ -478,10 +478,19 @@ class RemoteClient(private val scope: CoroutineScope) {
 
     // ---------- HTTP ----------
 
-    fun refreshLibrary() {
+    private var refreshJob: Job? = null
+
+    /**
+     * Vuelve a pedir la biblioteca. Con una ya cargada se hace en silencio: el teléfono avisa con `libraryChanged`
+     * en cada escaneo o edición (con Normalizar, decenas por minuto) y "Cargando…" parpadeaba junto al nombre del
+     * dispositivo como si se desconectara. Una petición nueva sustituye a la que esté en curso. [showProgress] para el
+     * botón "Recargar", donde sí se espera ver que carga.
+     */
+    fun refreshLibrary(showProgress: Boolean = false) {
         val d = device ?: return
-        scope.launch {
-            _libraryLoading.value = true
+        refreshJob?.cancel()
+        refreshJob = scope.launch {
+            _libraryLoading.value = showProgress || _library.value == null
             val lib = withContext(Dispatchers.IO) {
                 runCatching {
                     val req = Request.Builder().url("http://${d.host}:${d.port}/library?token=${d.token}").build()

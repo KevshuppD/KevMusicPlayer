@@ -96,7 +96,7 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
                 if (section in setOf(Section.Home, Section.Songs, Section.Artists, Section.Albums, Section.Playlists) && lib == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         if (loading) CircularProgressIndicator()
-                        else TextButton(onClick = { client.refreshLibrary() }) { Text("Cargar la biblioteca del teléfono") }
+                        else TextButton(onClick = { client.refreshLibrary(showProgress = true) }) { Text("Cargar la biblioteca del teléfono") }
                     }
                     return@Box
                 }
@@ -225,7 +225,7 @@ private fun Sidebar(status: ConnStatus, section: Section, onSection: (Section) -
             Text(status.message, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp))
         }
         Row {
-            TextButton(onClick = { client.refreshLibrary() }, enabled = !loading) { Text(if (loading) "Cargando…" else "Recargar", fontSize = 12.sp) }
+            TextButton(onClick = { client.refreshLibrary(showProgress = true) }, enabled = !loading) { Text(if (loading) "Cargando…" else "Recargar", fontSize = 12.sp) }
             TextButton(onClick = { client.disconnect(forget = true) }) { Text("Desvincular", fontSize = 12.sp) }
         }
         Text(

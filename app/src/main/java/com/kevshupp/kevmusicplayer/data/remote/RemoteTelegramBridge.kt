@@ -60,7 +60,8 @@ class RemoteTelegramBridge(
             AppDatabase.getDatabase(context).audioDao().observeLibrarySignature()
                 .distinctUntilChanged()
                 .drop(1)
-                .debounce(1500)
+                // Escaneos y ediciones en lote (Normalizar, organizar) cambian la firma muchas veces seguidas
+                .debounce(4000)
                 .collect {
                     matcherCache = null
                     broadcast(JSONObject().put("type", "libraryChanged"))

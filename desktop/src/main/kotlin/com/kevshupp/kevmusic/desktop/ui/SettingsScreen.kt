@@ -148,7 +148,7 @@ fun SettingsScreen(status: ConnStatus) {
                         Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             OutlinedButton(onClick = { saved?.let { client.resume(it) } }, enabled = saved != null) { Text("Reconectar") }
-                            OutlinedButton(onClick = { client.refreshLibrary() }) { Text("Recargar biblioteca") }
+                            OutlinedButton(onClick = { client.refreshLibrary(showProgress = true) }) { Text("Recargar biblioteca") }
                             TextButton(onClick = { client.disconnect(forget = true) }) { Text("Desvincular", color = MaterialTheme.colorScheme.error) }
                         }
                     }
