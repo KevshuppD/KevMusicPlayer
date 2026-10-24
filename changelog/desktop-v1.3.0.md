@@ -1,0 +1,6 @@
+- **Nuevo: editar la biblioteca del teléfono desde el PC** (requiere KevMusic 1.8.4 en el teléfono, con la app abierta)
+  - Clic derecho en una canción: **Añadir a una lista**, **Quitar de esta lista** y **Eliminar del teléfono**.
+  - Clic derecho en un álbum, o el botón **Más** de un álbum o artista: añadir todo a una lista o borrarlo del teléfono.
+  - **Nueva lista** en Listas, y **Eliminar lista** en su menú y su cabecera.
+  - Cada cambio se confirma con un aviso; los borrados piden confirmación.
+- **Soulseek:** los álbumes reconocidos muestran **Ya lo tienes** o **Tienes N de M** si ya están en tu teléfono.
