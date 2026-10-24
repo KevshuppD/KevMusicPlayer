@@ -1,0 +1,5 @@
+- **Nuevo: panel de artista como en el teléfono:** foto, lo que más escuchas, sus álbumes y todas sus canciones.
+- **El nombre del artista se puede pulsar** en Reproduciendo, en el reproductor de abajo y en las listas de canciones para ir a su panel; el álbum en Reproduciendo abre el álbum.
+- **Nuevo ajuste "Al pulsar la X"** (Ajustes › Ventana): salir, minimizar o **seguir en la bandeja del sistema**. En la bandeja: clic para mostrar, clic central para pausar, rueda para el volumen. Archivo › Salir (Ctrl+Q) cierra del todo.
+- **Arreglado:** ya se puede **fijar KevMusic Desktop al panel** en Linux Mint (Cinnamon) y la ventana muestra su icono; en el menú aparece como "KevMusic Desktop".
+- **Arranque más rápido:** la ventana abre en torno a un segundo antes.
