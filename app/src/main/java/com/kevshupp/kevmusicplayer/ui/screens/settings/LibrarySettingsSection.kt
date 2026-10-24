@@ -78,7 +78,8 @@ fun LibrarySettingsSection(
     onFindDuplicates: () -> Unit,
     onCheckIntegrity: () -> Unit,
     onFindShortSongs: () -> Unit,
-    onFindMissingCovers: () -> Unit = {}
+    onFindMissingCovers: () -> Unit = {},
+    onNormalizeLibrary: () -> Unit = {}
 ) {
     var activeOrganizerAction by remember { mutableStateOf("") }
     // Resultado de organizar o migrar con la lista de errores (título, movidas, fallos)
@@ -930,6 +931,61 @@ fun LibrarySettingsSection(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = getLocalized("Buscar Portadas Faltantes", "Search Missing Covers"),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+
+            // Normalize Library Section
+            HorizontalDivider(
+                color = settingsDividerColor(),
+                modifier = Modifier.padding(vertical = 12.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = getLocalized("NORMALIZAR BIBLIOTECA", "NORMALIZE LIBRARY"),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingsInfoButton(
+                    title = getLocalized("Normalizar Biblioteca", "Normalize Library"),
+                    infoText = getLocalized(
+                        "Busca cada canción en Deezer y corrige título, artista, álbum, año y número de pista, y completa el género que falta. Revisas los cambios antes de aplicarlos.",
+                        "Looks up every song on Deezer to fix title, artist, album, year and track number, and fill missing genres. You review the changes before applying them."
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Button(
+                onClick = onNormalizeLibrary,
+                enabled = !isScanning && !isRenaming,
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AutoFixHigh,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = getLocalized("Normalizar con Deezer", "Normalize with Deezer"),
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onPrimary

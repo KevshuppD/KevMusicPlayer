@@ -64,8 +64,11 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
     val library by client.library.collectAsState()
     val loading by client.libraryLoading.collectAsState()
     var detail by remember { mutableStateOf<Detail?>(null) }
+    val edits = remember { LibraryEdits() }
 
 
+    CompositionLocalProvider(LocalEdits provides edits) {
+    LibraryEditDialogs(library)
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(Modifier.weight(1f)) {
             Sidebar(status, section) { detail = null; onSection(it) }
@@ -85,17 +88,38 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
                             lib!!.songs.filter { s -> splitArtists(s.artist).any { it == d.name } }
                                 .sortedWith(compareBy({ normalize(it.album) }, { it.track }, { normalize(it.title) }))
                         }
-                        SongCollectionScreen(d.name, "${songs.size} canciones", songs.firstOrNull()?.id, songs, currentId, false) { detail = null }
+                        SongCollectionScreen(
+                            d.name, "${songs.size} canciones", songs.firstOrNull()?.id, songs, currentId, false,
+                            extraActions = { CollectionMenu(songs, "todas las canciones de ${d.name}") }
+                        ) { detail = null }
                     }
-                    is Detail.AlbumDetail -> SongCollectionScreen(
-                        d.album.name,
-                        listOfNotNull(d.album.artist, d.album.songs.first().year.takeIf { it.isNotBlank() }, "${d.album.songs.size} canciones").joinToString(" · "),
-                        d.album.songs.first().id, d.album.songs, currentId, true
-                    ) { detail = null }
+                    is Detail.AlbumDetail -> {
+                        // El álbum guardado al abrirlo no se entera de lo borrado: se recalcula con la biblioteca actual
+                        val album = remember(lib, d) { albumsOf(lib!!).firstOrNull { it.name == d.album.name && it.artist == d.album.artist } }
+                        if (album == null) { LaunchedEffect(Unit) { detail = null }; return@Box }
+                        SongCollectionScreen(
+                            album.name,
+                            listOfNotNull(album.artist, album.songs.first().year.takeIf { it.isNotBlank() }, "${album.songs.size} canciones").joinToString(" · "),
+                            album.songs.first().id, album.songs, currentId, true,
+                            extraActions = { CollectionMenu(album.songs, "el álbum \"${album.name}\"") }
+                        ) { detail = null }
+                    }
                     is Detail.PlaylistDetail -> {
                         val pl = lib!!.playlists.firstOrNull { it.name == d.name }
                         val songs = pl?.songIds?.mapNotNull { lib.byId[it] } ?: emptyList()
-                        SongCollectionScreen(d.name, "${songs.size} canciones · ${formatTime(songs.sumOf { it.duration })}", songs.firstOrNull()?.id, songs, currentId, true) { detail = null }
+                        SongCollectionScreen(
+                            d.name, (if (pl?.smart == true) "Inteligente · " else "") + "${songs.size} canciones · ${formatTime(songs.sumOf { it.duration })}",
+                            songs.firstOrNull()?.id, songs, currentId, true,
+                            playlist = d.name.takeIf { pl?.smart == false },
+                            extraActions = {
+                                if (pl != null && d.name != "Favoritos") {
+                                    Spacer(Modifier.width(8.dp))
+                                    OutlinedButton(onClick = { edits.deletePlaylist(d.name) }, shape = RoundedCornerShape(14.dp)) {
+                                        Icon(Icons.Rounded.Delete, null); Spacer(Modifier.width(6.dp)); Text("Eliminar lista")
+                                    }
+                                }
+                            }
+                        ) { detail = null }
                     }
                     Detail.History -> {
                         val songs = remember(lib) { lib!!.songs.filter { it.lastPlayed > 0 }.sortedByDescending { it.lastPlayed }.take(200) }
@@ -126,6 +150,30 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
             }
         }
         PlayerBar(state) { detail = null; onSection(Section.NowPlaying) }
+    }
+    Box(Modifier.fillMaxSize().padding(bottom = 108.dp), contentAlignment = Alignment.BottomCenter) { NoticeBanner() }
+    }
+}
+
+/** Botón "Más" de la cabecera de un álbum o artista: añadir todo a una lista o borrarlo del teléfono. */
+@Composable
+private fun CollectionMenu(songs: List<com.kevshupp.kevmusic.desktop.Song>, what: String) {
+    val edits = LocalEdits.current
+    var open by remember { mutableStateOf(false) }
+    Spacer(Modifier.width(8.dp))
+    Box {
+        OutlinedIconButton(onClick = { open = true }, enabled = songs.isNotEmpty()) { Icon(Icons.Rounded.MoreHoriz, "Más") }
+        DropdownMenu(open, { open = false }) {
+            DropdownMenuItem(
+                text = { Text("Añadir a una lista…") }, leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) },
+                onClick = { open = false; edits.addToPlaylist(songs.map { it.id }) }
+            )
+            DropdownMenuItem(
+                text = { Text("Eliminar del teléfono…", color = MaterialTheme.colorScheme.error) },
+                leadingIcon = { Icon(Icons.Rounded.DeleteForever, null, tint = MaterialTheme.colorScheme.error) },
+                onClick = { open = false; edits.deleteSongs(songs, what) }
+            )
+        }
     }
 }
 

@@ -68,7 +68,7 @@ class RemoteControlServer(
         const val SERVICE_TYPE = "_kevmusic._tcp."
         private const val PREFS = "remote_prefs"
         private const val KEY_TOKENS = "tokens"
-        private const val PROTOCOL_VERSION = 2
+        private const val PROTOCOL_VERSION = 3
         private const val MAX_UPLOAD_BYTES = 2L * 1024 * 1024 * 1024
         private val UPLOAD_EXTENSIONS = setOf("mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "wma", "alac", "ape")
 
@@ -92,6 +92,16 @@ class RemoteControlServer(
         val smartPlaylists = MutableStateFlow<Map<String, List<Long>>>(emptyMap())
         /** Peticiones del escritorio para cambiar el aleatorio; MediaBrowserViewModel las atiende con toggleShuffle(). */
         val shuffleToggleRequests = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+
+        /** Comandos del escritorio que editan la biblioteca ([LIBRARY_EDITS]). */
+        val LIBRARY_EDITS = setOf("playlistCreate", "playlistAdd", "playlistRemove", "playlistDelete", "deleteSongs")
+        /** Una edición pedida por el escritorio; [reply] recibe null si salió bien o el motivo del fallo. */
+        class LibraryEdit(val msg: JSONObject, val reply: (error: String?) -> Unit)
+        /**
+         * Las listas y el borrado de canciones viven en MediaBrowserViewModel (sincronización en la nube, memoria),
+         * así que este las atiende. Sin suscriptor (solo vive el servicio) se responde que hay que abrir la app.
+         */
+        val libraryEdits = kotlinx.coroutines.flow.MutableSharedFlow<LibraryEdit>(extraBufferCapacity = 8)
 
         /** Equipos conectados ahora mismo (nombres). */
         val connectedClients = MutableStateFlow<List<String>>(emptyList())
@@ -308,6 +318,10 @@ class RemoteControlServer(
 
     private fun handleCommand(socket: ClientSocket, msg: JSONObject) {
         if (telegram.handle(msg) { socket.post(it.toString()) }) return
+        if (msg.optString("type") in LIBRARY_EDITS) {
+            handleLibraryEdit(socket, msg)
+            return
+        }
         when (msg.optString("type")) {
             "volume" -> {
                 val am = audioManager()
@@ -356,6 +370,20 @@ class RemoteControlServer(
                 }
             }
         }
+    }
+
+    private fun handleLibraryEdit(socket: ClientSocket, msg: JSONObject) {
+        fun result(error: String?) {
+            socket.post(JSONObject().put("type", "editResult").put("req", msg.optLong("req"))
+                .put("ok", error == null).put("error", error ?: "").toString())
+            // Las listas no cambian la firma de Room: el escritorio recarga la biblioteca a mano
+            if (error == null) broadcast(JSONObject().put("type", "libraryChanged"))
+        }
+        if (libraryEdits.subscriptionCount.value == 0) {
+            result("Abre KevMusicPlayer en el teléfono para editar la biblioteca.")
+            return
+        }
+        libraryEdits.tryEmit(LibraryEdit(msg) { error -> result(error) })
     }
 
     /**

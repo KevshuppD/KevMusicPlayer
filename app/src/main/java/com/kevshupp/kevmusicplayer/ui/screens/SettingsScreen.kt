@@ -137,6 +137,7 @@ fun SettingsScreen(
     var showIntegrityChecker by remember { mutableStateOf(false) }
     var showShortSongsFinder by remember { mutableStateOf(false) }
     var showMissingCoverFinder by remember { mutableStateOf(false) }
+    var showLibraryNormalizer by remember { mutableStateOf(false) }
     val deviceFolders = remember { viewModel.getAllDeviceFolders(context) }
     var excludedFolders by remember { mutableStateOf(viewModel.getExcludedFolders()) }
 
@@ -460,6 +461,13 @@ fun SettingsScreen(
                 categoryKey = "library",
                 icon = Icons.Rounded.ContentCopy,
                 action = { showDuplicateFinder = true }
+            ),
+            SettingSearchItem(
+                title = getLocalized("Normalizar Biblioteca", "Normalize Library"),
+                description = getLocalized("Corregir títulos, artistas, álbumes, años y géneros con Deezer", "Fix titles, artists, albums, years and genres with Deezer"),
+                categoryKey = "library",
+                icon = Icons.Rounded.AutoFixHigh,
+                action = { showLibraryNormalizer = true }
             ),
             SettingSearchItem(
                 title = getLocalized("Comprobador de Integridad", "Audio Integrity Checker"),
@@ -1061,7 +1069,8 @@ fun SettingsScreen(
                                     onFindDuplicates = { showDuplicateFinder = true },
                                     onCheckIntegrity = { showIntegrityChecker = true },
                                     onFindShortSongs = { showShortSongsFinder = true },
-                                    onFindMissingCovers = { showMissingCoverFinder = true }
+                                    onFindMissingCovers = { showMissingCoverFinder = true },
+                                    onNormalizeLibrary = { showLibraryNormalizer = true }
                                 )
                             }
                             "cloud" -> {
@@ -1108,6 +1117,12 @@ fun SettingsScreen(
         )
     }
 
+    if (showLibraryNormalizer) {
+        com.kevshupp.kevmusicplayer.ui.screens.dialogs.LibraryNormalizerDialog(
+            viewModel = viewModel,
+            onDismiss = { showLibraryNormalizer = false }
+        )
+    }
     if (showMissingCoverFinder) {
         MissingCoverFinderDialog(
             viewModel = viewModel,

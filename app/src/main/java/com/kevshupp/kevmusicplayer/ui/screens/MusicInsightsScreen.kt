@@ -137,7 +137,7 @@ fun MusicInsightsScreen(
     }
 
     val topGenres = remember(playedSongs) {
-        playedSongs.filter { it.genre.isNotBlank() && it.genre != "<unknown>" }
+        playedSongs.filter { !com.kevshupp.kevmusicplayer.data.LibraryNormalizer.isUnknown(it.genre) }
             .groupBy { it.genre }
             .mapValues { entry -> entry.value.sumOf { it.playCount } }
             .toList()

@@ -1787,6 +1787,54 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.smartPlaylists.value = it
             }
         }
+        bridgeLibraryEditsToRemote()
+    }
+
+    // Ediciones de la biblioteca desde KevMusic Desktop (listas y borrado de canciones). Va después de
+    // realtimePlaylists, que usan createPlaylist() y compañía: un init anterior lo vería aún nulo.
+    private fun bridgeLibraryEditsToRemote() {
+        viewModelScope.launch(Dispatchers.Main) {
+            com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.libraryEdits.collect { edit ->
+                val msg = edit.msg
+                val name = msg.optString("name").trim()
+                val ids = msg.optJSONArray("ids")?.let { a -> (0 until a.length()).map { a.optLong(it) } } ?: emptyList()
+                val isSmart = smartPlaylistConfigs.any { it.name == name }
+                when (msg.optString("type")) {
+                    "playlistCreate" -> when {
+                        name.isEmpty() -> edit.reply("La lista necesita un nombre.")
+                        playlists.containsKey(name) || isSmart -> edit.reply("Ya existe una lista llamada \"$name\".")
+                        else -> {
+                            createPlaylist(name)
+                            if (ids.isNotEmpty()) addSongsToPlaylist(name, ids)
+                            edit.reply(null)
+                        }
+                    }
+                    "playlistAdd" -> when {
+                        isSmart -> edit.reply("Las listas inteligentes se llenan solas con sus reglas.")
+                        !playlists.containsKey(name) -> edit.reply("La lista \"$name\" ya no existe.")
+                        else -> { addSongsToPlaylist(name, ids); edit.reply(null) }
+                    }
+                    "playlistRemove" -> when {
+                        isSmart -> edit.reply("Las listas inteligentes se llenan solas con sus reglas.")
+                        !playlists.containsKey(name) -> edit.reply("La lista \"$name\" ya no existe.")
+                        else -> { ids.forEach { removeSongFromPlaylist(name, it) }; edit.reply(null) }
+                    }
+                    "playlistDelete" -> when {
+                        name == com.kevshupp.kevmusicplayer.ui.screens.FAVORITES_PLAYLIST -> edit.reply("Favoritos no se puede eliminar.")
+                        !playlists.containsKey(name) && !isSmart -> edit.reply("La lista \"$name\" ya no existe.")
+                        else -> { deletePlaylist(name); edit.reply(null) }
+                    }
+                    "deleteSongs" -> {
+                        val known = ids.filter { id -> localAudioFiles.any { it.id == id } }
+                        if (known.isEmpty()) edit.reply("Esas canciones ya no están en el teléfono.")
+                        else deleteSongs(getApplication(), known) {
+                            loadPlaylists()
+                            edit.reply(null)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Playlists synced in real time with Firestore (one document per playlist, see RealtimePlaylistSync)
@@ -2166,6 +2214,33 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
         val processedIds = mutableSetOf<Long>()
 
+        fun item(file: AudioFile): DuplicateItem {
+            val path = pathMap[file.id] ?: ""
+            val size = sizeMap[file.id] ?: 0L
+            return DuplicateItem(file, path, size, duplicateQualityLabel(path, size, file.duration))
+        }
+
+        // El original es el de mejor calidad (sin pérdida > mayor bitrate); a igualdad, el que no tiene sufijo de
+        // copia, el más antiguo y la ruta más corta. Antes solo contaban estos tres y se proponía borrar el FLAC.
+        fun group(files: List<AudioFile>) {
+            val sorted = files.sortedWith(
+                compareByDescending<AudioFile> { isLosslessPath(pathMap[it.id] ?: "") }
+                    .thenByDescending { estimatedKbps(sizeMap[it.id] ?: 0L, it.duration) / 32 }
+                    .thenBy { file ->
+                        val name = java.io.File(pathMap[file.id] ?: "").name
+                        val hasSuffix = name.contains(REGEX_SUFFIX_PARENTHESIS) ||
+                                        name.contains(REGEX_SUFFIX_COPIA) ||
+                                        name.contains(REGEX_SUFFIX_UNDERSCORE)
+                        if (hasSuffix) 1 else 0
+                    }
+                    .thenBy { it.dateAdded }
+                    .thenBy { (pathMap[it.id] ?: "").length }
+            )
+            sorted.forEach { processedIds.add(it.id) }
+            groups.add(DuplicateGroup(original = item(sorted.first()), duplicates = sorted.drop(1).map(::item)))
+        }
+
+        // 1. Mismo nombre de archivo (sin extensión ni sufijos de copia) en la misma carpeta
         val folderGroups = localFilesCopy.groupBy { file ->
             val path = pathMap[file.id] ?: ""
             val parentPath = if (path.isNotEmpty()) java.io.File(path).parent ?: "" else file.folderPath
@@ -2173,106 +2248,44 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             val cleanName = cleanFilename(name).lowercase()
             Pair(parentPath.lowercase(), cleanName)
         }
+        folderGroups.forEach { (_, files) -> if (files.size > 1) group(files) }
 
-        folderGroups.forEach { (_, files) ->
-            if (files.size > 1) {
-                val sorted = files.sortedWith(compareBy<AudioFile> { file ->
-                    val path = pathMap[file.id] ?: ""
-                    val name = java.io.File(path).name
-                    val hasSuffix = name.contains(REGEX_SUFFIX_PARENTHESIS) || 
-                                    name.contains(REGEX_SUFFIX_COPIA) ||
-                                    name.contains(REGEX_SUFFIX_UNDERSCORE)
-                    if (hasSuffix) 1 else 0
-                }.thenBy { it.dateAdded }
-                 .thenBy { (pathMap[it.id] ?: "").length })
-
-                val originalFile = sorted.first()
-                val originalPath = pathMap[originalFile.id] ?: ""
-                val originalSize = sizeMap[originalFile.id] ?: 0L
-
-                val duplicateItems = sorted.drop(1).map { file ->
-                    val path = pathMap[file.id] ?: ""
-                    val size = sizeMap[file.id] ?: 0L
-                    processedIds.add(file.id)
-                    DuplicateItem(file, path, size)
-                }
-
-                processedIds.add(originalFile.id)
-
-                groups.add(
-                    DuplicateGroup(
-                        original = DuplicateItem(originalFile, originalPath, originalSize),
-                        duplicates = duplicateItems
-                    )
-                )
-            }
-        }
-
+        // 2. Mismo título y artista, como LibraryMatcher: sin tildes, mayúsculas ni puntuación, y sin
+        // "(feat. …)", "(Remastered)", "- Live"… Dentro, solo las que duran lo mismo (±3 s)
+        val norm = com.kevshupp.kevmusicplayer.data.telegram.LibraryMatcher
         val remainingFiles = localFilesCopy.filter { !processedIds.contains(it.id) }
         val metaGroups = remainingFiles.groupBy { file ->
-            val t = file.title.trim().lowercase()
-            val a = file.artist.trim().lowercase()
-            Pair(t, a)
+            Pair(norm.normalizeTitle(file.title), norm.normalizeTitle(file.artist))
         }
 
         metaGroups.forEach { (metaKey, files) ->
-            val title = metaKey.first
-            val artist = metaKey.second
-            
+            val (title, artist) = metaKey
             val isUnknown = title.isBlank() || title.contains("unknown") ||
-                            artist.isBlank() || artist.contains("unknown")
-            
-            if (!isUnknown && files.size > 1) {
-                val partitions = mutableListOf<MutableList<AudioFile>>()
-                files.forEach { file ->
-                    var added = false
-                    for (part in partitions) {
-                        val representative = part.first()
-                        if (Math.abs(representative.duration - file.duration) <= 3000) {
-                            part.add(file)
-                            added = true
-                            break
-                        }
-                    }
-                    if (!added) {
-                        partitions.add(mutableListOf(file))
-                    }
-                }
-
-                partitions.forEach { part ->
-                    if (part.size > 1) {
-                        val sorted = part.sortedWith(compareBy<AudioFile> { file ->
-                            val path = pathMap[file.id] ?: ""
-                            val name = java.io.File(path).name
-                            val hasSuffix = name.contains(REGEX_SUFFIX_PARENTHESIS) || 
-                                            name.contains(REGEX_SUFFIX_COPIA) ||
-                                            name.contains(REGEX_SUFFIX_UNDERSCORE)
-                            if (hasSuffix) 1 else 0
-                        }.thenBy { it.dateAdded }
-                         .thenBy { (pathMap[it.id] ?: "").length })
-
-                        val originalFile = sorted.first()
-                        val originalPath = pathMap[originalFile.id] ?: ""
-                        val originalSize = sizeMap[originalFile.id] ?: 0L
-
-                        val duplicateItems = sorted.drop(1).map { file ->
-                            val path = pathMap[file.id] ?: ""
-                            val size = sizeMap[file.id] ?: 0L
-                            DuplicateItem(file, path, size)
-                        }
-
-                        groups.add(
-                            DuplicateGroup(
-                                original = DuplicateItem(originalFile, originalPath, originalSize),
-                                duplicates = duplicateItems
-                            )
-                        )
-                    }
-                }
+                            artist.isBlank() || artist.contains("unknown") || artist.contains("desconocido")
+            if (isUnknown || files.size < 2) return@forEach
+            val partitions = mutableListOf<MutableList<AudioFile>>()
+            files.sortedBy { it.duration }.forEach { file ->
+                val part = partitions.firstOrNull { Math.abs(it.first().duration - file.duration) <= 3000 }
+                if (part != null) part.add(file) else partitions.add(mutableListOf(file))
             }
+            partitions.forEach { part -> if (part.size > 1) group(part) }
         }
 
         return@withContext groups
+    }
+
+    private fun isLosslessPath(path: String) =
+        path.substringAfterLast('.', "").lowercase() in setOf("flac", "wav", "aiff", "aif", "alac", "ape", "wv")
+
+    /** kbps medios por tamaño y duración (incluye la carátula incrustada, así que es aproximado). */
+    private fun estimatedKbps(sizeBytes: Long, durationMs: Long): Long =
+        if (sizeBytes <= 0 || durationMs <= 0) 0 else sizeBytes * 8 / durationMs
+
+    /** "FLAC · 920 kbps" para mostrar en el buscador de duplicados. */
+    private fun duplicateQualityLabel(path: String, sizeBytes: Long, durationMs: Long): String {
+        val ext = path.substringAfterLast('.', "").uppercase()
+        val kbps = estimatedKbps(sizeBytes, durationMs)
+        return listOfNotNull(ext.ifBlank { null }, if (kbps > 0) "~$kbps kbps" else null).joinToString(" · ")
     }
 
     private fun cleanFilename(filename: String): String {
@@ -2282,6 +2295,37 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             .replace(REGEX_CLEAN_COPIA, "")
             .replace(REGEX_CLEAN_UNDERSCORE, "")
             .trim()
+    }
+
+    /** Analiza la biblioteca con Deezer para "Normalizar biblioteca" (ver [com.kevshupp.kevmusicplayer.data.LibraryNormalizer]). */
+    fun startNormalizeScan() = com.kevshupp.kevmusicplayer.data.LibraryNormalizer.scan(ArrayList(localAudioFiles))
+
+    /**
+     * Aplica las correcciones elegidas. Título y artista forman la clave de las listas y estadísticas en la nube
+     * (`songKey`), así que al terminar se vuelven a unir con la nube: si no, el oyente de listas buscaría las
+     * claves viejas, no encontraría la canción y la quitaría de sus listas.
+     */
+    fun applyNormalization(context: Context, proposals: List<com.kevshupp.kevmusicplayer.data.LibraryNormalizer.Proposal>, fields: Set<com.kevshupp.kevmusicplayer.data.LibraryNormalizer.Field>) {
+        com.kevshupp.kevmusicplayer.data.LibraryNormalizer.apply(
+            context, proposals, fields,
+            onApplied = { updated ->
+                withContext(Dispatchers.Main) {
+                    val i = localAudioFiles.indexOfFirst { it.id == updated.id }
+                    if (i != -1) localAudioFiles[i] = updated.copy(
+                        lyrics = localAudioFiles[i].lyrics, translatedLyrics = localAudioFiles[i].translatedLyrics,
+                        playCount = localAudioFiles[i].playCount, lastPlayed = localAudioFiles[i].lastPlayed
+                    )
+                }
+            },
+            onFinished = {
+                withContext(Dispatchers.Main) {
+                    loadPlaylists()
+                    realtimePlaylists.mergeLocalIntoCloud()
+                    com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.mergeLocalIntoCloud(getApplication())
+                    triggerAutoSync()
+                }
+            }
+        )
     }
 
     fun deleteSongs(context: android.content.Context, songIds: List<Long>, onComplete: () -> Unit) {

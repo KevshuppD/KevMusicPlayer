@@ -205,6 +205,10 @@ private fun SearchTab(downloads: List<Transfer>) {
     val scope = rememberCoroutineScope()
     var albums by remember { mutableStateOf<List<DzAlbum>>(emptyList()) }
     var openAlbum by remember { mutableStateOf<DzAlbum?>(null) }
+    // Lo que ya está en el teléfono, para avisar "Ya lo tienes" en los álbumes reconocidos
+    val library by LocalClient.current.library.collectAsState()
+    val localIndex = remember(library) { AlbumMatcher.LocalIndex(library?.songs.orEmpty()) }
+    val owned = remember(albums, localIndex) { albums.associate { it.id to AlbumMatcher.ownedCount(it, localIndex) } }
 
     // Carpetas reconocidas como un álbum de Deezer (en el orden de Deezer) y el resto
     val (byAlbum, others) = remember(groups, albums) {
@@ -227,7 +231,7 @@ private fun SearchTab(downloads: List<Transfer>) {
 
     openAlbum?.let { album ->
         val sources = byAlbum.firstOrNull { it.first.id == album.id }?.second.orEmpty()
-        AlbumSourcesPage(album, sources, state, onBack = { openAlbum = null }) { error = it }
+        AlbumSourcesPage(album, sources, state, owned[album.id] ?: 0, onBack = { openAlbum = null }) { error = it }
         return
     }
 
@@ -273,7 +277,7 @@ private fun SearchTab(downloads: List<Transfer>) {
         Scrolling {
             if (byAlbum.isNotEmpty()) {
                 item(key = "h-albums") { ListHeader("Álbumes") }
-                items(byAlbum, key = { "album-" + it.first.id }) { (album, sources) -> AlbumCard(album, sources) { openAlbum = album } }
+                items(byAlbum, key = { "album-" + it.first.id }) { (album, sources) -> AlbumCard(album, sources, owned[album.id] ?: 0) { openAlbum = album } }
                 if (others.isNotEmpty()) item(key = "h-others") { ListHeader("Otras carpetas") }
             }
             others.forEach { g ->
@@ -306,7 +310,7 @@ private fun ListHeader(text: String) {
 }
 
 @Composable
-private fun AlbumCard(album: DzAlbum, sources: List<FolderGroup>, onOpen: () -> Unit) {
+private fun AlbumCard(album: DzAlbum, sources: List<FolderGroup>, owned: Int, onOpen: () -> Unit) {
     val free = sources.count { it.free }
     val complete = sources.count { album.tracks > 0 && it.files.size >= album.tracks }
     Surface(onClick = onOpen, shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
@@ -314,7 +318,10 @@ private fun AlbumCard(album: DzAlbum, sources: List<FolderGroup>, onOpen: () -> 
             UrlImage(album.cover, 64.dp, corner = 10.dp)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(album.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(album.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    if (owned > 0) { Spacer(Modifier.width(8.dp)); OwnedBadge(album, owned) }
+                }
                 Text(
                     listOf(album.artist, albumTypeLabel(album.type), if (album.tracks > 0) "${album.tracks} pistas" else "").filter { it.isNotBlank() }.joinToString(" · "),
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1
@@ -334,11 +341,30 @@ private fun AlbumCard(album: DzAlbum, sources: List<FolderGroup>, onOpen: () -> 
     }
 }
 
+/** "Ya lo tienes" si están todas las pistas (o más: otra edición), si no "Tienes N de M". */
+private fun ownedLabel(album: DzAlbum, owned: Int) = when {
+    album.tracks in 1..owned -> "Ya lo tienes"
+    album.tracks > 0 -> "Tienes $owned de ${album.tracks}"
+    else -> "Tienes $owned"
+}
+
+@Composable
+private fun OwnedBadge(album: DzAlbum, owned: Int) {
+    Row(
+        Modifier.clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)).padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Rounded.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(ownedLabel(album, owned), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
 private fun albumTypeLabel(type: String) = when (type) { "single" -> "Sencillo"; "ep" -> "EP"; "compile" -> "Recopilatorio"; "album" -> "Álbum"; else -> "" }
 
 /** Un álbum reconocido con todas las carpetas que lo tienen, de mejor a peor. */
 @Composable
-private fun AlbumSourcesPage(album: DzAlbum, sources: List<FolderGroup>, state: Map<String, Transfer>, onBack: () -> Unit, onError: (String) -> Unit) {
+private fun AlbumSourcesPage(album: DzAlbum, sources: List<FolderGroup>, state: Map<String, Transfer>, owned: Int, onBack: () -> Unit, onError: (String) -> Unit) {
     val slsk = LocalSoulseek.current
     var expanded by remember(album.id) { mutableStateOf(setOf<String>()) }
     val best = sources.firstOrNull()
@@ -353,6 +379,7 @@ private fun AlbumSourcesPage(album: DzAlbum, sources: List<FolderGroup>, state: 
                     listOf(album.artist, albumTypeLabel(album.type), if (album.tracks > 0) "${album.tracks} pistas" else "").filter { it.isNotBlank() }.joinToString(" · "),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (owned > 0) { Spacer(Modifier.height(6.dp)); OwnedBadge(album, owned) }
                 Spacer(Modifier.height(10.dp))
                 if (best != null) {
                     val queued = best.files.count { state[best.user + "|" + it.path] != null }

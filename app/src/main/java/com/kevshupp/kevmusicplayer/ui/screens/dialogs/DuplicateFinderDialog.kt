@@ -312,7 +312,8 @@ fun DuplicateFinderDialog(
                                                     Spacer(modifier = Modifier.width(8.dp))
                                                     Column(modifier = Modifier.weight(1f)) {
                                                         Text(
-                                                            text = getLocalized("Conservar original:", "Keep original:"),
+                                                            text = getLocalized("Conservar original:", "Keep original:") +
+                                                                (if (group.original.quality.isNotBlank()) " ${group.original.quality}" else ""),
                                                             fontSize = 10.sp,
                                                             color = Color(0xFF00E676),
                                                             fontWeight = FontWeight.Bold
@@ -366,7 +367,8 @@ fun DuplicateFinderDialog(
                                                                 )
                                                                 val sizeMB = duplicate.sizeBytes / (1024.0 * 1024.0)
                                                                 Text(
-                                                                    text = String.format("%.2f MB", sizeMB),
+                                                                    text = listOf(duplicate.quality, String.format("%.2f MB", sizeMB))
+                                                                        .filter { it.isNotBlank() }.joinToString(" · "),
                                                                     fontSize = 10.sp,
                                                                     color = Color.White.copy(alpha = 0.7f),
                                                                     fontWeight = FontWeight.Bold

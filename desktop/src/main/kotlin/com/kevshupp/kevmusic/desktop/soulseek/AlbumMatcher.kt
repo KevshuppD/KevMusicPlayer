@@ -57,6 +57,24 @@ object AlbumMatcher {
         return base.ifEmpty { tokens(title) }
     }
 
+    /** Canciones del teléfono agrupadas por el título "núcleo" de su álbum, para [ownedCount]. */
+    class LocalIndex(songs: List<com.kevshupp.kevmusic.desktop.Song>) {
+        val byCore: Map<Set<String>, List<Pair<Set<String>, Long>>> =
+            songs.filter { it.album.isNotBlank() }.groupBy({ coreTitle(it.album) }, { tokens(it.artist) to it.id })
+    }
+
+    /**
+     * Cuántas canciones de ese álbum hay ya en el teléfono: mismo título núcleo ("WINGS (Deluxe)" = "Wings") y
+     * artista que contiene al de Deezer o al revés (cubre "BTS, …" y artistas en otra escritura dentro del álbum).
+     */
+    fun ownedCount(album: DzAlbum, index: LocalIndex): Int {
+        val songs = index.byCore[coreTitle(album.title)] ?: return 0
+        val artist = tokens(album.artist)
+        // Basta con que una pista sea del artista: en WINGS alguna figura como "방탄소년단"
+        if (songs.none { (a, _) -> a.containsAll(artist) || (a.isNotEmpty() && artist.containsAll(a)) }) return 0
+        return songs.size
+    }
+
     class Prepared(val album: DzAlbum, val core: Set<String>, val artist: Set<String>)
 
     fun prepare(albums: List<DzAlbum>) = albums.map { Prepared(it, coreTitle(it.title), tokens(it.artist)) }

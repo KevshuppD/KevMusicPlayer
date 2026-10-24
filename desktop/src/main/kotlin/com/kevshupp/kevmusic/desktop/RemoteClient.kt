@@ -64,6 +64,12 @@ class RemoteClient(private val scope: CoroutineScope) {
     // Peticiones a Deezer hechas por el teléfono, esperando su tgResult
     private val pending = java.util.concurrent.ConcurrentHashMap<Long, kotlinx.coroutines.CompletableDeferred<DzResult>>()
     private val nextReq = java.util.concurrent.atomic.AtomicLong(1)
+    // Ediciones de la biblioteca esperando su editResult (null = bien, si no el motivo)
+    private val pendingEdits = java.util.concurrent.ConcurrentHashMap<Long, kotlinx.coroutines.CompletableDeferred<String?>>()
+
+    /** Aviso breve tras editar la biblioteca (lista creada, canciones eliminadas o el error). */
+    private val _notice = MutableStateFlow<Notice?>(null)
+    val notice: StateFlow<Notice?> = _notice
 
     private var socket: WebSocket? = null
     private var device: SavedDevice? = null
@@ -199,6 +205,9 @@ class RemoteClient(private val scope: CoroutineScope) {
                 }
             }
             "libraryChanged" -> refreshLibrary()
+            "editResult" -> pendingEdits.remove(msg.optLong("req"))?.complete(
+                if (msg.optBoolean("ok")) null else msg.optString("error").ifBlank { "No se pudo hacer el cambio" }
+            )
             // Las inteligentes cambian con cada reproducción: se sustituyen sin volver a pedir la biblioteca
             "smartPlaylists" -> _library.value?.let { lib ->
                 val smart = parsePlaylists(msg.optJSONArray("playlists") ?: JSONArray())
@@ -376,6 +385,37 @@ class RemoteClient(private val scope: CoroutineScope) {
     fun jumpTo(index: Int) = cmd("jump") { put("index", index) }
     fun removeFromQueue(index: Int) = cmd("remove") { put("index", index) }
     fun moveInQueue(from: Int, to: Int) = cmd("move") { put("from", from); put("to", to) }
+
+    // ---------- Edición de la biblioteca (protocolo 3) ----------
+
+    /** Envía una edición y muestra [success] o el motivo del fallo en [notice]. */
+    private fun edit(type: String, success: String, build: JSONObject.() -> Unit) {
+        if (phoneProtocol < 3) {
+            _notice.value = Notice("Actualiza KevMusic en el teléfono a la 1.8.4 para editar la biblioteca desde el PC", error = true)
+            return
+        }
+        scope.launch {
+            val req = nextReq.getAndIncrement()
+            val deferred = kotlinx.coroutines.CompletableDeferred<String?>()
+            pendingEdits[req] = deferred
+            send(JSONObject().put("type", type).put("req", req).apply(build))
+            // "" = bien; null = sin respuesta a tiempo
+            val error = kotlinx.coroutines.withTimeoutOrNull(30_000) { deferred.await() ?: "" }
+                ?: "El teléfono no respondió".also { pendingEdits.remove(req) }
+            _notice.value = if (error.isEmpty()) Notice(success) else Notice(error, error = true)
+        }
+    }
+
+    fun createPlaylist(name: String, ids: List<Long> = emptyList()) =
+        edit("playlistCreate", "Lista \"${name.trim()}\" creada") { put("name", name.trim()); put("ids", JSONArray(ids)) }
+    fun addToPlaylist(name: String, ids: List<Long>) =
+        edit("playlistAdd", if (ids.size == 1) "Añadida a \"$name\"" else "${ids.size} canciones añadidas a \"$name\"") { put("name", name); put("ids", JSONArray(ids)) }
+    fun removeFromPlaylist(name: String, ids: List<Long>) =
+        edit("playlistRemove", "Quitada de \"$name\"") { put("name", name); put("ids", JSONArray(ids)) }
+    fun deletePlaylist(name: String) = edit("playlistDelete", "Lista \"$name\" eliminada") { put("name", name) }
+    fun deleteSongs(ids: List<Long>) =
+        edit("deleteSongs", if (ids.size == 1) "Canción eliminada del teléfono" else "${ids.size} canciones eliminadas del teléfono") { put("ids", JSONArray(ids)) }
+    fun dismissNotice() { _notice.value = null }
 
     // ---------- Telegram ----------
 

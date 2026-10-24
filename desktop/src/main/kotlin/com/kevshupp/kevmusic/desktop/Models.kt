@@ -132,3 +132,6 @@ data class DownloadItem(val track: DzTrack, val status: DlStatus, val progress: 
 data class TelegramStatus(val ready: Boolean, val reason: String)
 
 data class DzResult(val tracks: List<DzTrack>, val albums: List<DzAlbum>, val artists: List<DzArtist>, val error: String?)
+
+/** Aviso tras una edición; [at] distingue dos avisos con el mismo texto. */
+data class Notice(val text: String, val error: Boolean = false, val at: Long = System.nanoTime())

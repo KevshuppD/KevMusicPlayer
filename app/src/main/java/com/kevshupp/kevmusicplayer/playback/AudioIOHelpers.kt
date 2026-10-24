@@ -10,7 +10,9 @@ import java.io.File
 data class DuplicateItem(
     val file: AudioFile,
     val path: String,
-    val sizeBytes: Long
+    val sizeBytes: Long,
+    /** Formato y bitrate aproximado, p. ej. "FLAC · ~920 kbps". */
+    val quality: String = ""
 )
 
 data class DuplicateGroup(
@@ -623,7 +625,9 @@ fun writeMp3TagsWithMp3Agic(
     artist: String? = null,
     album: String? = null,
     genre: String? = null,
-    coverBytes: ByteArray? = null
+    coverBytes: ByteArray? = null,
+    year: String? = null,
+    track: Int? = null
 ): Boolean {
     val uri = if (!uriString.isNullOrBlank()) {
         Uri.parse(uriString)
@@ -673,6 +677,9 @@ fun writeMp3TagsWithMp3Agic(
                 id3v2Tag.genreDescription = genre
             } catch (e: Exception) {}
         }
+
+        if (!year.isNullOrBlank()) id3v2Tag.year = year
+        if (track != null && track > 0) id3v2Tag.track = track.toString()
 
         if (coverBytes != null && coverBytes.isNotEmpty()) {
             val mimeType = getMimeTypeFromBytes(coverBytes)

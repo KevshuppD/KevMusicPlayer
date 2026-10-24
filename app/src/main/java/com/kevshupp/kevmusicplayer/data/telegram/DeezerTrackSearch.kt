@@ -100,6 +100,12 @@ object DeezerTrackSearch {
         return parseTracks(data).map { it.copy(album = title, coverSmall = cover, coverXl = coverXl.ifBlank { it.coverXl }) }
     }
 
+    /** `/track/{id}` completo (posición, fecha, colaboradores, id del álbum), en caché 7 días. */
+    suspend fun trackDetails(id: Long): JSONObject = getObject("$API/track/$id", cacheTtlMs = ARTIST_CACHE_TTL_MS)
+
+    /** `/album/{id}` completo (géneros, fecha de salida), en caché 7 días. */
+    suspend fun albumDetails(id: Long): JSONObject = getObject("$API/album/$id", cacheTtlMs = ARTIST_CACHE_TTL_MS)
+
     suspend fun artistTopTracks(artistId: Long, limit: Int = 25, cached: Boolean = false): List<DeezerTrack> =
         parseTracks(getData("$API/artist/$artistId/top", "limit" to "$limit", cacheTtlMs = if (cached) ARTIST_CACHE_TTL_MS else 0))
 

@@ -70,14 +70,15 @@ fun SongRow(
     isCurrent: Boolean,
     onPlay: () -> Unit,
     onPlayNext: () -> Unit,
-    onEnqueue: () -> Unit
+    onEnqueue: () -> Unit,
+    extraItems: () -> List<ContextMenuItem> = { emptyList() }
 ) {
     ContextMenuArea(items = {
         listOf(
             ContextMenuItem("Reproducir") { onPlay() },
             ContextMenuItem("Reproducir a continuación") { onPlayNext() },
             ContextMenuItem("Añadir a la cola") { onEnqueue() }
-        )
+        ) + extraItems()
     }) {
         val interaction = remember { MutableInteractionSource() }
         val hovered by interaction.collectIsHoveredAsState()

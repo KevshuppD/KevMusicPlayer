@@ -131,8 +131,9 @@ fun PlayShuffleButtons(ids: List<Long>) {
 }
 
 @Composable
-fun SongList(songs: List<Song>, currentId: Long?, numbered: Boolean, modifier: Modifier = Modifier.fillMaxSize()) {
+fun SongList(songs: List<Song>, currentId: Long?, numbered: Boolean, modifier: Modifier = Modifier.fillMaxSize(), playlist: String? = null) {
     val client = LocalClient.current
+    val edits = LocalEdits.current
     val state = rememberLazyListState()
     ScrollableList(state, modifier) {
         itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
@@ -140,7 +141,8 @@ fun SongList(songs: List<Song>, currentId: Long?, numbered: Boolean, modifier: M
                 song, if (numbered) i + 1 else null, song.id == currentId,
                 onPlay = { client.playSongs(songs.map { it.id }, i) },
                 onPlayNext = { client.enqueue(listOf(song.id), playNext = true) },
-                onEnqueue = { client.enqueue(listOf(song.id), playNext = false) }
+                onEnqueue = { client.enqueue(listOf(song.id), playNext = false) },
+                extraItems = { edits.songMenuItems(client, listOf(song), "esta canción", playlist) }
             )
         }
     }
@@ -182,6 +184,7 @@ fun ArtistsScreen(lib: Library, onOpen: (String) -> Unit) {
 @Composable
 fun AlbumsScreen(lib: Library, onOpen: (Album) -> Unit) {
     val client = LocalClient.current
+    val edits = LocalEdits.current
     var query by remember { mutableStateOf("") }
     val albums = remember(lib) { albumsOf(lib) }
     val shown = remember(albums, query) {
@@ -200,7 +203,9 @@ fun AlbumsScreen(lib: Library, onOpen: (Album) -> Unit) {
                     listOf(
                         ContextMenuItem("Reproducir") { client.playSongs(album.songs.map { it.id }) },
                         ContextMenuItem("Reproducir a continuación") { client.enqueue(album.songs.map { it.id }, true) },
-                        ContextMenuItem("Añadir a la cola") { client.enqueue(album.songs.map { it.id }, false) }
+                        ContextMenuItem("Añadir a la cola") { client.enqueue(album.songs.map { it.id }, false) },
+                        ContextMenuItem("Añadir a una lista…") { edits.addToPlaylist(album.songs.map { it.id }) },
+                        ContextMenuItem("Eliminar álbum del teléfono…") { edits.deleteSongs(album.songs, "el álbum \"${album.name}\"") }
                     )
                 }) {
                     Column(Modifier.clip(RoundedCornerShape(14.dp)).clickable { onOpen(album) }.padding(6.dp)) {
@@ -220,8 +225,13 @@ fun AlbumsScreen(lib: Library, onOpen: (Album) -> Unit) {
 @Composable
 fun PlaylistsScreen(lib: Library, onOpen: (String) -> Unit) {
     val client = LocalClient.current
+    val edits = LocalEdits.current
     Column(Modifier.fillMaxSize()) {
-        SectionTitle("Listas", "${lib.playlists.size} listas")
+        SectionTitle("Listas", "${lib.playlists.size} listas") {
+            Button(onClick = { edits.newPlaylist() }, shape = RoundedCornerShape(14.dp)) {
+                Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(6.dp)); Text("Nueva lista")
+            }
+        }
         if (lib.playlists.isEmpty()) {
             Text("No hay listas en el teléfono.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             return@Column
@@ -231,6 +241,13 @@ fun PlaylistsScreen(lib: Library, onOpen: (String) -> Unit) {
         val state = rememberLazyListState()
         ScrollableList(state, Modifier.fillMaxSize()) {
             items(ordered, key = { it.name }) { pl ->
+                ContextMenuArea(items = {
+                    buildList {
+                        add(ContextMenuItem("Reproducir") { client.playSongs(pl.songIds) })
+                        add(ContextMenuItem("Añadir a la cola") { client.enqueue(pl.songIds, false) })
+                        if (pl.name != "Favoritos") add(ContextMenuItem("Eliminar lista…") { edits.deletePlaylist(pl.name) })
+                    }
+                }) {
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onOpen(pl.name) }.padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -260,6 +277,7 @@ fun PlaylistsScreen(lib: Library, onOpen: (String) -> Unit) {
                         Icon(Icons.Rounded.PlayCircle, null, tint = MaterialTheme.colorScheme.primary)
                     }
                 }
+                }
             }
         }
     }
@@ -267,7 +285,10 @@ fun PlaylistsScreen(lib: Library, onOpen: (String) -> Unit) {
 
 /** Detalle de artista, álbum o lista: cabecera con carátula y botones, y sus canciones. */
 @Composable
-fun SongCollectionScreen(title: String, subtitle: String, artId: Long?, songs: List<Song>, currentId: Long?, numbered: Boolean, onBack: () -> Unit) {
+fun SongCollectionScreen(
+    title: String, subtitle: String, artId: Long?, songs: List<Song>, currentId: Long?, numbered: Boolean,
+    playlist: String? = null, extraActions: @Composable RowScope.() -> Unit = {}, onBack: () -> Unit
+) {
     Column(Modifier.fillMaxSize()) {
         TextButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Volver") }
         Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(bottom = 18.dp)) {
@@ -277,10 +298,10 @@ fun SongCollectionScreen(title: String, subtitle: String, artId: Long?, songs: L
                 Text(title, fontSize = 30.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
-                Row { PlayShuffleButtons(songs.map { it.id }) }
+                Row { PlayShuffleButtons(songs.map { it.id }); extraActions() }
             }
         }
-        SongList(songs, currentId, numbered)
+        SongList(songs, currentId, numbered, playlist = playlist)
     }
 }
 

@@ -72,6 +72,10 @@ interface AudioDao {
         track: Int
     )
 
+    /** Etiquetas corregidas por "Normalizar biblioteca"; no toca letras ni estadísticas. */
+    @Query("UPDATE audio_files SET title = :title, artist = :artist, album = :album, genre = :genre, year = :year, track = :track, dateModified = :dateModified WHERE id = :id")
+    suspend fun updateTagMetadata(id: Long, title: String, artist: String, album: String, genre: String, year: String, track: Int, dateModified: Long)
+
     @Query("UPDATE audio_files SET replayGain = :replayGain WHERE id = :id")
     suspend fun updateReplayGain(id: Long, replayGain: Float)
 
