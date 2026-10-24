@@ -20,8 +20,30 @@ import com.kevshupp.kevmusic.desktop.soulseek.SoulseekConfig
 import com.kevshupp.kevmusic.desktop.ui.MainScreen
 import com.kevshupp.kevmusic.desktop.ui.Section
 import com.kevshupp.kevmusic.desktop.ui.UpdateDialog
+import kotlinx.coroutines.launch
+
+/**
+ * Nombre de la ventana para el gestor de ventanas (WM_CLASS). Por defecto AWT usa el de la clase principal
+ * ("com-kevshupp-kevmusic-desktop-MainKt"), que no coincide con ningún lanzador: Cinnamon no podía fijar la app
+ * al panel y le ponía un icono genérico. Debe coincidir con el .desktop que instala el .deb.
+ * Necesita `--add-opens java.desktop/sun.awt.X11=ALL-UNNAMED` (jvmArgs en build.gradle.kts).
+ */
+private const val WM_CLASS = "kevmusic-desktop-kevmusic-desktop"
+
+/** Arranque de entrenamiento para el archivo de clases (ver desktop/cds-train.sh). */
+private val CDS_TRAINING = System.getenv("KEVMUSIC_CDS_TRAIN") == "1"
+
+private fun setWmClass() {
+    runCatching {
+        val toolkit = java.awt.Toolkit.getDefaultToolkit()
+        val field = toolkit.javaClass.getDeclaredField("awtAppClassName")
+        field.isAccessible = true
+        field.set(null, WM_CLASS)
+    }
+}
 
 fun main() {
+    setWmClass()
     Settings.load()
     SoulseekConfig.load()
     app()
@@ -55,9 +77,17 @@ private fun app() = application {
     var paired by remember { mutableStateOf(Config.load() != null) }
 
     LaunchedEffect(Unit) {
+        // cds-train.sh: abrir la ventana, dibujar unos segundos y salir, para que la JVM guarde las clases usadas
+        // (AppCDS) sin conectar con nada
+        if (CDS_TRAINING) {
+            kotlinx.coroutines.delay(6000)
+            exitApplication()
+            return@LaunchedEffect
+        }
         Config.load()?.let { client.resume(it) }
         discovery.start()
-        mpris.start()
+        // La conexión a D-Bus tarda: fuera del hilo de la interfaz para no retrasar el primer dibujo
+        launch(kotlinx.coroutines.Dispatchers.IO) { mpris.start() }
         if (SoulseekConfig.autoConnect && SoulseekConfig.hasAccount) soulseek.start()
         if (Settings.autoCheckUpdates) Updater.check()
     }

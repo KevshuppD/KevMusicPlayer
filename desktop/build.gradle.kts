@@ -30,6 +30,30 @@ kotlin {
     jvmToolchain(21)
 }
 
+// El runtime recortado por jlink no trae el archivo CDS (lib/server/classes.jsa) del JDK y la JVM arrancaba
+// cargando todas las clases base desde cero. Se genera con el propio runtime: Compose lo recorta sin bin/java
+// (--strip-native-commands, por eso no sirve el plugin --generate-cds-archive de jlink), así que se copia un
+// momento el lanzador `java` del mismo JDK, se ejecuta -Xshare:dump y se borra.
+tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask>().configureEach {
+    doLast {
+        val runtime = destinationDir.get().asFile
+        val java = File(runtime, "bin/java")
+        val jdkJava = File(javaHome.get(), "bin/java")
+        if (!jdkJava.exists()) return@doLast
+        java.parentFile.mkdirs()
+        jdkJava.copyTo(java, overwrite = true)
+        java.setExecutable(true)
+        try {
+            val proc = ProcessBuilder(java.absolutePath, "-Xshare:dump").redirectErrorStream(true).start()
+            proc.inputStream.readAllBytes()
+            if (proc.waitFor() != 0) logger.warn("No se pudo generar el archivo CDS del runtime")
+        } finally {
+            java.delete()
+            java.parentFile.takeIf { it.list()?.isEmpty() == true }?.delete()
+        }
+    }
+}
+
 dependencies {
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
@@ -47,6 +71,8 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "com.kevshupp.kevmusic.desktop.MainKt"
+        // Para fijar WM_CLASS (ver setWmClass() en Main.kt) y que Cinnamon asocie la ventana con su lanzador
+        jvmArgs += listOf("--add-opens", "java.desktop/sun.awt.X11=ALL-UNNAMED")
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.AppImage)
             packageName = "kevmusic-desktop"

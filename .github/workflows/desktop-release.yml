@@ -42,11 +42,17 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      # xvfb: cds-train.sh abre la app unos segundos en una pantalla virtual para generar el archivo AppCDS
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
       - name: Build .deb and portable bundle
         run: |
-          chmod +x gradlew
+          chmod +x gradlew cds-train.sh
           ./gradlew packageDeb createDistributable --no-daemon
           DEB=$(find build/compose/binaries/main/deb -name "*.deb" | head -n 1)
+          ./cds-train.sh "$DEB"
+          ./cds-train.sh build/compose/binaries/main/app/kevmusic-desktop
           cp "$DEB" "../kevmusic-desktop_${{ steps.version.outputs.version }}_amd64.deb"
           tar -C build/compose/binaries/main/app -czf "../kevmusic-desktop-${{ steps.version.outputs.version }}-linux-x64.tar.gz" kevmusic-desktop
 
