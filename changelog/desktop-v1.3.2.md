@@ -1,0 +1,6 @@
+- **Soulseek: velocidades visibles**
+  - Cada resultado muestra la velocidad del usuario y cuánto tardaría la carpeta.
+  - Nuevo selector **Orden**: mejor fuente, más rápidos, mayor calidad o más pistas.
+  - Descargas y subidas muestran la velocidad total y el tiempo que falta.
+- **Nuevo: Descargar repartido** en la página de un álbum: pide cada canción a un usuario distinto para bajar varias a la vez; si una fuente falla o tiene mucha cola, pasa a otra.
+- **Arreglado:** el nombre del teléfono ya no parpadea como si se desconectara cuando cambia la biblioteca.
