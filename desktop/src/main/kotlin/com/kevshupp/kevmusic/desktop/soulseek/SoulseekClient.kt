@@ -102,6 +102,8 @@ class PeerConn(val socket: Socket, @Volatile var username: String, @Volatile var
  */
 class SoulseekClient(private val scope: CoroutineScope) {
     companion object {
+        /** En una descarga repartida, tiempo máximo en la cola de un usuario antes de pedir la canción a otro. */
+        private const val SPLIT_WAIT_MS = 90_000L
         const val SERVER_HOST = "server.slsknet.org"
         const val SERVER_PORT = 2242
         private const val CLIENT_VERSION = 160
@@ -160,6 +162,10 @@ class SoulseekClient(private val scope: CoroutineScope) {
     private val ul = ConcurrentHashMap<Long, Transfer>()
     private val ulFiles = ConcurrentHashMap<Long, File>()
     private val toPhone = LinkedBlockingQueue<Long>()
+    /** Otras fuentes de cada canción de una descarga repartida, por orden de preferencia (ver [downloadSplit]). */
+    private val alternates = ConcurrentHashMap<Long, ArrayDeque<Pair<String, SlskFile>>>()
+    private val waitingSince = ConcurrentHashMap<Long, Long>()
+    @Volatile private var splitWatchdog: Thread? = null
 
     @Volatile private var searchToken = -1L
     private val pendingResults = ConcurrentLinkedQueue<SlskResult>()
@@ -659,6 +665,61 @@ class SoulseekClient(private val scope: CoroutineScope) {
         publishDl()
     }
 
+    /**
+     * Descarga repartida de un álbum: cada canción trae sus fuentes posibles (usuario, archivo), la primera la
+     * mejor. Como cada usuario envía un archivo cada vez, se reparte para que varias canciones bajen a la vez:
+     * a cada canción le toca la fuente con menos canciones asignadas hasta ahora (a igualdad, la mejor). Si una
+     * falla o pasa más de [SPLIT_WAIT_MS] en la cola de su usuario, pasa a la siguiente fuente. Todas se
+     * guardan en la misma carpeta [folder].
+     */
+    fun downloadSplit(folder: String, songs: List<List<Pair<String, SlskFile>>>) {
+        val load = HashMap<String, Int>()
+        songs.forEach { candidates ->
+            if (candidates.isEmpty()) return@forEach
+            if (candidates.any { (u, f) -> dl.values.any { it.username == u && it.path == f.path && it.state != TransferState.Failed } }) return@forEach
+            val pick = candidates.minByOrNull { load[it.first] ?: 0 } ?: return@forEach
+            load[pick.first] = (load[pick.first] ?: 0) + 1
+            val (user, f) = pick
+            val t = Transfer(ids.getAndIncrement(), user, f.path, f.size, detail = "Pendiente", folder = folder)
+            dl[t.id] = t
+            alternates[t.id] = ArrayDeque(candidates.filter { it !== pick })
+            if (_status.value is SlskStatus.Online) pool.execute { requestDownload(t.id) }
+        }
+        publishDl()
+        startSplitWatchdog()
+    }
+
+    /** Pasa la canción a su siguiente fuente; false si no le quedan. */
+    private fun switchSource(id: Long, reason: String): Boolean {
+        val next = alternates[id]?.removeFirstOrNull() ?: run { alternates.remove(id); return false }
+        val (user, f) = next
+        waitingSince.remove(id)
+        updateDl(id) { it.copy(username = user, path = f.path, size = f.size, state = TransferState.Queued, done = 0, speed = 0, detail = "$reason · probando con $user") }
+        if (_status.value is SlskStatus.Online) pool.execute { requestDownload(id) }
+        return true
+    }
+
+    private fun startSplitWatchdog() {
+        if (splitWatchdog?.isAlive == true) return
+        splitWatchdog = thread(isDaemon = true, name = "soulseek-split") {
+            while (alternates.isNotEmpty()) {
+                Thread.sleep(10_000)
+                val now = System.currentTimeMillis()
+                alternates.keys.toList().forEach { id ->
+                    val t = dl[id]
+                    when {
+                        t == null || t.finished -> { alternates.remove(id); waitingSince.remove(id) }
+                        t.state != TransferState.Waiting || alternates[id].isNullOrEmpty() -> waitingSince.remove(id)
+                        else -> {
+                            val since = waitingSince.getOrPut(id) { now }
+                            if (now - since > SPLIT_WAIT_MS) switchSource(id, "Mucha cola en ${t.username}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /** Pide la carpeta completa al usuario (el resultado de búsqueda solo trae lo que coincidió). */
     fun downloadFolder(user: String, folder: String, fallback: List<SlskFile>, onError: (String) -> Unit) {
         pool.execute {
@@ -799,7 +860,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
 
     /** `<carpeta de descargas>/<carpeta remota>/<archivo>`; nunca sobrescribe. */
     private fun finalFile(t: Transfer): File {
-        val folder = safe(t.path.split('\\').dropLast(1).lastOrNull().orEmpty().ifBlank { t.username })
+        val folder = safe(t.folder.ifBlank { t.path.split('\\').dropLast(1).lastOrNull().orEmpty().ifBlank { t.username } })
         val dir = File(SoulseekConfig.downloadDir, folder)
         val name = safe(t.name)
         var f = File(dir, name)
@@ -812,7 +873,11 @@ class SoulseekClient(private val scope: CoroutineScope) {
 
     private fun findDl(user: String, path: String) = dl.values.firstOrNull { it.username == user && it.path == path && !it.finished }
 
-    private fun failDl(id: Long, reason: String) = updateDl(id) { it.copy(state = TransferState.Failed, detail = reason, speed = 0) }
+    private fun failDl(id: Long, reason: String) {
+        // Descarga repartida: se prueba la siguiente fuente antes de darla por fallida
+        if (dl[id] != null && switchSource(id, reason)) return
+        updateDl(id) { it.copy(state = TransferState.Failed, detail = reason, speed = 0) }
+    }
 
     private fun updateDl(id: Long, change: (Transfer) -> Transfer) {
         dl.computeIfPresent(id) { _, t -> change(t) }
@@ -974,7 +1039,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
             val arr = JSONArray()
             pending.forEach {
                 arr.put(JSONObject().put("user", it.username).put("path", it.path).put("size", it.size)
-                    .put("local", if (it.awaitingPhone) it.localPath else ""))
+                    .put("local", if (it.awaitingPhone) it.localPath else "").put("folder", it.folder))
             }
             queueFile.writeText(arr.toString())
         }
@@ -990,7 +1055,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
                     Transfer(ids.getAndIncrement(), o.getString("user"), o.getString("path"), o.optLong("size"),
                         state = TransferState.Sending, detail = "Esperando al teléfono", localPath = local).also { toPhone.add(it.id) }
                 } else {
-                    Transfer(ids.getAndIncrement(), o.getString("user"), o.getString("path"), o.optLong("size"), detail = "Pendiente")
+                    Transfer(ids.getAndIncrement(), o.getString("user"), o.getString("path"), o.optLong("size"), detail = "Pendiente", folder = o.optString("folder"))
                 }
                 dl[t.id] = t
             }

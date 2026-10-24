@@ -45,7 +45,9 @@ data class Transfer(
     val done: Long = 0,
     val speed: Long = 0,
     val detail: String = "",
-    val localPath: String = ""
+    val localPath: String = "",
+    /** Carpeta de destino fija (descarga repartida: todas las canciones del álbum juntas aunque vengan de varios usuarios). */
+    val folder: String = ""
 ) {
     val name get() = path.substringAfterLast('\\')
     val progress get() = if (size > 0) (done.toFloat() / size).coerceIn(0f, 1f) else 0f

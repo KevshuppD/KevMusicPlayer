@@ -383,6 +383,29 @@ private fun OwnedBadge(album: DzAlbum, owned: Int) {
 
 private fun albumTypeLabel(type: String) = when (type) { "single" -> "Sencillo"; "ep" -> "EP"; "compile" -> "Recopilatorio"; "album" -> "Álbum"; else -> "" }
 
+/** Nombre de la canción sin número de pista, artista ni extensión, para emparejarla entre carpetas de distintos usuarios. */
+private fun songKey(fileName: String, artist: Set<String>): String =
+    AlbumMatcher.tokens(fileName.substringBeforeLast('.')).filterNot { it.all(Char::isDigit) || it in artist }.sorted().joinToString(" ")
+
+/**
+ * Reparto para "Descargar repartido": fuentes completas, de usuarios distintos y con los mismos formatos que la
+ * mejor (para no mezclar FLAC con MP3); por cada canción de la mejor, las fuentes que tienen la misma canción.
+ * Null si no hay al menos dos fuentes que compartan la mayoría de las canciones.
+ */
+private fun splitPlan(album: DzAlbum, sources: List<FolderGroup>): List<List<Pair<String, SlskFile>>>? {
+    val complete = sources.filter { album.tracks <= 0 || it.files.size >= album.tracks }
+    val base = complete.firstOrNull() ?: return null
+    val compatible = complete.filter { it.formats == base.formats }.distinctBy { it.user }
+    if (compatible.size < 2) return null
+    val artist = AlbumMatcher.tokens(album.artist)
+    val byKey = compatible.map { g -> g.user to g.files.associateBy { songKey(it.name, artist) } }
+    val plan = base.files.map { f ->
+        val key = songKey(f.name, artist)
+        byKey.mapNotNull { (user, files) -> files[key]?.let { user to it } }.ifEmpty { listOf(base.user to f) }
+    }
+    return plan.takeIf { p -> p.count { it.size >= 2 } * 2 >= p.size }
+}
+
 /** Un álbum reconocido con todas las carpetas que lo tienen, de mejor a peor. */
 @Composable
 private fun AlbumSourcesPage(album: DzAlbum, sources: List<FolderGroup>, state: Map<String, Transfer>, owned: Int, onBack: () -> Unit, onError: (String) -> Unit) {
@@ -404,10 +427,25 @@ private fun AlbumSourcesPage(album: DzAlbum, sources: List<FolderGroup>, state: 
                 Spacer(Modifier.height(10.dp))
                 if (best != null) {
                     val queued = best.files.count { state[best.user + "|" + it.path] != null }
-                    Button(onClick = { slsk.downloadFolder(best.user, best.folder, best.files, onError) }, enabled = queued == 0, shape = RoundedCornerShape(14.dp)) {
-                        Icon(Icons.Rounded.Download, null); Spacer(Modifier.width(6.dp))
-                        Text(if (queued > 0) "En descargas" else "Descargar la mejor")
+                    val plan = remember(album, sources) { splitPlan(album, sources) }
+                    Row {
+                        Button(onClick = { slsk.downloadFolder(best.user, best.folder, best.files, onError) }, enabled = queued == 0, shape = RoundedCornerShape(14.dp)) {
+                            Icon(Icons.Rounded.Download, null); Spacer(Modifier.width(6.dp))
+                            Text(if (queued > 0) "En descargas" else "Descargar la mejor")
+                        }
+                        if (plan != null) {
+                            val users = plan.flatten().map { it.first }.distinct().size
+                            Spacer(Modifier.width(8.dp))
+                            FilledTonalButton(onClick = { slsk.downloadSplit(best.title, plan) }, enabled = queued == 0, shape = RoundedCornerShape(14.dp)) {
+                                Icon(Icons.Rounded.CallSplit, null); Spacer(Modifier.width(6.dp))
+                                Text("Descargar repartido ($users fuentes)")
+                            }
+                        }
                     }
+                    if (plan != null) Text(
+                        "Repartido: varias canciones a la vez, una por usuario; si una fuente falla o tiene mucha cola, pasa a otra.",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp)
+                    )
                     Text(
                         listOfNotNull(best.user, best.formats, quality(best.bitrate, best.depth, best.rate), if (best.free) "disponible ahora" else "cola ${best.queue}")
                             .joinToString(" · "),
