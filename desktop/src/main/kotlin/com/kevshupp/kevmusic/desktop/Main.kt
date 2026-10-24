@@ -63,13 +63,23 @@ private fun app() = application {
         }
     }
     var raiseRequest by remember { mutableStateOf(0) }
+    var windowVisible by remember { mutableStateOf(true) }
     val mpris = remember {
-        Mpris(client, scope, onRaise = { raiseRequest++ }, onQuit = {
+        Mpris(client, scope, onRaise = { windowVisible = true; raiseRequest++ }, onQuit = {
             client.disconnect(forget = false)
             discovery.stop()
             soulseek.stop()
             exitApplication()
         })
+    }
+    val tray = remember { StatusNotifier(client) { windowVisible = true; raiseRequest++ } }
+    fun quit() {
+        client.disconnect(forget = false)
+        discovery.stop()
+        mpris.stop()
+        tray.stop()
+        soulseek.stop()
+        exitApplication()
     }
     val status by client.status.collectAsState()
     var section by remember { mutableStateOf(Section.Home) }
@@ -96,24 +106,42 @@ private fun app() = application {
         if (status is ConnStatus.Disconnected || (status is ConnStatus.Failed && Config.load() == null)) paired = false
     }
 
+    // Bandeja del sistema por D-Bus (ver StatusNotifier); si el escritorio no la tiene, la X minimiza
+    LaunchedEffect(Settings.closeAction) {
+        val want = Settings.closeAction == Settings.CLOSE_TRAY
+        TrayState.active = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            tray.stop()
+            if (want) tray.start() else null
+        }
+        // Al quitar la bandeja, que la ventana no se quede oculta sin forma de volver
+        if (!want) windowVisible = true
+    }
+    val trayAvailable = TrayState.active == true
+
+    var minimizeRequest by remember { mutableStateOf(0) }
     Window(
+        visible = windowVisible,
         onCloseRequest = {
-            client.disconnect(forget = false)
-            discovery.stop()
-            mpris.stop()
-            soulseek.stop()
-            exitApplication()
+            when {
+                Settings.closeAction == Settings.CLOSE_TRAY && trayAvailable -> windowVisible = false
+                Settings.closeAction != Settings.CLOSE_EXIT -> minimizeRequest++
+                else -> quit()
+            }
         },
         title = "KevMusic Desktop",
         icon = painterResource("icon.png"),
         state = rememberWindowState(size = DpSize(1240.dp, 800.dp))
     ) {
         window.minimumSize = java.awt.Dimension(960, 620)
+        LaunchedEffect(minimizeRequest) { if (minimizeRequest > 0) window.isMinimized = true }
         LaunchedEffect(raiseRequest) {
             if (raiseRequest > 0) { window.isMinimized = false; window.toFront(); window.requestFocus() }
         }
         if (paired) {
             MenuBar {
+                Menu("Archivo") {
+                    Item("Salir", shortcut = KeyShortcut(Key.Q, ctrl = true), onClick = ::quit)
+                }
                 Menu("Reproducción") {
                     Item("Reproducir / Pausa", shortcut = KeyShortcut(Key.P, ctrl = true), onClick = client::toggle)
                     Item("Siguiente", shortcut = KeyShortcut(Key.DirectionRight, ctrl = true), onClick = client::next)

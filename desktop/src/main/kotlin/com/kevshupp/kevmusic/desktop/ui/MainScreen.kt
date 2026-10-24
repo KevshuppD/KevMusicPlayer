@@ -64,14 +64,32 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
     val library by client.library.collectAsState()
     val loading by client.libraryLoading.collectAsState()
     var detail by remember { mutableStateOf<Detail?>(null) }
+    // Pantallas de detalle anteriores (artista → álbum → atrás vuelve al artista)
+    val history = remember { mutableStateListOf<Detail>() }
+    fun open(d: Detail) { detail?.let { if (it != d) history.add(it) }; detail = d }
+    fun back() { detail = history.removeLastOrNull() }
+    fun clearDetail() { history.clear(); detail = null }
+    val nav = remember(library) {
+        Navigation(
+            openArtist = { open(Detail.Artist(it)) },
+            openAlbum = { name, artist ->
+                val lib = library ?: return@Navigation
+                val wanted = normalize(name)
+                val artists = splitArtists(artist).map(::normalize)
+                albumsOf(lib).filter { normalize(it.name) == wanted }
+                    .let { list -> list.firstOrNull { a -> normalize(a.artist) in artists } ?: list.firstOrNull() }
+                    ?.let { open(Detail.AlbumDetail(it)) }
+            }
+        )
+    }
     val edits = remember { LibraryEdits() }
 
 
-    CompositionLocalProvider(LocalEdits provides edits) {
+    CompositionLocalProvider(LocalEdits provides edits, LocalNav provides nav) {
     LibraryEditDialogs(library)
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(Modifier.weight(1f)) {
-            Sidebar(status, section) { detail = null; onSection(it) }
+            Sidebar(status, section) { clearDetail(); onSection(it) }
             Box(Modifier.weight(1f).fillMaxHeight().padding(start = 28.dp, end = 28.dp, top = 24.dp)) {
                 val lib = library
                 val currentId = state?.id
@@ -83,26 +101,17 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
                     return@Box
                 }
                 when (val d = detail) {
-                    is Detail.Artist -> {
-                        val songs = remember(lib, d) {
-                            lib!!.songs.filter { s -> splitArtists(s.artist).any { it == d.name } }
-                                .sortedWith(compareBy({ normalize(it.album) }, { it.track }, { normalize(it.title) }))
-                        }
-                        SongCollectionScreen(
-                            d.name, "${songs.size} canciones", songs.firstOrNull()?.id, songs, currentId, false,
-                            extraActions = { CollectionMenu(songs, "todas las canciones de ${d.name}") }
-                        ) { detail = null }
-                    }
+                    is Detail.Artist -> ArtistScreen(d.name, lib!!, currentId, onOpenAlbum = { open(Detail.AlbumDetail(it)) }) { back() }
                     is Detail.AlbumDetail -> {
                         // El álbum guardado al abrirlo no se entera de lo borrado: se recalcula con la biblioteca actual
                         val album = remember(lib, d) { albumsOf(lib!!).firstOrNull { it.name == d.album.name && it.artist == d.album.artist } }
-                        if (album == null) { LaunchedEffect(Unit) { detail = null }; return@Box }
+                        if (album == null) { LaunchedEffect(Unit) { back() }; return@Box }
                         SongCollectionScreen(
                             album.name,
                             listOfNotNull(album.artist, album.songs.first().year.takeIf { it.isNotBlank() }, "${album.songs.size} canciones").joinToString(" · "),
                             album.songs.first().id, album.songs, currentId, true,
                             extraActions = { CollectionMenu(album.songs, "el álbum \"${album.name}\"") }
-                        ) { detail = null }
+                        ) { back() }
                     }
                     is Detail.PlaylistDetail -> {
                         val pl = lib!!.playlists.firstOrNull { it.name == d.name }
@@ -119,29 +128,29 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
                                     }
                                 }
                             }
-                        ) { detail = null }
+                        ) { back() }
                     }
                     Detail.History -> {
                         val songs = remember(lib) { lib!!.songs.filter { it.lastPlayed > 0 }.sortedByDescending { it.lastPlayed }.take(200) }
-                        SongCollectionScreen("Historial", "Últimas ${songs.size} canciones escuchadas", songs.firstOrNull()?.id, songs, currentId, true) { detail = null }
+                        SongCollectionScreen("Historial", "Últimas ${songs.size} canciones escuchadas", songs.firstOrNull()?.id, songs, currentId, true) { back() }
                     }
                     Detail.NewSongs -> {
                         val songs = remember(lib) { lib!!.songs.sortedByDescending { it.added }.take(100) }
-                        SongCollectionScreen("Nuevas", "Las ${songs.size} canciones agregadas más recientemente", songs.firstOrNull()?.id, songs, currentId, true) { detail = null }
+                        SongCollectionScreen("Nuevas", "Las ${songs.size} canciones agregadas más recientemente", songs.firstOrNull()?.id, songs, currentId, true) { back() }
                     }
                     null -> when (section) {
                         Section.Home -> HomeScreen(
                             lib!!, currentId,
-                            onOpenPlaylist = { detail = Detail.PlaylistDetail(it) },
-                            onOpenArtist = { detail = Detail.Artist(it) },
-                            onOpenHistory = { detail = Detail.History },
-                            onOpenNew = { detail = Detail.NewSongs }
+                            onOpenPlaylist = { open(Detail.PlaylistDetail(it)) },
+                            onOpenArtist = { open(Detail.Artist(it)) },
+                            onOpenHistory = { open(Detail.History) },
+                            onOpenNew = { open(Detail.NewSongs) }
                         )
                         Section.NowPlaying -> NowPlayingScreen(state, lyrics)
                         Section.Songs -> SongsScreen(lib!!, currentId)
-                        Section.Artists -> ArtistsScreen(lib!!) { detail = Detail.Artist(it) }
-                        Section.Albums -> AlbumsScreen(lib!!) { detail = Detail.AlbumDetail(it) }
-                        Section.Playlists -> PlaylistsScreen(lib!!) { detail = Detail.PlaylistDetail(it) }
+                        Section.Artists -> ArtistsScreen(lib!!) { open(Detail.Artist(it)) }
+                        Section.Albums -> AlbumsScreen(lib!!) { open(Detail.AlbumDetail(it)) }
+                        Section.Playlists -> PlaylistsScreen(lib!!) { open(Detail.PlaylistDetail(it)) }
                         Section.Queue -> QueueScreen(queue, lib)
                         Section.Download -> DownloadsScreen()
                         Section.Settings -> SettingsScreen(status)
@@ -149,7 +158,7 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
                 }
             }
         }
-        PlayerBar(state) { detail = null; onSection(Section.NowPlaying) }
+        PlayerBar(state) { clearDetail(); onSection(Section.NowPlaying) }
     }
     Box(Modifier.fillMaxSize().padding(bottom = 108.dp), contentAlignment = Alignment.BottomCenter) { NoticeBanner() }
     }
@@ -240,7 +249,7 @@ private fun PlayerBar(state: PlayerState?, onOpenNowPlaying: () -> Unit) {
             Spacer(Modifier.width(12.dp))
             Column {
                 Text(state?.title?.ifBlank { null } ?: "Sin reproducción", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(state?.artist ?: "", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                ArtistLinks(state?.artist ?: "")
             }
         }
 

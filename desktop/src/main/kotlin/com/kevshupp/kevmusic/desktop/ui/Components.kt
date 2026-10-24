@@ -34,6 +34,43 @@ import com.kevshupp.kevmusic.desktop.formatTime
 
 val LocalClient = staticCompositionLocalOf<RemoteClient> { error("sin cliente") }
 
+/** Abrir el panel de un artista o un álbum desde cualquier pantalla (lo provee MainScreen). */
+class Navigation(val openArtist: (String) -> Unit, val openAlbum: (album: String, artist: String) -> Unit)
+val LocalNav = staticCompositionLocalOf { Navigation({}, { _, _ -> }) }
+
+/**
+ * El texto del artista tal cual ("A feat. B", "A, B") con cada nombre como enlace a su panel; subrayado al pasar
+ * el ratón. Fuera de MainScreen (sin [LocalNav]) los enlaces no hacen nada.
+ */
+@Composable
+fun ArtistLinks(
+    artist: String, modifier: Modifier = Modifier, fontSize: androidx.compose.ui.unit.TextUnit = 12.sp,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign: androidx.compose.ui.text.style.TextAlign? = null
+) {
+    val nav = LocalNav.current
+    val text = remember(artist, nav) {
+        androidx.compose.ui.text.buildAnnotatedString {
+            append(artist)
+            var from = 0
+            splitArtists(artist).forEach { name ->
+                val start = artist.indexOf(name, from)
+                if (start < 0) return@forEach
+                addLink(
+                    androidx.compose.ui.text.LinkAnnotation.Clickable(
+                        name,
+                        androidx.compose.ui.text.TextLinkStyles(
+                            hoveredStyle = androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)
+                        )
+                    ) { nav.openArtist(name) },
+                    start, start + name.length
+                )
+                from = start + name.length
+            }
+        }
+    }
+    Text(text, modifier = modifier, fontSize = fontSize, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = textAlign)
+}
+
 private val placeholderBrushes = listOf(
     Brush.linearGradient(listOf(Color(0xFFFF4081), Color(0xFF7C4DFF))),
     Brush.linearGradient(listOf(Color(0xFF00E5FF), Color(0xFF2962FF))),
@@ -110,10 +147,7 @@ fun SongRow(
                     song.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium,
                     color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                 )
-                Text(
-                    song.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                ArtistLinks(song.artist)
             }
             Text(
                 song.album, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp,

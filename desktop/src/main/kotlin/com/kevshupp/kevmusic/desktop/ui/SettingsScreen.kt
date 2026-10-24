@@ -78,6 +78,28 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
+                if (matches("ventana", "cerrar", "x", "bandeja", "minimizar", "segundo plano", "salir", "comportamiento")) {
+                    SettingsCard("Ventana", Icons.Rounded.Window) {
+                        Text("Al pulsar la X", fontWeight = FontWeight.Medium)
+                        val trayOk = com.kevshupp.kevmusic.desktop.TrayState.active != false
+                        Text(
+                            when (Settings.closeAction) {
+                                Settings.CLOSE_TRAY -> if (trayOk) "La ventana se oculta y KevMusic sigue en la bandeja del sistema (junto al reloj). Clic en el icono: mostrar la ventana · clic central: reproducir/pausa · rueda: volumen. Para cerrar del todo, Archivo › Salir (Ctrl+Q)."
+                                    else "Este escritorio no tiene bandeja del sistema: la X minimizará la ventana."
+                                Settings.CLOSE_MINIMIZE -> "La ventana se minimiza a la barra de tareas y la app sigue abierta (teclas multimedia incluidas)."
+                                else -> "Cierra KevMusic Desktop. La música sigue sonando en el teléfono."
+                            },
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(Settings.CLOSE_EXIT to "Salir", Settings.CLOSE_MINIMIZE to "Minimizar", Settings.CLOSE_TRAY to "Seguir en la bandeja").forEach { (key, label) ->
+                                FilterChip(selected = Settings.closeAction == key, onClick = { Settings.closeAction = key; Settings.save() }, label = { Text(label) })
+                            }
+                        }
+                    }
+                }
+
                 if (matches("letra", "letras", "traducción", "tamaño", "fuente", "karaoke")) {
                     SettingsCard("Letras", Icons.Rounded.Lyrics) {
                         SwitchRow("Mostrar traducción", "Debajo de cada línea, si la canción tiene traducción guardada", Settings.showTranslation) {

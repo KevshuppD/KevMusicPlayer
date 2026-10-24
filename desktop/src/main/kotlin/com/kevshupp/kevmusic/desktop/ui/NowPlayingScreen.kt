@@ -39,8 +39,14 @@ fun NowPlayingScreen(state: PlayerState?, lyrics: Lyrics?) {
             }
             Spacer(Modifier.height(24.dp))
             Text(state.title, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(state.artist, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center, maxLines = 1)
-            if (state.album.isNotBlank()) Text(state.album, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            ArtistLinks(state.artist, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
+            if (state.album.isNotBlank()) {
+                val nav = LocalNav.current
+                Text(
+                    state.album, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                    modifier = Modifier.clickable { nav.openAlbum(state.album, state.artist) }
+                )
+            }
         }
         Box(Modifier.weight(1.1f).fillMaxHeight()) {
             LyricsPanel(lyrics?.takeIf { it.id == state.id }, state)
