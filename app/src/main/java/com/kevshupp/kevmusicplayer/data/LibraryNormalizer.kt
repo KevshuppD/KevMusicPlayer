@@ -18,6 +18,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -55,7 +56,7 @@ object LibraryNormalizer {
     sealed interface State {
         data object Idle : State
         data class Scanning(val done: Int, val total: Int, val found: Int) : State
-        data class Review(val proposals: List<Proposal>, val notFound: Int, val unchanged: Int, val total: Int) : State
+        data class Review(val proposals: List<Proposal>, val notFound: Int, val unchanged: Int, val total: Int, val skipped: Int = 0) : State
         data class Applying(val done: Int, val total: Int) : State
         data class Done(val updated: Int, val failed: List<Pair<AudioFile, String>>) : State
     }
@@ -73,9 +74,66 @@ object LibraryNormalizer {
         _state.value = State.Idle
     }
 
-    fun scan(songs: List<AudioFile>) {
+    // ---------- Memoria de lo ya revisado (normalización rápida) ----------
+
+    /**
+     * Por canción (id): huella de sus etiquetas cuando se revisó, resultado y fecha. La rápida se salta las que
+     * conservan la misma huella: correctas o ya corregidas. Las que Deezer no tenía se vuelven a probar a los
+     * [NOT_FOUND_RETRY_MS]. Si cambias las etiquetas a mano (o el escaneo trae otras), la huella cambia y se revisa.
+     */
+    private const val NOT_FOUND_RETRY_MS = 30L * 24 * 60 * 60 * 1000
+    private const val STATUS_OK = "ok"
+    private const val STATUS_NOT_FOUND = "nf"
+    private val stateLock = Any()
+
+    private fun stateFile(context: Context) = File(context.filesDir, "normalize_state.json")
+
+    private fun fingerprint(s: AudioFile) = listOf(s.title, s.artist, s.album, s.genre, s.year, s.track.toString()).joinToString("\u0001").hashCode().toString(16)
+
+    private fun loadState(context: Context): MutableMap<Long, Triple<String, String, Long>> = synchronized(stateLock) {
+        val map = HashMap<Long, Triple<String, String, Long>>()
+        runCatching {
+            val j = JSONObject(stateFile(context).readText())
+            j.keys().forEach { k ->
+                val parts = j.getString(k).split('|')
+                if (parts.size == 3) map[k.toLong()] = Triple(parts[0], parts[1], parts[2].toLongOrNull() ?: 0L)
+            }
+        }
+        map
+    }
+
+    private fun saveMarks(context: Context, marks: Map<Long, Pair<AudioFile, String>>) {
+        if (marks.isEmpty()) return
+        synchronized(stateLock) {
+            val map = loadState(context)
+            val now = System.currentTimeMillis()
+            marks.forEach { (id, v) -> map[id] = Triple(fingerprint(v.first), v.second, now) }
+            val j = JSONObject()
+            map.forEach { (id, t) -> j.put(id.toString(), "${t.first}|${t.second}|${t.third}") }
+            val file = stateFile(context)
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            tmp.writeText(j.toString())
+            if (!tmp.renameTo(file)) { file.writeText(j.toString()); tmp.delete() }
+        }
+    }
+
+    /** Canciones que la normalización rápida revisaría (las demás ya están revisadas y sin cambios). */
+    fun pendingForQuick(context: Context, songs: List<AudioFile>): List<AudioFile> {
+        val state = loadState(context)
+        val now = System.currentTimeMillis()
+        return songs.filter { s ->
+            val mark = state[s.id] ?: return@filter true
+            mark.first != fingerprint(s) || (mark.second == STATUS_NOT_FOUND && now - mark.third > NOT_FOUND_RETRY_MS)
+        }
+    }
+
+    /** [full]: revisa todo; si no, solo lo pendiente ([pendingForQuick]). */
+    fun scan(context: Context, songs: List<AudioFile>, full: Boolean) {
         job?.cancel()
-        val targets = songs.filter { it.id > 0 && it.title.isNotBlank() }
+        val app = context.applicationContext
+        val all = songs.filter { it.id > 0 && it.title.isNotBlank() }
+        val targets = if (full) all else pendingForQuick(app, all)
+        val skipped = all.size - targets.size
         _state.value = State.Scanning(0, targets.size, 0)
         job = scope.launch {
             val albums = HashMap<Long, JSONObject?>()
@@ -104,7 +162,13 @@ object LibraryNormalizer {
             }.awaitAll()
             val matched = results.filterNotNull()
             val withChanges = matched.filter { it.changes.isNotEmpty() }
-            _state.value = State.Review(withChanges, notFound, matched.size - withChanges.size, targets.size)
+            // Correctas y no encontradas quedan recordadas; las que tienen cambios, cuando se apliquen
+            val marks = HashMap<Long, Pair<AudioFile, String>>()
+            matched.filter { it.changes.isEmpty() }.forEach { marks[it.song.id] = it.song to STATUS_OK }
+            val matchedIds = matched.map { it.song.id }.toHashSet()
+            targets.filter { it.id !in matchedIds }.forEach { marks[it.id] = it to STATUS_NOT_FOUND }
+            if (isActive) runCatching { saveMarks(app, marks) }
+            _state.value = State.Review(withChanges, notFound, matched.size - withChanges.size, targets.size, skipped)
         }
     }
 
@@ -215,7 +279,7 @@ object LibraryNormalizer {
                     val modified = path?.let { File(it).lastModified() } ?: s.dateModified
                     dao.updateTagMetadata(s.id, title, artist, album, genre, year, track, modified)
                     batch += s.copy(title = title, artist = artist, album = album, genre = genre, year = year, track = track, dateModified = modified)
-                    if (batch.size >= MEMORY_BATCH) { onApplied(batch.toList()); batch.clear() }
+                    if (batch.size >= MEMORY_BATCH) { flush(app, batch, onApplied) }
                     updated++
                 } else {
                     failed += s to error
@@ -223,13 +287,21 @@ object LibraryNormalizer {
                 }
                 _state.value = State.Applying(i + 1, list.size)
             }
-            if (batch.isNotEmpty()) onApplied(batch.toList())
+            if (batch.isNotEmpty()) flush(app, batch, onApplied)
             onFinished()
             _state.value = State.Done(updated, failed)
         }
     }
 
     private const val MEMORY_BATCH = 50
+
+    /** Refleja la tanda en memoria y la marca como revisada (con sus etiquetas nuevas). */
+    private suspend fun flush(context: Context, batch: ArrayList<AudioFile>, onApplied: suspend (List<AudioFile>) -> Unit) {
+        val done = batch.toList()
+        batch.clear()
+        onApplied(done)
+        runCatching { saveMarks(context, done.associate { it.id to (it to STATUS_OK) }) }
+    }
     private const val KEY_MERGE_PENDING = "normalize_merge_pending"
 
     /** Quedó una normalización sin volver a unir con la nube (la app se cerró a mitad). */

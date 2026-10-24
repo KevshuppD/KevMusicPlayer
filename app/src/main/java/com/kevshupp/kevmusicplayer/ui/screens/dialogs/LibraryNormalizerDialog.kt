@@ -71,11 +71,35 @@ fun LibraryNormalizerDialog(viewModel: MediaBrowserViewModel, onDismiss: () -> U
                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.weight(1f))
+                        val total = viewModel.localAudioFiles.size
+                        val pending by produceState<Int?>(null, total) {
+                            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                LibraryNormalizer.pendingForQuick(context, viewModel.localAudioFiles.toList().filter { it.id > 0 && it.title.isNotBlank() }).size
+                            }
+                        }
                         Button(
-                            onClick = { unselected.clear(); viewModel.startNormalizeScan() },
-                            enabled = viewModel.localAudioFiles.isNotEmpty(),
+                            onClick = { unselected.clear(); viewModel.startNormalizeScan(full = false) },
+                            enabled = pending != null && pending!! > 0,
                             shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().height(48.dp)
-                        ) { Text("Analizar ${viewModel.localAudioFiles.size} canciones", fontWeight = FontWeight.Bold) }
+                        ) {
+                            Text(
+                                when (pending) {
+                                    null -> "Calculando…"
+                                    0 -> "Todo revisado"
+                                    else -> "Rápida: $pending sin revisar"
+                                },
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            "La rápida se salta las canciones ya revisadas que no han cambiado desde entonces.",
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        OutlinedButton(
+                            onClick = { unselected.clear(); viewModel.startNormalizeScan(full = true) },
+                            enabled = total > 0,
+                            shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().height(48.dp)
+                        ) { Text("Completa: revisar las $total canciones") }
                     }
 
                     is State.Scanning -> Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -96,7 +120,8 @@ fun LibraryNormalizerDialog(viewModel: MediaBrowserViewModel, onDismiss: () -> U
                         val visible = remember(s, activeFields.toSet()) { s.proposals.filter { p -> p.changes.keys.any { it in activeFields } } }
                         val selected = visible.filter { unselected[it.song.id] != true }
                         Text(
-                            "${s.proposals.size} con cambios · ${s.unchanged} ya correctas · ${s.notFound} no encontradas en Deezer",
+                            "${s.proposals.size} con cambios · ${s.unchanged} ya correctas · ${s.notFound} no encontradas en Deezer" +
+                                if (s.skipped > 0) " · ${s.skipped} ya revisadas antes" else "",
                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(8.dp))

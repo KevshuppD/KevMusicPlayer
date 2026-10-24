@@ -2258,7 +2258,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         folderGroups.forEach { (_, files) -> if (files.size > 1) group(files) }
 
         // 2. Mismo título y artista, como LibraryMatcher: sin tildes, mayúsculas ni puntuación, y sin
-        // "(feat. …)", "(Remastered)", "- Live"… Dentro, solo las que duran lo mismo (±3 s)
+        // "(feat. …)", "(Remastered)", "- Live"… Dentro, solo las que duran casi lo mismo: ±3 s, o ±8 s si además
+        // son del mismo álbum (la misma pista de dos ediciones o rips difiere en el silencio final: en ARIRANG de
+        // BTS, Hooligan 3:02/3:06 y Aliens 2:47/2:51 no se detectaban con ±3 s)
         val norm = com.kevshupp.kevmusicplayer.data.telegram.LibraryMatcher
         val remainingFiles = localFilesCopy.filter { !processedIds.contains(it.id) }
         val metaGroups = remainingFiles.groupBy { file ->
@@ -2272,7 +2274,12 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             if (isUnknown || files.size < 2) return@forEach
             val partitions = mutableListOf<MutableList<AudioFile>>()
             files.sortedBy { it.duration }.forEach { file ->
-                val part = partitions.firstOrNull { Math.abs(it.first().duration - file.duration) <= 3000 }
+                val album = norm.normalizeTitle(file.album)
+                val part = partitions.firstOrNull { p ->
+                    val first = p.first()
+                    val sameAlbum = album.isNotEmpty() && !album.contains("unknown") && norm.normalizeTitle(first.album) == album
+                    Math.abs(first.duration - file.duration) <= if (sameAlbum) 8000 else 3000
+                }
                 if (part != null) part.add(file) else partitions.add(mutableListOf(file))
             }
             partitions.forEach { part -> if (part.size > 1) group(part) }
@@ -2305,7 +2312,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /** Analiza la biblioteca con Deezer para "Normalizar biblioteca" (ver [com.kevshupp.kevmusicplayer.data.LibraryNormalizer]). */
-    fun startNormalizeScan() = com.kevshupp.kevmusicplayer.data.LibraryNormalizer.scan(ArrayList(localAudioFiles))
+    fun startNormalizeScan(full: Boolean) = com.kevshupp.kevmusicplayer.data.LibraryNormalizer.scan(getApplication(), ArrayList(localAudioFiles), full)
 
     /**
      * Aplica las correcciones elegidas. Título y artista forman la clave de las listas y estadísticas en la nube
