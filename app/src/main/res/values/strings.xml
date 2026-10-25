@@ -24,4 +24,10 @@
     <string name="find_lyrics">Find Lyrics</string>
     <string name="translate_lyrics">Translate</string>
     <string name="no_lyrics">No lyrics found for this track</string>
+    <string name="widget_music_description">Now playing with controls, in your app theme</string>
+    <string name="widget_clips_description">Shortcut to your created videos</string>
+    <string name="widget_clips_title">My videos</string>
+    <string name="widget_clips_preview_count">3 videos</string>
+    <string name="widget_preview_title">Song title</string>
+    <string name="widget_preview_artist">Artist</string>
 </resources>

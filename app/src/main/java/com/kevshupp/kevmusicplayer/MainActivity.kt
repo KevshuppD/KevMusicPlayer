@@ -34,6 +34,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -132,11 +133,28 @@ class MainActivity : ComponentActivity() {
         // Initialize Cloud Auth state
         com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.init(this)
 
+        handleLaunchIntent(intent)
+
         setContent {
             KevMusicPlayerTheme {
                 AppNavigation()
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleLaunchIntent(intent)
+    }
+
+    /** El widget de videos abre la app directamente en "Mis videos". */
+    private fun handleLaunchIntent(intent: Intent?) {
+        if (intent?.action == ACTION_OPEN_CLIPS) openClipHistoryRequest.value = true
+    }
+
+    companion object {
+        const val ACTION_OPEN_CLIPS = "com.kevshupp.kevmusicplayer.OPEN_CLIPS"
+        val openClipHistoryRequest = kotlinx.coroutines.flow.MutableStateFlow(false)
     }
 
     private fun applyRefreshRate(rate: String) {
@@ -433,6 +451,14 @@ fun AppNavigation() {
                     )
                 }
             }
+        )
+
+        // "Mis videos" pedido desde el widget
+        val openClips by MainActivity.openClipHistoryRequest.collectAsState()
+        com.kevshupp.kevmusicplayer.ui.screens.dialogs.ClipHistoryHost(
+            viewModel = viewModel,
+            show = openClips,
+            onDismiss = { MainActivity.openClipHistoryRequest.value = false }
         )
 
         var isFirstRun by remember { mutableStateOf(settingsPrefs.getBoolean("is_first_run", true)) }

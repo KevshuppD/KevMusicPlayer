@@ -133,6 +133,16 @@ val LocalTransparencyEnabled = androidx.compose.runtime.staticCompositionLocalOf
 val LocalCardTransparencyEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }
 val LocalNavBarTransparencyEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }
 
+/** Colores de un tema de la app (`settings_prefs/app_theme`); también los usan los widgets. */
+fun appColorScheme(theme: String): androidx.compose.material3.ColorScheme = when (theme) {
+    "petrol" -> PetrolColorScheme
+    "obsidian" -> ObsidianColorScheme
+    "turquoise" -> TurquoiseColorScheme
+    "monochrome" -> MonochromeColorScheme
+    "cyberpunk_purpura" -> CyberpunkPurpuraColorScheme
+    else -> if (isPixelTheme(theme)) pixelPalette(theme).scheme else DarkColorScheme
+}
+
 @Composable
 fun KevMusicPlayerTheme(
     content: @Composable () -> Unit
@@ -153,6 +163,8 @@ fun KevMusicPlayerTheme(
         android.content.SharedPreferences.OnSharedPreferenceChangeListener { p, key ->
             if (key == "app_theme") {
                 currentTheme = p.getString("app_theme", "cyberpunk") ?: "cyberpunk"
+                // Los widgets toman los colores del tema
+                com.kevshupp.kevmusicplayer.widget.WidgetTheme.refreshAll(context.applicationContext)
             } else if (key == "disable_animations") {
                 currentDisableAnimations = p.getBoolean("disable_animations", false)
             } else if (key == "song_image_rounded") {
@@ -175,14 +187,7 @@ fun KevMusicPlayerTheme(
         }
     }
 
-    val colorScheme = when (currentTheme) {
-        "petrol" -> PetrolColorScheme
-        "obsidian" -> ObsidianColorScheme
-        "turquoise" -> TurquoiseColorScheme
-        "monochrome" -> MonochromeColorScheme
-        "cyberpunk_purpura" -> CyberpunkPurpuraColorScheme
-        else -> if (isPixelTheme(currentTheme)) pixelPalette(currentTheme).scheme else DarkColorScheme
-    }
+    val colorScheme = appColorScheme(currentTheme)
 
     val view = LocalView.current
     if (!view.isInEditMode) {

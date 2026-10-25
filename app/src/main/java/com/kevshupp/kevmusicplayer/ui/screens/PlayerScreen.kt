@@ -181,6 +181,7 @@ fun PlayerScreen(
 
     var showEditLyricsDialog by remember { mutableStateOf(false) }
     var showShareClipDialog by remember { mutableStateOf(false) }
+    var showClipHistory by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showTagEditorDialog by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
@@ -1339,6 +1340,23 @@ fun PlayerScreen(
                     }
 
                     item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showMoreOptions = false
+                                    showClipHistory = true
+                                }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.VideoLibrary, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Mis videos", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    item {
                         HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp))
                     }
 
@@ -2126,9 +2144,19 @@ fun PlayerScreen(
                 albumArtBitmap = artBytes,
                 lyrics = lyricsText,
                 translatedLyrics = translatedLyricLines ?: LyricsRepository.deserializeTranslations(currentSongFile?.translatedLyrics),
+                songId = currentSongFile?.id ?: 0L,
+                onOpenHistory = { showClipHistory = true },
                 onDismiss = { showShareClipDialog = false }
             )
         }
+
+        // Mis videos (también su "Editar"); desde el creador se abre encima y atrás vuelve a él
+        com.kevshupp.kevmusicplayer.ui.screens.dialogs.ClipHistoryHost(
+            viewModel = viewModel,
+            show = showClipHistory,
+            onDismiss = { showClipHistory = false },
+            onEditStarted = { showShareClipDialog = false }
+        )
     }
 }
 
@@ -2158,4 +2186,3 @@ fun rememberDominantColor(bitmap: android.graphics.Bitmap?): Color {
     }
     return dominantColor
 }
-

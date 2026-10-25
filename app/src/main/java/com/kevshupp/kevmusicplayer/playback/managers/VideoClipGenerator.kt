@@ -1,46 +1,18 @@
 package com.kevshupp.kevmusicplayer.playback.managers
 
 import android.content.Context
-import kotlinx.coroutines.ensureActive
-import kotlin.coroutines.coroutineContext
 import android.graphics.*
 import android.media.*
 import android.net.Uri
 import android.util.Log
-import androidx.palette.graphics.Palette
-import com.kevshupp.kevmusicplayer.data.LyricLine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.ByteBuffer
-import kotlin.math.cos
-import kotlin.math.sin
-
-enum class ClipTemplateStyle {
-    LYRICS_STORY,      // Estilo Letras (Spotify / Apple Music Lyrics Share)
-    PLAYER_CANVAS,     // Estilo Reproductor con Carátula Grande
-    VINYL_VIBES        // Estilo Vinilo Giratorio
-}
-
-data class ShareClipConfig(
-    val songTitle: String,
-    val artistName: String,
-    val albumTitle: String? = null,
-    val albumArtBitmap: Bitmap? = null,
-    val startMs: Long,
-    val endMs: Long,
-    val audioUri: Uri,
-    val lyricsLines: List<LyricLine> = emptyList(),
-    val translatedLyrics: Map<Long, String>? = null,
-    val showTranslation: Boolean = false,
-    val dedicationText: String? = null,
-    val isVertical: Boolean = true, // 9:16 vs 1:1
-    val templateStyle: ClipTemplateStyle = ClipTemplateStyle.LYRICS_STORY,
-    val isAmoledDark: Boolean = false,
-    val showWaveform: Boolean = true,
-    val primaryColor: Int = 0xFFFF4081.toInt(),
-    val accentColor: Int = 0xFFB388FF.toInt()
-)
+import java.util.concurrent.CountDownLatch
+import kotlin.concurrent.thread
+import kotlin.coroutines.coroutineContext
 
 private data class EncodedAudioSample(
     val data: ByteArray,
@@ -49,16 +21,46 @@ private data class EncodedAudioSample(
     val flags: Int
 )
 
+/**
+ * Genera el MP4 del fragmento (H.264 + AAC). Los cuadros los dibuja [ClipRenderer].
+ *
+ * Camino rápido: el codificador recibe los cuadros por su Surface de entrada y se dibujan con
+ * `lockHardwareCanvas()` (GPU, sin pasar por un Bitmap ni convertir a YUV en Kotlin). Un hilo aparte vacía el
+ * codificador mientras se dibuja (si no, con sus búferes llenos el dibujo se bloquea esperando) y el audio se
+ * extrae en paralelo. El tiempo de cada cuadro lo pone el contador de salida, no el reloj de la Surface.
+ * Si el camino rápido falla o le faltan cuadros, se repite con el de antes (Bitmap + YUV por CPU).
+ */
 object VideoClipGenerator {
 
     private const val TAG = "VideoClipGenerator"
-    private const val FRAME_RATE = 30
     private const val I_FRAME_INTERVAL = 1
-    private const val VIDEO_BIT_RATE = 3_500_000 // 3.5 Mbps
     private const val AUDIO_SAMPLE_RATE = 44100
     private const val AUDIO_CHANNEL_COUNT = 2
     private const val AUDIO_BIT_RATE = 192000
-    private const val CLIP_LINE_TOLERANCE_MS = 300L
+
+    /** Resolución real del video para esta configuración (múltiplos de 2). */
+    fun outputSize(config: ShareClipConfig): Pair<Int, Int> {
+        val s = config.quality.scale
+        fun even(v: Float) = (v / 2f).toInt() * 2
+        return even(config.format.logicalWidth * s) to even(config.format.logicalHeight * s)
+    }
+
+    /** Si el codificador H.264 del teléfono admite esa resolución a [fps] (60 fps a 1080p no lo tienen todos). */
+    fun supportsFrameRate(config: ShareClipConfig, fps: Int): Boolean = runCatching {
+        val (w, h) = outputSize(config)
+        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+            .filter { it.isEncoder && it.supportedTypes.any { t -> t.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) } }
+            .any { info -> info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).videoCapabilities?.areSizeAndRateSupported(w, h, fps.toDouble()) == true }
+    }.getOrDefault(fps <= 30)
+
+    /** Un cuadro para la vista previa del diálogo, dibujado por el mismo [ClipRenderer] que el video. */
+    fun renderPreviewFrame(renderer: ClipRenderer, target: Bitmap, timeMs: Long, frame: Float) {
+        val canvas = Canvas(target)
+        canvas.save()
+        canvas.scale(target.width / renderer.width, target.height / renderer.height)
+        renderer.draw(canvas, timeMs, frame)
+        canvas.restore()
+    }
 
     suspend fun generateClip(
         context: Context,
@@ -69,209 +71,267 @@ object VideoClipGenerator {
         // Los clips de antes ya se compartieron: se borran al pasar una hora para no llenar la caché
         cleanOldClips(context)
         val outputFile = File(outputDir, "Story_${System.currentTimeMillis()}.mp4")
-
-        val width = 720
-        val height = if (config.isVertical) 1280 else 720
-        val durationMs = (config.endMs - config.startMs).coerceAtLeast(1000L)
-        val totalFrames = ((durationMs / 1000.0) * FRAME_RATE).toInt().coerceAtLeast(FRAME_RATE)
-
-        var muxer: MediaMuxer? = null
-        var videoEncoder: MediaCodec? = null
-        var frameBitmap: Bitmap? = null
-
+        val renderer = ClipRenderer(context, config)
         try {
-            Log.d(TAG, "Starting clip generation: $width x $height, $durationMs ms, totalFrames=$totalFrames")
-            onProgress(0.05f)
-
-            // Extract dynamic palette colors from artwork
-            val (dominantColor, vibrantAccentColor) = extractArtworkColors(config.albumArtBitmap, config.primaryColor, config.accentColor)
-
-            // 1. Extract and transcode audio segment into memory
-            val (audioFormat, audioSamples) = extractAudioToMemory(
-                context = context,
-                audioUri = config.audioUri,
-                startMs = config.startMs,
-                endMs = config.endMs
-            )
-            onProgress(0.15f)
-
-            // 2. Setup Video Encoder (H.264 / AVC)
-            val videoFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
-                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar)
-                setInteger(MediaFormat.KEY_BIT_RATE, VIDEO_BIT_RATE)
-                setInteger(MediaFormat.KEY_FRAME_RATE, FRAME_RATE)
-                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, I_FRAME_INTERVAL)
+            onProgress(0.02f)
+            // El audio se extrae mientras se dibujan los cuadros
+            val audio = AudioJob(context, config)
+            val ok = try {
+                encodeWithSurface(config, renderer, audio, outputFile, onProgress)
+            } catch (e: Throwable) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "Surface encoding failed, falling back to CPU", e)
+                false
             }
-
-            videoEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC).apply {
-                configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                start()
+            if (!ok) {
+                outputFile.delete()
+                onProgress(0.02f)
+                encodeWithBitmap(config, renderer, audio, outputFile, onProgress)
             }
-
-            muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            var videoTrackIndex = -1
-            var audioTrackIndex = -1
-            var muxerStarted = false
-
-            val frameBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { frameBitmap = it }
-            val canvas = Canvas(frameBitmap)
-            val bufferInfo = MediaCodec.BufferInfo()
-            val yuvBuffer = ByteArray(width * height * 3 / 2)
-            val argbPixels = IntArray(width * height)
-
-            var frameCount = 0
-            var isInputDone = false
-            var audioSampleIndex = 0
-
-            fun writeAudioUpTo(targetPtsUs: Long) {
-                if (!muxerStarted || audioTrackIndex < 0) return
-                while (audioSampleIndex < audioSamples.size) {
-                    val sample = audioSamples[audioSampleIndex]
-                    if (sample.presentationTimeUs > targetPtsUs) break
-
-                    val byteBuffer = ByteBuffer.wrap(sample.data, 0, sample.size)
-                    val info = MediaCodec.BufferInfo().apply {
-                        set(0, sample.size, sample.presentationTimeUs, sample.flags)
-                    }
-                    muxer.writeSampleData(audioTrackIndex, byteBuffer, info)
-                    audioSampleIndex++
-                }
-            }
-
-            // Main Encoding Loop
-            while (frameCount < totalFrames || !isInputDone) {
-                // Si se cierra el diálogo o la pantalla, se deja de codificar en lugar de terminar el clip
-                coroutineContext.ensureActive()
-                if (frameCount < totalFrames) {
-                    val inputBufferIndex = videoEncoder.dequeueInputBuffer(10000)
-                    if (inputBufferIndex >= 0) {
-                        val inputBuffer = videoEncoder.getInputBuffer(inputBufferIndex) ?: continue
-                        inputBuffer.clear()
-
-                        val currentFrameMs = config.startMs + ((frameCount.toDouble() / totalFrames) * durationMs).toLong()
-                        val frameProgress = frameCount.toFloat() / totalFrames.toFloat()
-
-                        renderAuthenticStoryFrame(
-                            canvas = canvas,
-                            width = width,
-                            height = height,
-                            config = config,
-                            dominantColor = dominantColor,
-                            accentColor = vibrantAccentColor,
-                            currentTimeMs = currentFrameMs,
-                            clipProgress = frameProgress,
-                            frameCount = frameCount
-                        )
-
-                        frameBitmap.getPixels(argbPixels, 0, width, 0, 0, width, height)
-                        encodeYUV420SP(yuvBuffer, argbPixels, width, height)
-                        val bytesToPut = kotlin.math.min(yuvBuffer.size, inputBuffer.remaining())
-                        inputBuffer.put(yuvBuffer, 0, bytesToPut)
-
-                        val ptsUs = (frameCount * 1_000_000L) / FRAME_RATE
-                        videoEncoder.queueInputBuffer(inputBufferIndex, 0, bytesToPut, ptsUs, 0)
-                        frameCount++
-
-                        onProgress(0.15f + 0.75f * (frameCount.toFloat() / totalFrames.toFloat()))
-                    }
-                } else if (!isInputDone) {
-                    val inputBufferIndex = videoEncoder.dequeueInputBuffer(10000)
-                    if (inputBufferIndex >= 0) {
-                        val ptsUs = (totalFrames * 1_000_000L) / FRAME_RATE
-                        videoEncoder.queueInputBuffer(inputBufferIndex, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                        isInputDone = true
-                    }
-                }
-
-                // Drain video encoder
-                var outputBufferIndex = videoEncoder.dequeueOutputBuffer(bufferInfo, 10000)
-                while (outputBufferIndex >= 0) {
-                    if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                        val newFormat = videoEncoder.outputFormat
-                        videoTrackIndex = muxer.addTrack(newFormat)
-                        if (audioFormat != null) {
-                            audioTrackIndex = muxer.addTrack(audioFormat)
-                        }
-                        muxer.start()
-                        muxerStarted = true
-                    } else {
-                        val outputBuffer = videoEncoder.getOutputBuffer(outputBufferIndex)
-                        if (outputBuffer != null && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0 && muxerStarted) {
-                            writeAudioUpTo(bufferInfo.presentationTimeUs)
-                            if (bufferInfo.size > 0) {
-                                muxer.writeSampleData(videoTrackIndex, outputBuffer, bufferInfo)
-                            }
-                        }
-                        videoEncoder.releaseOutputBuffer(outputBufferIndex, false)
-
-                        if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                            break
-                        }
-                    }
-                    outputBufferIndex = videoEncoder.dequeueOutputBuffer(bufferInfo, 0)
-                }
-
-                if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    val newFormat = videoEncoder.outputFormat
-                    videoTrackIndex = muxer.addTrack(newFormat)
-                    if (audioFormat != null) {
-                        audioTrackIndex = muxer.addTrack(audioFormat)
-                    }
-                    muxer.start()
-                    muxerStarted = true
-                }
-            }
-
-            // Drain remaining video encoder frames
-            var encoderDone = false
-            while (!encoderDone) {
-                val outputBufferIndex = videoEncoder.dequeueOutputBuffer(bufferInfo, 20000)
-                if (outputBufferIndex >= 0) {
-                    val outputBuffer = videoEncoder.getOutputBuffer(outputBufferIndex)
-                    if (outputBuffer != null && muxerStarted && bufferInfo.size > 0 && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                        writeAudioUpTo(bufferInfo.presentationTimeUs)
-                        muxer.writeSampleData(videoTrackIndex, outputBuffer, bufferInfo)
-                    }
-                    videoEncoder.releaseOutputBuffer(outputBufferIndex, false)
-                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                        encoderDone = true
-                    }
-                } else if (outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                    if (isInputDone) break
-                }
-            }
-
-            // Write remaining audio samples
-            if (muxerStarted && audioTrackIndex >= 0) {
-                while (audioSampleIndex < audioSamples.size) {
-                    val sample = audioSamples[audioSampleIndex]
-                    val byteBuffer = ByteBuffer.wrap(sample.data, 0, sample.size)
-                    val info = MediaCodec.BufferInfo().apply {
-                        set(0, sample.size, sample.presentationTimeUs, sample.flags)
-                    }
-                    muxer.writeSampleData(audioTrackIndex, byteBuffer, info)
-                    audioSampleIndex++
-                }
-            }
-
-            try { videoEncoder.stop(); videoEncoder.release() } catch (e: Exception) {}
-            try {
-                if (muxerStarted) muxer.stop()
-                muxer.release()
-            } catch (e: Exception) {}
-
-            frameBitmap.recycle()
-            onProgress(1.0f)
-            Log.d(TAG, "Story clip generated successfully: ${outputFile.absolutePath}")
+            onProgress(1f)
             Result.success(outputFile)
         } catch (e: Throwable) {
             Log.e(TAG, "Error generating clip", e)
-            try { videoEncoder?.stop(); videoEncoder?.release() } catch (ex: Exception) {}
-            try { muxer?.release() } catch (ex: Exception) {}
-            frameBitmap?.recycle()
             outputFile.delete()
             if (e is kotlinx.coroutines.CancellationException) throw e
             Result.failure(e)
+        } finally {
+            renderer.release()
+        }
+    }
+
+    /** Extracción del audio en un hilo propio; [await] espera el resultado. */
+    private class AudioJob(context: Context, config: ShareClipConfig) {
+        private val latch = CountDownLatch(1)
+        @Volatile var result: Pair<MediaFormat?, List<EncodedAudioSample>> = null to emptyList()
+        val done get() = latch.count == 0L
+        init {
+            thread(name = "clip-audio") {
+                try { result = extractAudioToMemory(context, config.audioUri, config.startMs, config.endMs) }
+                catch (e: Throwable) { Log.e(TAG, "Audio extraction failed", e) }
+                finally { latch.countDown() }
+            }
+        }
+        fun await() = latch.await().let { result }
+    }
+
+    private fun videoFormat(config: ShareClipConfig, colorFormat: Int): MediaFormat {
+        val (w, h) = outputSize(config)
+        return MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, colorFormat)
+            // Más cuadros, más datos: a 60 fps 1,5× el bitrate, a 24 un poco menos
+            setInteger(MediaFormat.KEY_BIT_RATE, (config.quality.bitRate * when (config.fps) { 60 -> 1.5f; 24 -> 0.85f; else -> 1f }).toInt())
+            setInteger(MediaFormat.KEY_FRAME_RATE, config.fps)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, I_FRAME_INTERVAL)
+        }
+    }
+
+    private fun totalFrames(config: ShareClipConfig): Int {
+        val durationMs = (config.endMs - config.startMs).coerceAtLeast(1000L)
+        return ((durationMs / 1000.0) * config.fps).toInt().coerceAtLeast(config.fps)
+    }
+
+    private fun frameTimeMs(config: ShareClipConfig, frame: Int, total: Int): Long {
+        val durationMs = (config.endMs - config.startMs).coerceAtLeast(1000L)
+        return config.startMs + (frame.toDouble() / total * durationMs).toLong()
+    }
+
+    /**
+     * Escribe en el muxer: espera a tener el formato de video y el audio (o saber que no hay) antes de arrancarlo,
+     * guardando mientras tanto los cuadros ya codificados. Solo lo usa el hilo que vacía el codificador.
+     */
+    private class MuxWriter(path: String, private val audio: AudioJob) {
+        private val muxer = MediaMuxer(path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        private var videoFormat: MediaFormat? = null
+        private var videoTrack = -1
+        private var audioTrack = -1
+        private var started = false
+        private var audioIndex = 0
+        private val pending = ArrayList<Pair<ByteArray, MediaCodec.BufferInfo>>()
+        var videoFrames = 0
+            private set
+
+        fun setVideoFormat(format: MediaFormat) { videoFormat = format; tryStart(block = false) }
+
+        private fun tryStart(block: Boolean) {
+            if (started || videoFormat == null) return
+            if (!audio.done && !block) return
+            val (aFormat, _) = audio.await()
+            videoTrack = muxer.addTrack(videoFormat!!)
+            if (aFormat != null) audioTrack = muxer.addTrack(aFormat)
+            muxer.start()
+            started = true
+            pending.forEach { (data, info) -> writeVideoNow(ByteBuffer.wrap(data), info) }
+            pending.clear()
+        }
+
+        fun writeVideo(buffer: ByteBuffer, info: MediaCodec.BufferInfo) {
+            videoFrames++
+            tryStart(block = false)
+            if (started) writeVideoNow(buffer, info)
+            else {
+                val copy = ByteArray(info.size)
+                buffer.position(info.offset); buffer.limit(info.offset + info.size); buffer.get(copy)
+                pending += copy to MediaCodec.BufferInfo().apply { set(0, info.size, info.presentationTimeUs, info.flags) }
+            }
+        }
+
+        private fun writeVideoNow(buffer: ByteBuffer, info: MediaCodec.BufferInfo) {
+            writeAudioUpTo(info.presentationTimeUs)
+            muxer.writeSampleData(videoTrack, buffer, info)
+        }
+
+        private fun writeAudioUpTo(ptsUs: Long) {
+            if (audioTrack < 0) return
+            val samples = audio.result.second
+            while (audioIndex < samples.size && samples[audioIndex].presentationTimeUs <= ptsUs) {
+                val s = samples[audioIndex++]
+                muxer.writeSampleData(audioTrack, ByteBuffer.wrap(s.data, 0, s.size),
+                    MediaCodec.BufferInfo().apply { set(0, s.size, s.presentationTimeUs, s.flags) })
+            }
+        }
+
+        fun finish() {
+            tryStart(block = true)
+            writeAudioUpTo(Long.MAX_VALUE)
+            try { if (started) muxer.stop() } finally { muxer.release() }
+        }
+
+        fun abort() = runCatching { muxer.release() }
+    }
+
+    /** Vacía el codificador en un hilo propio; el tiempo de cada cuadro sale del orden de salida. */
+    private fun startDrainer(encoder: MediaCodec, writer: MuxWriter, fps: Int): Thread = thread(name = "clip-drain") {
+        val info = MediaCodec.BufferInfo()
+        var outIndex = 0L
+        while (true) {
+            val index = encoder.dequeueOutputBuffer(info, 10_000)
+            when {
+                index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> writer.setVideoFormat(encoder.outputFormat)
+                index >= 0 -> {
+                    val buffer = encoder.getOutputBuffer(index)
+                    val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+                    if (buffer != null && !isConfig && info.size > 0) {
+                        info.presentationTimeUs = outIndex++ * 1_000_000L / fps
+                        writer.writeVideo(buffer, info)
+                    }
+                    encoder.releaseOutputBuffer(index, false)
+                    if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) return@thread
+                }
+            }
+        }
+    }
+
+    private suspend fun encodeWithSurface(
+        config: ShareClipConfig, renderer: ClipRenderer, audio: AudioJob, outputFile: File, onProgress: (Float) -> Unit
+    ): Boolean {
+        val (w, h) = outputSize(config)
+        val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        var surface: android.view.Surface? = null
+        val writer = MuxWriter(outputFile.absolutePath, audio)
+        var drainer: Thread? = null
+        try {
+            encoder.configure(videoFormat(config, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            surface = encoder.createInputSurface()
+            encoder.start()
+            drainer = startDrainer(encoder, writer, config.fps)
+            val total = totalFrames(config)
+            val sx = w / renderer.width
+            val sy = h / renderer.height
+            val t0 = System.nanoTime()
+            var lockNs = 0L
+            var drawNs = 0L
+            var postNs = 0L
+            for (frame in 0 until total) {
+                coroutineContext.ensureActive()
+                val a = System.nanoTime()
+                val canvas = surface.lockHardwareCanvas()
+                val b = System.nanoTime()
+                try {
+                    canvas.save()
+                    canvas.scale(sx, sy)
+                    renderer.draw(canvas, frameTimeMs(config, frame, total), frame * 30f / config.fps)
+                    canvas.restore()
+                } finally {
+                    val c = System.nanoTime()
+                    surface.unlockCanvasAndPost(canvas)
+                    postNs += System.nanoTime() - c
+                    drawNs += c - b
+                }
+                lockNs += b - a
+                onProgress(0.02f + 0.93f * (frame + 1) / total)
+            }
+            encoder.signalEndOfInputStream()
+            drainer.join(15_000)
+            writer.finish()
+            Log.i(TAG, "Surface ${w}x$h ${config.templateStyle}: $total frames in ${(System.nanoTime() - t0) / 1_000_000} ms " +
+                "(lock ${lockNs / 1_000_000}, draw ${drawNs / 1_000_000}, post ${postNs / 1_000_000}); audio ready=${audio.done}")
+            if (writer.videoFrames < total) {
+                Log.w(TAG, "Surface encoder produced ${writer.videoFrames}/$total frames")
+                return false
+            }
+            return true
+        } catch (e: Throwable) {
+            writer.abort()
+            throw e
+        } finally {
+            runCatching { encoder.stop() }
+            runCatching { encoder.release() }
+            surface?.release()
+            if (drainer?.isAlive == true) drainer.interrupt()
+        }
+    }
+
+    /** Camino de respaldo: cuadro en Bitmap, conversión a YUV por CPU y búfer de entrada. */
+    private suspend fun encodeWithBitmap(
+        config: ShareClipConfig, renderer: ClipRenderer, audio: AudioJob, outputFile: File, onProgress: (Float) -> Unit
+    ) {
+        val (w, h) = outputSize(config)
+        val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        val writer = MuxWriter(outputFile.absolutePath, audio)
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        var drainer: Thread? = null
+        try {
+            encoder.configure(videoFormat(config, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+            drainer = startDrainer(encoder, writer, config.fps)
+            val canvas = Canvas(bitmap)
+            val yuv = ByteArray(w * h * 3 / 2)
+            val argb = IntArray(w * h)
+            val total = totalFrames(config)
+            var frame = 0
+            while (frame <= total) {
+                coroutineContext.ensureActive()
+                val inIndex = encoder.dequeueInputBuffer(10_000)
+                if (inIndex < 0) continue
+                if (frame == total) {
+                    encoder.queueInputBuffer(inIndex, 0, 0, frame * 1_000_000L / config.fps, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                    break
+                }
+                val input = encoder.getInputBuffer(inIndex) ?: continue
+                input.clear()
+                canvas.save()
+                canvas.scale(w / renderer.width, h / renderer.height)
+                renderer.draw(canvas, frameTimeMs(config, frame, total), frame * 30f / config.fps)
+                canvas.restore()
+                bitmap.getPixels(argb, 0, w, 0, 0, w, h)
+                encodeYUV420SP(yuv, argb, w, h)
+                val bytes = minOf(yuv.size, input.remaining())
+                input.put(yuv, 0, bytes)
+                encoder.queueInputBuffer(inIndex, 0, bytes, frame * 1_000_000L / config.fps, 0)
+                frame++
+                onProgress(0.02f + 0.93f * frame / total)
+            }
+            drainer.join(15_000)
+            writer.finish()
+        } catch (e: Throwable) {
+            writer.abort()
+            throw e
+        } finally {
+            runCatching { encoder.stop() }
+            runCatching { encoder.release() }
+            bitmap.recycle()
+            if (drainer?.isAlive == true) drainer.interrupt()
         }
     }
 
@@ -280,628 +340,6 @@ object VideoClipGenerator {
         val cutoff = System.currentTimeMillis() - 60 * 60 * 1000L
         File(context.cacheDir, "story_clips").listFiles()?.forEach { file ->
             if (file.isFile && file.lastModified() < cutoff) file.delete()
-        }
-    }
-
-    private fun renderAuthenticStoryFrame(
-        canvas: Canvas,
-        width: Int,
-        height: Int,
-        config: ShareClipConfig,
-        dominantColor: Int,
-        accentColor: Int,
-        currentTimeMs: Long,
-        clipProgress: Float,
-        frameCount: Int
-    ) {
-        // 1. Organic Ambient Background (Cinematic Lighting)
-        if (config.isAmoledDark) {
-            canvas.drawColor(Color.BLACK)
-        } else {
-            drawOrganicAmbientBackground(canvas, width, height, dominantColor, accentColor, frameCount)
-        }
-
-        when (config.templateStyle) {
-            ClipTemplateStyle.LYRICS_STORY -> {
-                renderSpotifyLyricsStory(canvas, width, height, config, dominantColor, accentColor, currentTimeMs, clipProgress, frameCount)
-            }
-            ClipTemplateStyle.PLAYER_CANVAS -> {
-                renderPlayerCanvasStory(canvas, width, height, config, dominantColor, accentColor, currentTimeMs, clipProgress, frameCount)
-            }
-            ClipTemplateStyle.VINYL_VIBES -> {
-                renderVinylVibesStory(canvas, width, height, config, dominantColor, accentColor, currentTimeMs, clipProgress, frameCount)
-            }
-        }
-
-        // Dedication Badge at the Top
-        if (!config.dedicationText.isNullOrBlank()) {
-            val dedicationY = if (config.isVertical) 95f else 40f
-            drawDedicationBadge(canvas, width, dedicationY, config.dedicationText)
-        }
-    }
-
-    private fun drawDedicationBadge(
-        canvas: Canvas,
-        width: Int,
-        yPos: Float,
-        text: String
-    ) {
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = 23f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
-        }
-        val fullText = if (text.startsWith("💌") || text.startsWith("✨") || text.startsWith("💖")) text else "💌 $text"
-        val textWidth = paint.measureText(fullText)
-        val pillWidth = (textWidth + 48f).coerceAtMost(width - 80f)
-        val pillHeight = 44f
-        val pillLeft = (width - pillWidth) / 2f
-        val pillTop = yPos - pillHeight / 2f
-        val pillRect = RectF(pillLeft, pillTop, pillLeft + pillWidth, pillTop + pillHeight)
-
-        val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(100, 0, 0, 0)
-            setShadowLayer(14f, 0f, 6f, Color.argb(120, 0, 0, 0))
-        }
-        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(180, 18, 20, 32)
-            style = Paint.Style.FILL
-        }
-        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(90, 255, 255, 255)
-            style = Paint.Style.STROKE
-            strokeWidth = 1.5f
-        }
-        canvas.drawRoundRect(pillRect, 22f, 22f, shadowPaint)
-        canvas.drawRoundRect(pillRect, 22f, 22f, bgPaint)
-        canvas.drawRoundRect(pillRect, 22f, 22f, borderPaint)
-
-        canvas.drawText(truncateText(fullText, paint, pillWidth - 24f), width / 2f, yPos + 8f, paint)
-    }
-
-    // TEMPLATE 1: Spotify-style Authentic Lyrics Story Card
-    private fun renderSpotifyLyricsStory(
-        canvas: Canvas,
-        width: Int,
-        height: Int,
-        config: ShareClipConfig,
-        dominantColor: Int,
-        accentColor: Int,
-        currentTimeMs: Long,
-        clipProgress: Float,
-        frameCount: Int
-    ) {
-        val cardMargin = 40f
-        val cardTop = if (config.isVertical) 160f else 60f
-        val cardBottom = if (config.isVertical) height - 180f else height - 70f
-        val cardRect = RectF(cardMargin, cardTop, width - cardMargin, cardBottom)
-
-        // Glassmorphism Main Card
-        val cardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(45, 255, 255, 255)
-            style = Paint.Style.FILL
-        }
-        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(40, 255, 255, 255)
-            style = Paint.Style.STROKE
-            strokeWidth = 2f
-        }
-        val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(120, 0, 0, 0)
-            setShadowLayer(30f, 0f, 15f, Color.argb(160, 0, 0, 0))
-        }
-        canvas.drawRoundRect(cardRect, 32f, 32f, shadowPaint)
-        canvas.drawRoundRect(cardRect, 32f, 32f, cardPaint)
-        canvas.drawRoundRect(cardRect, 32f, 32f, borderPaint)
-
-        // Bottom Song Badge inside Card (se calcula antes para que la letra no lo invada)
-        val badgeHeight = 90f
-        val badgeTop = cardBottom - badgeHeight - 24f
-
-        // Letra: todas las líneas seleccionadas, con ajuste de línea y tamaño automático
-        if (config.lyricsLines.isNotEmpty()) {
-            val linesToDisplay = clipLyricLines(config).ifEmpty { config.lyricsLines.take(4) }
-            val currentLineIndex = linesToDisplay.indexOfLast { it.timeMs <= currentTimeMs }
-
-            val textLeft = cardMargin + 35f
-            val maxTextWidth = cardRect.width() - 70f
-            val lyricsTop = cardTop + if (config.isVertical) 60f else 40f
-            val availableHeight = badgeTop - 30f - lyricsTop
-
-            fun translationOf(line: LyricLine): String? =
-                if (config.showTranslation) config.translatedLyrics?.get(line.timeMs)?.takeIf { it.isNotBlank() } else null
-
-            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.LEFT }
-            val transPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                textAlign = Paint.Align.LEFT
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-            }
-
-            class LaidOutLine(val lines: List<String>, val trans: List<String>, val height: Float)
-
-            fun layout(baseSize: Float): List<LaidOutLine> = linesToDisplay.mapIndexed { idx, line ->
-                val size = if (idx == currentLineIndex) baseSize * 1.15f else baseSize
-                textPaint.textSize = size
-                textPaint.typeface = Typeface.create(Typeface.DEFAULT, if (idx == currentLineIndex) Typeface.BOLD else Typeface.NORMAL)
-                val wrapped = wrapText(line.text, textPaint, maxTextWidth)
-                transPaint.textSize = baseSize * 0.72f
-                val trans = translationOf(line)?.let { wrapText(it, transPaint, maxTextWidth) } ?: emptyList()
-                LaidOutLine(wrapped, trans, wrapped.size * size * 1.3f + trans.size * baseSize * 0.95f + baseSize * 0.45f)
-            }
-
-            // Se reduce la fuente hasta que quepa todo; las estrofas largas ya no se salen de la tarjeta
-            var baseSize = when {
-                linesToDisplay.size <= 2 -> if (config.isVertical) 42f else 32f
-                linesToDisplay.size <= 4 -> if (config.isVertical) 34f else 26f
-                else -> if (config.isVertical) 28f else 22f
-            }
-            val minSize = if (config.isVertical) 18f else 15f
-            var laidOut = layout(baseSize)
-            while (laidOut.sumOf { it.height.toDouble() } > availableHeight && baseSize > minSize) {
-                baseSize = (baseSize - 1f).coerceAtLeast(minSize)
-                laidOut = layout(baseSize)
-            }
-
-            // Si aun así no cabe, se muestra una ventana que sigue a la línea activa
-            var first = 0
-            if (laidOut.sumOf { it.height.toDouble() } > availableHeight) {
-                val anchor = currentLineIndex.coerceAtLeast(0)
-                first = anchor
-                var used = laidOut[anchor].height
-                while (first > 0 && used + laidOut[first - 1].height <= availableHeight * 0.4f) {
-                    first--
-                    used += laidOut[first].height
-                }
-            }
-
-            var lineY = lyricsTop
-            for (idx in first until laidOut.size) {
-                val item = laidOut[idx]
-                if (lineY + item.height > lyricsTop + availableHeight + baseSize) break
-                val isActive = idx == currentLineIndex
-                val size = if (isActive) baseSize * 1.15f else baseSize
-                textPaint.apply {
-                    color = if (isActive) Color.WHITE else Color.argb(130, 255, 255, 255)
-                    textSize = size
-                    typeface = Typeface.create(Typeface.DEFAULT, if (isActive) Typeface.BOLD else Typeface.NORMAL)
-                    if (isActive) setShadowLayer(16f, 0f, 0f, Color.argb(180, 255, 255, 255)) else clearShadowLayer()
-                }
-                for (text in item.lines) {
-                    lineY += size
-                    canvas.drawText(text, textLeft, lineY, textPaint)
-                    lineY += size * 0.3f
-                }
-                transPaint.apply {
-                    color = if (isActive) Color.argb(235, 220, 230, 255) else Color.argb(110, 200, 210, 235)
-                    textSize = baseSize * 0.72f
-                }
-                for (text in item.trans) {
-                    lineY += baseSize * 0.72f
-                    canvas.drawText(text, textLeft, lineY, transPaint)
-                    lineY += baseSize * 0.23f
-                }
-                lineY += baseSize * 0.45f
-            }
-        }
-
-        val badgeLeft = cardMargin + 28f
-        val artSize = 80f
-
-        // Cover thumbnail
-        val thumbRect = RectF(badgeLeft, badgeTop, badgeLeft + artSize, badgeTop + artSize)
-        if (config.albumArtBitmap != null && !config.albumArtBitmap.isRecycled) {
-            val thumbPath = Path().apply { addRoundRect(thumbRect, 16f, 16f, Path.Direction.CW) }
-            canvas.save()
-            canvas.clipPath(thumbPath)
-            canvas.drawBitmap(config.albumArtBitmap, null, thumbRect, null)
-            canvas.restore()
-        } else {
-            canvas.drawRoundRect(thumbRect, 16f, 16f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(200, 35, 40, 60) })
-        }
-
-        // Title and Artist text
-        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = 28f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textAlign = Paint.Align.LEFT
-        }
-        val artistPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(200, 220, 225, 240)
-            textSize = 22f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            textAlign = Paint.Align.LEFT
-        }
-
-        val textLeft = badgeLeft + artSize + 20f
-        val titleY = badgeTop + 36f
-        val artistY = badgeTop + 70f
-        val maxTextWidth = cardRect.width() - (badgeLeft - cardMargin) - artSize - 40f
-
-        canvas.drawText(truncateText(config.songTitle, titlePaint, maxTextWidth), textLeft, titleY, titlePaint)
-        canvas.drawText(truncateText(config.artistName, artistPaint, maxTextWidth), textLeft, artistY, artistPaint)
-
-        // Waveform & Progress Bar at bottom of screen
-        if (config.showWaveform) {
-            drawSoundWaveform(canvas, width, height, config, accentColor, frameCount)
-        }
-        drawBottomProgressBar(canvas, width, height, config, dominantColor, clipProgress)
-    }
-
-    // TEMPLATE 2: Clean Player Canvas (Large Art + Lyrics + Waveform)
-    private fun renderPlayerCanvasStory(
-        canvas: Canvas,
-        width: Int,
-        height: Int,
-        config: ShareClipConfig,
-        dominantColor: Int,
-        accentColor: Int,
-        currentTimeMs: Long,
-        clipProgress: Float,
-        frameCount: Int
-    ) {
-        val artSize = (width * if (config.isVertical) 0.62f else 0.42f).toInt()
-        val artTop = if (config.isVertical) 160f else 90f
-        val artLeft = (width - artSize) / 2f
-
-        // Artwork with 3D drop shadow
-        val artRect = RectF(artLeft, artTop, artLeft + artSize, artTop + artSize)
-        val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(160, 0, 0, 0)
-            setShadowLayer(40f, 0f, 20f, Color.argb(200, 0, 0, 0))
-        }
-        canvas.drawRoundRect(artRect, 28f, 28f, shadowPaint)
-
-        if (config.albumArtBitmap != null && !config.albumArtBitmap.isRecycled) {
-            val clipPath = Path().apply { addRoundRect(artRect, 28f, 28f, Path.Direction.CW) }
-            canvas.save()
-            canvas.clipPath(clipPath)
-            canvas.drawBitmap(config.albumArtBitmap, null, artRect, null)
-            canvas.restore()
-            
-            // Refined border
-            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.argb(50, 255, 255, 255)
-                style = Paint.Style.STROKE
-                strokeWidth = 2f
-            }
-            canvas.drawRoundRect(artRect, 28f, 28f, borderPaint)
-        } else {
-            canvas.drawRoundRect(artRect, 28f, 28f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(220, 30, 35, 55) })
-        }
-
-        // Title and Artist
-        val textTop = artTop + artSize + 48f
-        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = 36f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
-        }
-        val artistPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(190, 220, 225, 245)
-            textSize = 24f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            textAlign = Paint.Align.CENTER
-        }
-
-        canvas.drawText(truncateText(config.songTitle, titlePaint, width - 80f), width / 2f, textTop, titlePaint)
-        canvas.drawText(truncateText(config.artistName, artistPaint, width - 80f), width / 2f, textTop + 40f, artistPaint)
-
-        // Active Lyric Highlight
-        if (config.lyricsLines.isNotEmpty()) {
-            val currentLineIndex = config.lyricsLines.indexOfLast { it.timeMs <= currentTimeMs }.coerceAtLeast(0)
-            if (currentLineIndex in config.lyricsLines.indices) {
-                val currentLine = config.lyricsLines[currentLineIndex]
-                val lyricPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    textSize = 28f
-                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    textAlign = Paint.Align.CENTER
-                    setShadowLayer(16f, 0f, 0f, accentColor)
-                }
-                val lyricBottom = drawWrappedCentered(canvas, "“${currentLine.text}”", lyricPaint, width - 100f, width / 2f, textTop + 105f, maxLines = 3, minSize = 20f)
-
-                // Translation if enabled
-                if (config.showTranslation && config.translatedLyrics != null) {
-                    val trans = config.translatedLyrics[currentLine.timeMs]
-                    if (!trans.isNullOrBlank()) {
-                        val transPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.argb(200, 220, 230, 255)
-                            textSize = 20f
-                            typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-                            textAlign = Paint.Align.CENTER
-                        }
-                        drawWrappedCentered(canvas, trans, transPaint, width - 110f, width / 2f, lyricBottom + 32f, maxLines = 2, minSize = 16f)
-                    }
-                }
-            }
-        }
-
-        if (config.showWaveform) {
-            drawSoundWaveform(canvas, width, height, config, accentColor, frameCount)
-        }
-        drawBottomProgressBar(canvas, width, height, config, dominantColor, clipProgress)
-    }
-
-    // TEMPLATE 3: Vinyl Disc Vibes
-    private fun renderVinylVibesStory(
-        canvas: Canvas,
-        width: Int,
-        height: Int,
-        config: ShareClipConfig,
-        dominantColor: Int,
-        accentColor: Int,
-        currentTimeMs: Long,
-        clipProgress: Float,
-        frameCount: Int
-    ) {
-        val artSize = (width * if (config.isVertical) 0.52f else 0.38f).toInt()
-        val artTop = if (config.isVertical) 160f else 90f
-        val artLeft = (width - artSize) / 2f - 45f
-
-        // Rotating vinyl disc popping out
-        val vinylSize = (artSize * 0.94f)
-        val vinylAngle = (frameCount * 3.5f) % 360f
-        val vinylCenterY = artTop + artSize / 2f
-        val vinylCenterX = artLeft + artSize * 0.90f
-
-        canvas.save()
-        canvas.rotate(vinylAngle, vinylCenterX, vinylCenterY)
-        val vinylPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(245, 16, 16, 20)
-            style = Paint.Style.FILL
-        }
-        canvas.drawCircle(vinylCenterX, vinylCenterY, vinylSize / 2f, vinylPaint)
-
-        // Grooves
-        val groovePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(40, 255, 255, 255)
-            strokeWidth = 2f
-            style = Paint.Style.STROKE
-        }
-        canvas.drawCircle(vinylCenterX, vinylCenterY, vinylSize * 0.40f, groovePaint)
-        canvas.drawCircle(vinylCenterX, vinylCenterY, vinylSize * 0.30f, groovePaint)
-        canvas.drawCircle(vinylCenterX, vinylCenterY, vinylSize * 0.20f, groovePaint)
-
-        // Vinyl center label
-        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = dominantColor
-            style = Paint.Style.FILL
-        }
-        canvas.drawCircle(vinylCenterX, vinylCenterY, vinylSize * 0.12f, labelPaint)
-        canvas.drawCircle(vinylCenterX, vinylCenterY, 7f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK })
-        canvas.restore()
-
-        // Artwork box
-        val artRect = RectF(artLeft, artTop, artLeft + artSize, artTop + artSize)
-        val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(160, 0, 0, 0)
-            setShadowLayer(30f, 0f, 15f, Color.argb(200, 0, 0, 0))
-        }
-        canvas.drawRoundRect(artRect, 22f, 22f, shadowPaint)
-
-        if (config.albumArtBitmap != null && !config.albumArtBitmap.isRecycled) {
-            val clipPath = Path().apply { addRoundRect(artRect, 22f, 22f, Path.Direction.CW) }
-            canvas.save()
-            canvas.clipPath(clipPath)
-            canvas.drawBitmap(config.albumArtBitmap, null, artRect, null)
-            canvas.restore()
-        } else {
-            canvas.drawRoundRect(artRect, 22f, 22f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(220, 30, 35, 55) })
-        }
-
-        // Title and Artist
-        val textTop = artTop + artSize + 48f
-        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = 34f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
-        }
-        val artistPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(190, 220, 225, 245)
-            textSize = 23f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            textAlign = Paint.Align.CENTER
-        }
-
-        canvas.drawText(truncateText(config.songTitle, titlePaint, width - 80f), width / 2f, textTop, titlePaint)
-        canvas.drawText(truncateText(config.artistName, artistPaint, width - 80f), width / 2f, textTop + 38f, artistPaint)
-
-        if (config.lyricsLines.isNotEmpty()) {
-            val currentLineIndex = config.lyricsLines.indexOfLast { it.timeMs <= currentTimeMs }.coerceAtLeast(0)
-            if (currentLineIndex in config.lyricsLines.indices) {
-                val lineText = config.lyricsLines[currentLineIndex].text
-                val lyricPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    textSize = 28f
-                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    textAlign = Paint.Align.CENTER
-                    setShadowLayer(16f, 0f, 0f, accentColor)
-                }
-                drawWrappedCentered(canvas, lineText, lyricPaint, width - 100f, width / 2f, textTop + 110f, maxLines = 3, minSize = 20f)
-            }
-        }
-
-        if (config.showWaveform) {
-            drawSoundWaveform(canvas, width, height, config, accentColor, frameCount)
-        }
-        drawBottomProgressBar(canvas, width, height, config, dominantColor, clipProgress)
-    }
-
-    private fun drawOrganicAmbientBackground(
-        canvas: Canvas,
-        width: Int,
-        height: Int,
-        dominantColor: Int,
-        accentColor: Int,
-        frameCount: Int
-    ) {
-        val shader = LinearGradient(
-            0f, 0f, width.toFloat(), height.toFloat(),
-            intArrayOf(
-                Color.argb(255, 10, 11, 20),
-                Color.argb(255, 18, 14, 28),
-                Color.argb(255, 6, 7, 14)
-            ),
-            floatArrayOf(0f, 0.5f, 1f),
-            Shader.TileMode.CLAMP
-        )
-        val bgPaint = Paint().apply { this.shader = shader }
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
-
-        // Soft animated breathing glow spots matching song's cover art
-        val breathe = (sin(frameCount * 0.06) * 24.0).toFloat()
-        val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(60, Color.red(dominantColor), Color.green(dominantColor), Color.blue(dominantColor))
-            maskFilter = BlurMaskFilter(220f, BlurMaskFilter.Blur.NORMAL)
-        }
-        canvas.drawCircle(width * 0.25f, height * 0.28f, 220f + breathe, glowPaint)
-
-        glowPaint.color = Color.argb(50, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
-        canvas.drawCircle(width * 0.75f, height * 0.68f, 240f - breathe, glowPaint)
-    }
-
-    private fun drawSoundWaveform(
-        canvas: Canvas,
-        width: Int,
-        height: Int,
-        config: ShareClipConfig,
-        accentColor: Int,
-        frameCount: Int
-    ) {
-        val waveBottom = if (config.isVertical) height - 85f else height - 50f
-        val barCount = 32
-        val barWidth = 9f
-        val spacing = (width - (barCount * barWidth)) / (barCount + 1)
-        val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-        }
-
-        for (i in 0 until barCount) {
-            val x = spacing + i * (barWidth + spacing)
-            val phase = frameCount * 0.16f + i * 0.38f
-            val dynamicHeight = 10f + (24f * (sin(phase.toDouble()) * cos((phase * 0.7).toDouble()) + 1.0)).toFloat()
-
-            val colorFactor = i.toFloat() / barCount
-            val r = Color.red(config.primaryColor) + ((Color.red(accentColor) - Color.red(config.primaryColor)) * colorFactor).toInt()
-            val g = Color.green(config.primaryColor) + ((Color.green(accentColor) - Color.green(config.primaryColor)) * colorFactor).toInt()
-            val b = Color.blue(config.primaryColor) + ((Color.blue(accentColor) - Color.blue(config.primaryColor)) * colorFactor).toInt()
-            barPaint.color = Color.rgb(r, g, b)
-
-            val barRect = RectF(x, waveBottom - dynamicHeight, x + barWidth, waveBottom)
-            canvas.drawRoundRect(barRect, 4.5f, 4.5f, barPaint)
-        }
-    }
-
-    private fun drawBottomProgressBar(
-        canvas: Canvas,
-        width: Int,
-        height: Int,
-        config: ShareClipConfig,
-        dominantColor: Int,
-        clipProgress: Float
-    ) {
-        val progressY = if (config.isVertical) height - 35f else height - 16f
-        val trackStart = 60f
-        val trackEnd = width - 60f
-
-        val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(45, 255, 255, 255)
-            strokeWidth = 4f
-            style = Paint.Style.STROKE
-            strokeCap = Paint.Cap.ROUND
-        }
-        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = dominantColor
-            strokeWidth = 4f
-            style = Paint.Style.STROKE
-            strokeCap = Paint.Cap.ROUND
-            setShadowLayer(8f, 0f, 0f, dominantColor)
-        }
-
-        canvas.drawLine(trackStart, progressY, trackEnd, progressY, trackPaint)
-        val fillEnd = trackStart + (trackEnd - trackStart) * clipProgress
-        if (fillEnd > trackStart) {
-            canvas.drawLine(trackStart, progressY, fillEnd, progressY, fillPaint)
-        }
-    }
-
-    /** Líneas de letra del fragmento. Excluye la línea que empieza justo en [ShareClipConfig.endMs] (es la siguiente estrofa). */
-    private fun clipLyricLines(config: ShareClipConfig): List<LyricLine> =
-        config.lyricsLines.filter { it.timeMs >= config.startMs - CLIP_LINE_TOLERANCE_MS && it.timeMs < config.endMs - CLIP_LINE_TOLERANCE_MS }
-
-    /** Ajuste de línea por palabras; corta por caracteres las palabras más anchas que la línea. */
-    private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
-        val result = mutableListOf<String>()
-        var current = ""
-        for (rawWord in text.trim().split(Regex("\\s+"))) {
-            var word = rawWord
-            while (paint.measureText(word) > maxWidth && word.length > 1) {
-                var cut = word.length - 1
-                while (cut > 1 && paint.measureText(word, 0, cut) > maxWidth) cut--
-                if (current.isNotEmpty()) { result.add(current); current = "" }
-                result.add(word.substring(0, cut))
-                word = word.substring(cut)
-            }
-            val test = if (current.isEmpty()) word else "$current $word"
-            if (current.isNotEmpty() && paint.measureText(test) > maxWidth) {
-                result.add(current)
-                current = word
-            } else {
-                current = test
-            }
-        }
-        if (current.isNotEmpty()) result.add(current)
-        return result
-    }
-
-    /**
-     * Dibuja texto centrado en varias líneas, reduciendo la fuente hasta [minSize] para no pasar de [maxLines].
-     * Devuelve la coordenada Y de la última línea dibujada.
-     */
-    private fun drawWrappedCentered(
-        canvas: Canvas, text: String, paint: Paint, maxWidth: Float, centerX: Float, firstBaseline: Float,
-        maxLines: Int, minSize: Float
-    ): Float {
-        var lines = wrapText(text, paint, maxWidth)
-        while (lines.size > maxLines && paint.textSize > minSize) {
-            paint.textSize = (paint.textSize - 1f).coerceAtLeast(minSize)
-            lines = wrapText(text, paint, maxWidth)
-        }
-        if (lines.size > maxLines) {
-            lines = lines.take(maxLines - 1) + truncateText(lines.drop(maxLines - 1).joinToString(" "), paint, maxWidth)
-        }
-        var y = firstBaseline
-        lines.forEachIndexed { i, line ->
-            if (i > 0) y += paint.textSize * 1.25f
-            canvas.drawText(line, centerX, y, paint)
-        }
-        return y
-    }
-
-    private fun truncateText(text: String, paint: Paint, maxWidth: Float): String {
-        if (paint.measureText(text) <= maxWidth) return text
-        var truncated = text
-        while (truncated.isNotEmpty() && paint.measureText("$truncated...") > maxWidth) {
-            truncated = truncated.dropLast(1)
-        }
-        return "$truncated..."
-    }
-
-    private fun extractArtworkColors(bitmap: Bitmap?, defaultPrimary: Int, defaultAccent: Int): Pair<Int, Int> {
-        if (bitmap == null || bitmap.isRecycled) return Pair(defaultPrimary, defaultAccent)
-        return try {
-            val small = Bitmap.createScaledBitmap(bitmap, 48, 48, false)
-            val palette = Palette.from(small).generate()
-            if (small !== bitmap) small.recycle()
-            val dominant = palette.getVibrantColor(palette.getDominantColor(defaultPrimary))
-            val accent = palette.getLightVibrantColor(palette.getMutedColor(defaultAccent))
-            Pair(dominant, accent)
-        } catch (e: Exception) {
-            Pair(defaultPrimary, defaultAccent)
         }
     }
 

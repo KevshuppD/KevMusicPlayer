@@ -24,4 +24,10 @@
     <string name="find_lyrics">Buscar letras</string>
     <string name="translate_lyrics">Traducir</string>
     <string name="no_lyrics">No se encontraron letras para esta pista</string>
+    <string name="widget_music_description">Lo que suena con controles, con el tema de la app</string>
+    <string name="widget_clips_description">Acceso directo a tus videos creados</string>
+    <string name="widget_clips_title">Mis videos</string>
+    <string name="widget_clips_preview_count">3 videos</string>
+    <string name="widget_preview_title">Título de la canción</string>
+    <string name="widget_preview_artist">Artista</string>
 </resources>

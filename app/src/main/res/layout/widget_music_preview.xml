@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Vista previa del widget de reproducción en el selector de widgets (solo vistas de RemoteViews) -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/widget_preview_bg" android:gravity="center_vertical"
+    android:orientation="horizontal" android:padding="12dp">
+    <ImageView android:layout_width="52dp" android:layout_height="52dp"
+        android:background="@drawable/widget_preview_card" android:padding="12dp"
+        android:src="@android:drawable/ic_media_play" android:tint="#FFFF4081" />
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+        android:layout_marginStart="12dp" android:orientation="vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/widget_preview_title" android:textColor="#FFFFFFFF" android:textSize="14sp" android:textStyle="bold" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/widget_preview_artist" android:textColor="#A6FFFFFF" android:textSize="12sp" />
+    </LinearLayout>
+    <ImageView android:layout_width="36dp" android:layout_height="36dp" android:background="@drawable/widget_preview_card"
+        android:padding="9dp" android:src="@android:drawable/ic_media_previous" android:tint="#FFFFFFFF" />
+    <ImageView android:layout_width="44dp" android:layout_height="44dp" android:layout_marginStart="8dp" android:layout_marginEnd="8dp"
+        android:background="@drawable/widget_preview_accent" android:padding="11dp"
+        android:src="@android:drawable/ic_media_pause" android:tint="#FF000000" />
+    <ImageView android:layout_width="36dp" android:layout_height="36dp" android:background="@drawable/widget_preview_card"
+        android:padding="9dp" android:src="@android:drawable/ic_media_next" android:tint="#FFFFFFFF" />
+</LinearLayout>

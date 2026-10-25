@@ -1,25 +1,29 @@
 package com.kevshupp.kevmusicplayer.ui.screens.dialogs
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Environment
+import android.provider.MediaStore
 import android.widget.Toast
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -27,17 +31,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,17 +49,45 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import com.kevshupp.kevmusicplayer.data.LyricsRepository
+import com.kevshupp.kevmusicplayer.playback.managers.ClipBackground
+import com.kevshupp.kevmusicplayer.playback.managers.PixelArtMode
+import com.kevshupp.kevmusicplayer.playback.managers.ClipEntry
+import com.kevshupp.kevmusicplayer.playback.managers.ClipHistory
+import com.kevshupp.kevmusicplayer.playback.managers.ClipSettings
+import com.kevshupp.kevmusicplayer.playback.managers.ClipFont
+import com.kevshupp.kevmusicplayer.playback.managers.ClipFormat
+import com.kevshupp.kevmusicplayer.playback.managers.ClipQuality
+import com.kevshupp.kevmusicplayer.playback.managers.ClipRenderer
 import com.kevshupp.kevmusicplayer.playback.managers.ClipTemplateStyle
 import com.kevshupp.kevmusicplayer.playback.managers.ShareClipConfig
 import com.kevshupp.kevmusicplayer.playback.managers.VideoClipGenerator
+import com.kevshupp.kevmusicplayer.ui.theme.PixelFontFamily
+import com.kevshupp.kevmusicplayer.ui.theme.PixelPalettes
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sin
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Preferencias del último video: se recuerdan entre usos (settings_prefs/clip_*). */
+private const val PREF_TEMPLATE = "clip_template"
+private const val PREF_FORMAT = "clip_format"
+private const val PREF_QUALITY = "clip_quality"
+private const val PREF_FONT = "clip_font"
+private const val PREF_UPPER = "clip_uppercase"
+private const val PREF_SIZE = "clip_text_scale"
+private const val PREF_BG = "clip_background"
+private const val PREF_WAVE = "clip_waveform"
+private const val PREF_PALETTE = "clip_pixel_palette"
+private const val PREF_FPS = "clip_fps"
+private const val PREF_PIXEL_ART = "clip_pixel_art"
+
+private inline fun <reified E : Enum<E>> enumPref(prefs: android.content.SharedPreferences, key: String, default: E): E =
+    runCatching { enumValueOf<E>(prefs.getString(key, default.name) ?: default.name) }.getOrDefault(default)
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ShareClipDialog(
     songTitle: String,
@@ -68,14 +99,35 @@ fun ShareClipDialog(
     albumArtBitmap: Bitmap?,
     lyrics: String?,
     translatedLyrics: Map<Long, String>? = null,
+    songId: Long = 0L,
+    /** Video del historial que se edita: se parte de su fragmento y su diseño. */
+    initial: ClipEntry? = null,
+    onOpenHistory: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val prefs = remember { context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE) }
     val parsedLyrics = remember(lyrics) { LyricsRepository.parseLrc(lyrics) }
+    val hasTranslation = !translatedLyrics.isNullOrEmpty()
+
+    // Al editar, se recupera la selección por letras si el fragmento empieza y acaba en líneas
+    val initialStartIdx = remember { initial?.let { e -> parsedLyrics.indexOfFirst { it.timeMs == e.startMs } } ?: -1 }
+    val initialEndIdx = remember {
+        if (initialStartIdx < 0 || initial == null) -1
+        else (initialStartIdx until parsedLyrics.size).lastOrNull { i ->
+            val end = if (i + 1 < parsedLyrics.size) parsedLyrics[i + 1].timeMs else Long.MAX_VALUE
+            end <= initial.endMs || i == initialStartIdx
+        } ?: -1
+    }
+    val saved = initial?.settings
 
     // Selection mode: 0 = Por Letras, 1 = Manual
-    var selectedTab by remember { mutableIntStateOf(if (parsedLyrics.isNotEmpty()) 0 else 1) }
+    var selectedTab by remember {
+        mutableIntStateOf(if (parsedLyrics.isEmpty() || (initial != null && initialStartIdx < 0)) 1 else 0)
+    }
+    // Panel inferior: 0 = Fragmento, 1 = Diseño
+    var panel by remember { mutableIntStateOf(0) }
 
     // Línea que suena al abrir el diálogo: solo sirve para situar la lista, no se preselecciona.
     val initialIdx = remember {
@@ -84,30 +136,48 @@ fun ShareClipDialog(
         } else 0
     }
     // Selección por letras; -1 = sin selección.
-    var selectedLyricStartIdx by remember { mutableIntStateOf(-1) }
-    var selectedLyricEndIdx by remember { mutableIntStateOf(-1) }
+    var selectedLyricStartIdx by remember { mutableIntStateOf(initialStartIdx) }
+    var selectedLyricEndIdx by remember { mutableIntStateOf(if (initialStartIdx >= 0) initialEndIdx else -1) }
     val hasLyricSelection = selectedLyricStartIdx >= 0
 
     // Range state
     var startMs by remember {
-        mutableLongStateOf(currentPositionMs.coerceIn(0L, max(0L, songDurationMs - 15000L)))
+        mutableLongStateOf(initial?.startMs ?: currentPositionMs.coerceIn(0L, max(0L, songDurationMs - 15000L)))
     }
-    var endMs by remember { mutableLongStateOf(min(songDurationMs, startMs + 15000L)) }
+    var endMs by remember { mutableLongStateOf(initial?.endMs ?: min(songDurationMs, startMs + 15000L)) }
 
-    // Video visual configuration
-    var isVertical by remember { mutableStateOf(true) } // true: 9:16 Story, false: 1:1 Feed
+    // Diseño (se recuerda el último usado)
     var templateStyle by remember {
-        mutableStateOf(if (parsedLyrics.isNotEmpty()) ClipTemplateStyle.LYRICS_STORY else ClipTemplateStyle.PLAYER_CANVAS)
+        mutableStateOf(saved?.template ?: enumPref(prefs, PREF_TEMPLATE, if (parsedLyrics.isNotEmpty()) ClipTemplateStyle.LYRICS_STORY else ClipTemplateStyle.PLAYER_CANVAS))
     }
-    var isAmoledDark by remember { mutableStateOf(false) }
-    var showWaveform by remember { mutableStateOf(true) }
-    var showTranslation by remember { mutableStateOf(!translatedLyrics.isNullOrEmpty()) }
-    var dedicationText by remember { mutableStateOf("") }
+    var format by remember { mutableStateOf(saved?.format ?: enumPref(prefs, PREF_FORMAT, ClipFormat.STORY)) }
+    var quality by remember { mutableStateOf(saved?.quality ?: enumPref(prefs, PREF_QUALITY, ClipQuality.HD)) }
+    var font by remember { mutableStateOf(saved?.font ?: enumPref(prefs, PREF_FONT, ClipFont.SANS)) }
+    var uppercase by remember { mutableStateOf(saved?.uppercase ?: prefs.getBoolean(PREF_UPPER, false)) }
+    var textScale by remember { mutableFloatStateOf(saved?.textScale ?: prefs.getFloat(PREF_SIZE, 1f)) }
+    var background by remember { mutableStateOf(saved?.background ?: enumPref(prefs, PREF_BG, ClipBackground.AMBIENT)) }
+    var showWaveform by remember { mutableStateOf(saved?.waveform ?: prefs.getBoolean(PREF_WAVE, true)) }
+    var pixelPaletteKey by remember { mutableStateOf(saved?.pixelPalette ?: prefs.getString(PREF_PALETTE, "pixel") ?: "pixel") }
+    var fps by remember { mutableIntStateOf(saved?.fps ?: prefs.getInt(PREF_FPS, 30)) }
+    var pixelArtMode by remember { mutableStateOf(saved?.pixelArtMode ?: enumPref(prefs, PREF_PIXEL_ART, PixelArtMode.PALETTE)) }
+    var showTranslation by remember { mutableStateOf(if (saved != null) saved.translation else hasTranslation) }
+    var dedicationText by remember { mutableStateOf(saved?.dedication ?: "") }
     var showDedicationDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(templateStyle, format, quality, font, uppercase, textScale, background, showWaveform, pixelPaletteKey, fps, pixelArtMode) {
+        prefs.edit()
+            .putString(PREF_TEMPLATE, templateStyle.name).putString(PREF_FORMAT, format.name)
+            .putString(PREF_QUALITY, quality.name).putString(PREF_FONT, font.name)
+            .putBoolean(PREF_UPPER, uppercase).putFloat(PREF_SIZE, textScale)
+            .putString(PREF_BG, background.name).putBoolean(PREF_WAVE, showWaveform)
+            .putString(PREF_PALETTE, pixelPaletteKey).putInt(PREF_FPS, fps).putString(PREF_PIXEL_ART, pixelArtMode.name).apply()
+    }
 
     // Generation state
     var isGenerating by remember { mutableStateOf(false) }
     var generationProgress by remember { mutableFloatStateOf(0f) }
+    var generationStartedAt by remember { mutableLongStateOf(0L) }
+    var generatedFile by remember { mutableStateOf<File?>(null) }
 
     // Preview Player for pre-listening the snippet
     val previewPlayer = remember {
@@ -179,7 +249,7 @@ fun ShareClipDialog(
                     selectedLyricStartIdx = newStart
                     selectedLyricEndIdx = newEnd
                 } else {
-                    android.widget.Toast.makeText(context, "El fragmento no puede superar 60 s", android.widget.Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "El fragmento no puede superar 60 s", Toast.LENGTH_SHORT).show()
                     return
                 }
             }
@@ -196,6 +266,75 @@ fun ShareClipDialog(
 
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.secondary
+
+    // Sin selección, la vista previa muestra la línea que sonaba al abrir
+    val previewStart = if (canGenerate) startMs else parsedLyrics.getOrNull(initialIdx)?.timeMs ?: startMs
+    val previewEnd = if (canGenerate) endMs else previewStart + 8000L
+
+    val config = remember(
+        templateStyle, format, quality, font, uppercase, textScale, background, showWaveform, pixelPaletteKey,
+        showTranslation, dedicationText, previewStart, previewEnd, fps, pixelArtMode
+    ) {
+        val palette = PixelPalettes.firstOrNull { it.key == pixelPaletteKey } ?: PixelPalettes.first()
+        ShareClipConfig(
+            songTitle = songTitle,
+            artistName = artistName,
+            albumTitle = albumTitle,
+            albumArtBitmap = albumArtBitmap,
+            startMs = previewStart,
+            endMs = previewEnd,
+            audioUri = Uri.parse(audioUriString),
+            lyricsLines = parsedLyrics,
+            translatedLyrics = translatedLyrics,
+            showTranslation = showTranslation && hasTranslation,
+            dedicationText = dedicationText.takeIf { it.isNotBlank() },
+            format = format,
+            quality = quality,
+            templateStyle = templateStyle,
+            background = background,
+            font = font,
+            uppercase = uppercase,
+            textScale = textScale,
+            showWaveform = showWaveform,
+            fps = fps,
+            pixelArtMode = pixelArtMode,
+            primaryColor = primaryColor.toArgb(),
+            accentColor = secondaryColor.toArgb(),
+            pixelColors = palette.scheme.let {
+                intArrayOf(it.background.toArgb(), it.surface.toArgb(), it.primary.toArgb(), it.secondary.toArgb(), it.onBackground.toArgb())
+            }
+        )
+    }
+
+    // Vista previa real: cuadros del mismo ClipRenderer que el video, a media resolución. Dos bitmaps
+    // alternos para no dibujar sobre el que se está mostrando.
+    var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(config) {
+        val renderer = withContext(Dispatchers.Default) { ClipRenderer(context, config) }
+        // Pixel art a su resolución real de píxeles (la imagen se amplía sin filtro); el resto a media resolución
+        val div = if (config.templateStyle == ClipTemplateStyle.PIXEL_ART) ClipRenderer.PX else 2f
+        val pw = (renderer.width / div).toInt()
+        val ph = (renderer.height / div).toInt()
+        val buffers = arrayOf(
+            Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888),
+            Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+        )
+        var which = 0
+        var frame = 0
+        try {
+            while (true) {
+                val time = if (isPreviewPlaying) previewCurrentPositionMs.coerceIn(config.startMs, config.endMs) else config.startMs + 300
+                val target = buffers[which]
+                withContext(Dispatchers.Default) { VideoClipGenerator.renderPreviewFrame(renderer, target, time, frame.toFloat()) }
+                previewBitmap = target
+                which = 1 - which
+                frame += 2
+                delay(if (isPreviewPlaying) 50 else 120)
+            }
+        } finally {
+            renderer.release()
+        }
+    }
 
     Dialog(
         onDismissRequest = {
@@ -214,70 +353,90 @@ fun ShareClipDialog(
                     .fillMaxSize()
                     .padding(horizontal = 18.dp, vertical = 10.dp)
             ) {
-                // 1. Header Toolbar
+                // 1. Cabecera
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = onDismiss,
-                            enabled = !isGenerating,
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Icon(Icons.Rounded.Close, contentDescription = "Cerrar", tint = Color.White)
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(onClick = onDismiss, enabled = !isGenerating, modifier = Modifier.size(38.dp)) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Cerrar", tint = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(if (initial != null) "Editar video" else "Crear video", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        val (vw, vh) = VideoClipGenerator.outputSize(config)
                         Text(
-                            text = "Crear Historia",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
+                            "${formatLabel(format)} · ${vw}×$vh · $fps fps · ${if (canGenerate) "${(endMs - startMs) / 1000} s" else "sin fragmento"}",
+                            color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp
                         )
                     }
+                    if (onOpenHistory != null) {
+                        TextButton(onClick = onOpenHistory, enabled = !isGenerating) {
+                            Icon(Icons.Rounded.VideoLibrary, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Mis videos", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
 
-                    // Format Toggle: 9:16 Story vs 1:1 Feed
-                    Row(
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 2. Vista previa (cuadros reales del video)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val bmp = previewBitmap
+                    val ratio = config.format.logicalWidth.toFloat() / config.format.logicalHeight
+                    Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White.copy(alpha = 0.08f))
-                            .padding(3.dp)
+                            .aspectRatio(ratio, matchHeightConstraintsFirst = ratio < 1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.Black)
+                            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(if (isVertical) primaryColor else Color.Transparent)
-                                .clickable { isVertical = true }
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
-                        ) {
-                            Text(
-                                "9:16 Story",
-                                color = if (isVertical) Color.Black else Color.White.copy(alpha = 0.7f),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                        if (bmp != null) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = "Vista previa",
+                                contentScale = ContentScale.Fit,
+                                // Pixel art: ampliar sin suavizar
+                                filterQuality = if (templateStyle == ClipTemplateStyle.PIXEL_ART) FilterQuality.None else FilterQuality.Medium,
+                                modifier = Modifier.fillMaxSize()
                             )
                         }
-                        Box(
+                        // Preescuchar
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(if (!isVertical) primaryColor else Color.Transparent)
-                                .clickable { isVertical = false }
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 10.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.65f))
+                                .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+                                .clickable(enabled = canGenerate) { isPreviewPlaying = !isPreviewPlaying }
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
                         ) {
+                            Icon(
+                                if (isPreviewPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                contentDescription = "Preescuchar",
+                                tint = primaryColor,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                "1:1 Feed",
-                                color = if (!isVertical) Color.Black else Color.White.copy(alpha = 0.7f),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                if (isPreviewPlaying) "Pausar" else if (!canGenerate) "Elige las líneas" else "Escuchar",
+                                color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // 2. Style Segmented Selector (3 distinct tabs)
+                // 3. Fragmento | Diseño
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -286,168 +445,28 @@ fun ShareClipDialog(
                         .padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    val styles = listOf(
-                        Triple(ClipTemplateStyle.LYRICS_STORY, "Letras", Icons.Rounded.FormatQuote),
-                        Triple(ClipTemplateStyle.PLAYER_CANVAS, "Canvas", Icons.Rounded.Image),
-                        Triple(ClipTemplateStyle.VINYL_VIBES, "Vinilo", Icons.Rounded.Album)
-                    )
-
-                    styles.forEach { (style, name, icon) ->
-                        val isSelected = templateStyle == style
+                    listOf(Icons.Rounded.ContentCut to "Fragmento", Icons.Rounded.Palette to "Diseño").forEachIndexed { i, (icon, name) ->
+                        val sel = panel == i
                         Row(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSelected) primaryColor else Color.Transparent)
-                                .clickable { templateStyle = style }
-                                .padding(vertical = 7.dp),
+                                .background(if (sel) primaryColor else Color.Transparent)
+                                .clickable { panel = i }
+                                .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            Icon(
-                                icon,
-                                contentDescription = null,
-                                tint = if (isSelected) Color.Black else Color.White.copy(alpha = 0.65f),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = name,
-                                color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.7f),
-                                fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                            )
+                            Icon(icon, null, tint = if (sel) Color.Black else Color.White.copy(alpha = 0.65f), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(name, color = if (sel) Color.Black else Color.White.copy(alpha = 0.75f), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // 3. Live Animated Preview Box
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(
-                            if (isAmoledDark) {
-                                androidx.compose.ui.graphics.SolidColor(Color.Black)
-                            } else {
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color(0xFF1B1D30),
-                                        Color(0xFF0F101C)
-                                    )
-                                )
-                            }
-                        )
-                        .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(22.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AnimatedContent(
-                        targetState = templateStyle,
-                        transitionSpec = {
-                            (fadeIn(animationSpec = tween(220)) + scaleIn(initialScale = 0.94f))
-                                .togetherWith(fadeOut(animationSpec = tween(180)))
-                        },
-                        label = "TemplateTransition"
-                    ) { targetStyle ->
-                        when (targetStyle) {
-                            ClipTemplateStyle.LYRICS_STORY -> {
-                                LyricsStoryPreview(
-                                    songTitle = songTitle,
-                                    artistName = artistName,
-                                    albumArtBitmap = albumArtBitmap,
-                                    parsedLyrics = parsedLyrics,
-                                    translatedLyrics = translatedLyrics,
-                                    showTranslation = showTranslation,
-                                    selectedStartIdx = selectedLyricStartIdx,
-                                    selectedEndIdx = selectedLyricEndIdx,
-                                    previewPosMs = previewCurrentPositionMs,
-                                    primaryColor = primaryColor
-                                )
-                            }
-                            ClipTemplateStyle.PLAYER_CANVAS -> {
-                                CanvasStoryPreview(
-                                    songTitle = songTitle,
-                                    artistName = artistName,
-                                    albumArtBitmap = albumArtBitmap,
-                                    parsedLyrics = parsedLyrics,
-                                    translatedLyrics = translatedLyrics,
-                                    showTranslation = showTranslation,
-                                    previewPosMs = previewCurrentPositionMs,
-                                    isPlaying = isPreviewPlaying,
-                                    primaryColor = primaryColor
-                                )
-                            }
-                            ClipTemplateStyle.VINYL_VIBES -> {
-                                VinylStoryPreview(
-                                    songTitle = songTitle,
-                                    artistName = artistName,
-                                    albumArtBitmap = albumArtBitmap,
-                                    isPlaying = isPreviewPlaying,
-                                    primaryColor = primaryColor
-                                )
-                            }
-                        }
-                    }
-
-                    // Floating Dedication Badge at Top of Preview
-                    if (dedicationText.isNotBlank()) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 10.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.7f))
-                                .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
-                                .clickable { showDedicationDialog = true }
-                                .padding(horizontal = 12.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = if (dedicationText.startsWith("💌") || dedicationText.startsWith("✨") || dedicationText.startsWith("💖")) dedicationText else "💌 $dedicationText",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    // Floating Pre-Listen Pill at Bottom of Preview
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 12.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.65f))
-                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
-                            .clickable(enabled = canGenerate) { isPreviewPlaying = !isPreviewPlaying }
-                            .padding(horizontal = 14.dp, vertical = 6.dp)
-                    ) {
-                        Icon(
-                            if (isPreviewPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                            contentDescription = "Preescuchar",
-                            tint = primaryColor,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            if (isPreviewPlaying) "Pausar" else if (!canGenerate) "Elige las líneas abajo" else "Preescuchar (${((endMs - startMs) / 1000)}s)",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
+                if (panel == 0) {
                 // 4. Fragment Selector (Letras vs Manual)
                 if (parsedLyrics.isNotEmpty()) {
                     Row(
@@ -682,148 +701,252 @@ fun ShareClipDialog(
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // 5. Options Chips: Dedication, Translation, AMOLED & Waveform
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    item {
-                        FilterChip(
-                            selected = dedicationText.isNotBlank(),
-                            onClick = { showDedicationDialog = true },
-                            label = {
-                                Text(
-                                    if (dedicationText.isNotBlank()) "💌 Dedicatoria" else "Dedicar",
-                                    fontSize = 11.sp
-                                )
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Rounded.Favorite, contentDescription = null, modifier = Modifier.size(13.dp))
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = primaryColor.copy(alpha = 0.25f),
-                                selectedLabelColor = primaryColor,
-                                selectedLeadingIconColor = primaryColor
-                            )
-                        )
-                    }
-
-                    if (!translatedLyrics.isNullOrEmpty()) {
-                        item {
-                            FilterChip(
-                                selected = showTranslation,
-                                onClick = { showTranslation = !showTranslation },
-                                label = { Text("Traducción", fontSize = 11.sp) },
-                                leadingIcon = {
-                                    Icon(Icons.Rounded.Translate, contentDescription = null, modifier = Modifier.size(13.dp))
+                } else {
+                    // Panel de diseño
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(262.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xFF141624))
+                            .verticalScroll(rememberScrollState())
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OptionSection("Plantilla") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf(
+                                    Triple(ClipTemplateStyle.LYRICS_STORY, "Letras", Icons.Rounded.FormatQuote),
+                                    Triple(ClipTemplateStyle.PLAYER_CANVAS, "Portada", Icons.Rounded.Image),
+                                    Triple(ClipTemplateStyle.VINYL_VIBES, "Vinilo", Icons.Rounded.Album),
+                                    Triple(ClipTemplateStyle.PIXEL_ART, "Pixel art", Icons.Rounded.GridOn)
+                                ).forEach { (style, name, icon) ->
+                                    TemplateCard(name, icon, templateStyle == style, primaryColor, Modifier.weight(1f)) {
+                                        templateStyle = style
+                                        // Pixel art va con fuente pixel; al salir de ella se vuelve a la normal
+                                        if (style == ClipTemplateStyle.PIXEL_ART) font = ClipFont.PIXEL
+                                        else if (font == ClipFont.PIXEL) font = ClipFont.SANS
+                                    }
                                 }
-                            )
+                            }
                         }
-                    }
 
-                    item {
-                        FilterChip(
-                            selected = isAmoledDark,
-                            onClick = { isAmoledDark = !isAmoledDark },
-                            label = { Text(if (isAmoledDark) "Fondo: AMOLED" else "Fondo: Color", fontSize = 11.sp) },
-                            leadingIcon = {
-                                Icon(Icons.Rounded.Palette, contentDescription = null, modifier = Modifier.size(13.dp))
+                        if (templateStyle == ClipTemplateStyle.PIXEL_ART) {
+                            OptionSection("Paleta") {
+                                Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    PixelPalettes.forEach { p ->
+                                        val sel = p.key == pixelPaletteKey
+                                        Column(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .border(if (sel) 2.dp else 1.dp, if (sel) primaryColor else Color.White.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                                                .clickable { pixelPaletteKey = p.key }
+                                                .padding(6.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            Row(Modifier.height(12.dp).width(56.dp)) {
+                                                p.swatch.forEach { c -> Box(Modifier.weight(1f).fillMaxHeight().background(c)) }
+                                            }
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(p.nameEs, color = if (sel) primaryColor else Color.White.copy(alpha = 0.8f), fontSize = 10.sp, maxLines = 1)
+                                        }
+                                    }
+                                }
                             }
-                        )
-                    }
+                        }
 
-                    item {
-                        FilterChip(
-                            selected = showWaveform,
-                            onClick = { showWaveform = !showWaveform },
-                            label = { Text("Ondas", fontSize = 11.sp) },
-                            leadingIcon = {
-                                Icon(Icons.Rounded.GraphicEq, contentDescription = null, modifier = Modifier.size(13.dp))
+                        if (templateStyle == ClipTemplateStyle.PIXEL_ART) {
+                            OptionSection("Portada") {
+                                ChipRow(listOf(PixelArtMode.PALETTE, PixelArtMode.PIXELATED, PixelArtMode.ORIGINAL), pixelArtMode, {
+                                    when (it) {
+                                        PixelArtMode.PALETTE -> "Colores de la paleta"
+                                        PixelArtMode.PIXELATED -> "Pixelada"
+                                        PixelArtMode.ORIGINAL -> "Sin alterar"
+                                    }
+                                }, primaryColor) { pixelArtMode = it }
                             }
-                        )
+                        }
+
+                        OptionSection("Formato") {
+                            ChipRow(
+                                listOf(ClipFormat.STORY, ClipFormat.PORTRAIT, ClipFormat.SQUARE, ClipFormat.LANDSCAPE),
+                                format, { formatLabel(it) }, primaryColor
+                            ) { format = it }
+                        }
+
+                        OptionSection("Calidad") {
+                            ChipRow(listOf(ClipQuality.HD, ClipQuality.FULL_HD), quality, {
+                                if (it == ClipQuality.HD) "720p · rápido" else "1080p · más nítido"
+                            }, primaryColor) { quality = it }
+                        }
+
+                        OptionSection("Fluidez") {
+                            // 60 fps solo si el codificador del teléfono lo admite a esta resolución
+                            val supports60 = remember(format, quality) { VideoClipGenerator.supportsFrameRate(config.copy(fps = 60), 60) }
+                            LaunchedEffect(supports60) { if (!supports60 && fps == 60) fps = 30 }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                StyledChip("24 fps · cine", fps == 24, primaryColor) { fps = 24 }
+                                StyledChip("30 fps", fps == 30, primaryColor) { fps = 30 }
+                                if (supports60) StyledChip("60 fps · fluido", fps == 60, primaryColor) { fps = 60 }
+                                else Text("60 fps no disponible en ${if (quality == ClipQuality.FULL_HD) "1080p" else "esta resolución"}", color = Color.White.copy(alpha = 0.4f), fontSize = 11.sp)
+                            }
+                        }
+
+                        OptionSection("Fuente") {
+                            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf(
+                                    Triple(ClipFont.SANS, "Moderna", FontFamily.SansSerif),
+                                    Triple(ClipFont.SERIF, "Clásica", FontFamily.Serif),
+                                    Triple(ClipFont.MONO, "Máquina", FontFamily.Monospace),
+                                    Triple(ClipFont.CONDENSED, "Condensada", FontFamily(android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL))),
+                                    Triple(ClipFont.PIXEL, "Pixel", PixelFontFamily)
+                                ).forEach { (f, name, family) ->
+                                    StyledChip(name, font == f, primaryColor, family) { font = f }
+                                }
+                            }
+                        }
+
+                        OptionSection("Texto") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                StyledChip("Aa", !uppercase, primaryColor) { uppercase = false }
+                                StyledChip("AA", uppercase, primaryColor) { uppercase = true }
+                                Spacer(Modifier.width(8.dp))
+                                listOf(0.85f to "S", 1f to "M", 1.2f to "L").forEach { (scale, label) ->
+                                    StyledChip(label, textScale == scale, primaryColor) { textScale = scale }
+                                }
+                            }
+                        }
+
+                        if (templateStyle != ClipTemplateStyle.PIXEL_ART) {
+                            OptionSection("Fondo") {
+                                ChipRow(listOf(ClipBackground.AMBIENT, ClipBackground.BLURRED_ART, ClipBackground.AMOLED), background, {
+                                    when (it) {
+                                        ClipBackground.AMBIENT -> "Ambiente"
+                                        ClipBackground.BLURRED_ART -> "Portada difuminada"
+                                        ClipBackground.AMOLED -> "Negro AMOLED"
+                                    }
+                                }, primaryColor) { background = it }
+                            }
+                        }
+
+                        OptionSection("Extras") {
+                            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (hasTranslation) {
+                                    StyledChip("Traducción", showTranslation, primaryColor, icon = Icons.Rounded.Translate) { showTranslation = !showTranslation }
+                                }
+                                StyledChip("Ondas", showWaveform, primaryColor, icon = Icons.Rounded.GraphicEq) { showWaveform = !showWaveform }
+                                StyledChip(
+                                    if (dedicationText.isNotBlank()) "Dedicatoria ✓" else "Dedicar",
+                                    dedicationText.isNotBlank(), primaryColor, icon = Icons.Rounded.Favorite
+                                ) { showDedicationDialog = true }
+                            }
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // 6. Action Button: Generate & Share Video
-                Button(
-                    onClick = {
-                        if (isGenerating) return@Button
-                        isGenerating = true
-                        isPreviewPlaying = false
-
-                        coroutineScope.launch {
-                            val artBitmap = albumArtBitmap
-                            val config = ShareClipConfig(
-                                songTitle = songTitle,
-                                artistName = artistName,
-                                albumTitle = albumTitle,
-                                albumArtBitmap = artBitmap,
-                                startMs = startMs,
-                                endMs = endMs,
-                                audioUri = Uri.parse(audioUriString),
-                                lyricsLines = parsedLyrics,
-                                translatedLyrics = translatedLyrics,
-                                showTranslation = showTranslation,
-                                dedicationText = dedicationText.takeIf { it.isNotBlank() },
-                                isVertical = isVertical,
-                                templateStyle = templateStyle,
-                                isAmoledDark = isAmoledDark,
-                                showWaveform = showWaveform,
-                                primaryColor = primaryColor.toArgb(),
-                                accentColor = secondaryColor.toArgb()
-                            )
-
-                            val result = VideoClipGenerator.generateClip(context, config) { progress ->
-                                generationProgress = progress
-                            }
-
-                            isGenerating = false
-
-                            result.onSuccess { generatedVideoFile ->
-                                Toast.makeText(context, "¡Video generado con éxito!", Toast.LENGTH_SHORT).show()
-                                shareVideoFile(context, generatedVideoFile, songTitle, artistName, dedicationText)
-                                onDismiss()
-                            }.onFailure { err ->
-                                val msg = err.message ?: err.localizedMessage ?: err.javaClass.simpleName
-                                Toast.makeText(context, "Error al generar video: $msg", Toast.LENGTH_LONG).show()
-                            }
+                // 4. Generar / resultado
+                val done = generatedFile
+                if (done != null && !isGenerating) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                if (saveVideoToGallery(context, done, songTitle)) {
+                                    Toast.makeText(context, "Guardado en Películas/KevMusic", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "No se pudo guardar el video", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f).height(50.dp),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Icon(Icons.Rounded.Download, null, tint = Color.White)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Guardar", color = Color.White, fontWeight = FontWeight.Bold)
                         }
-                    },
-                    enabled = !isGenerating && canGenerate,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = primaryColor)
-                ) {
-                    if (isGenerating) {
-                        CircularProgressIndicator(
-                            color = Color.Black,
-                            modifier = Modifier.size(22.dp),
-                            strokeWidth = 2.5.dp
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "Renderizando historia... ${(generationProgress * 100).toInt()}%",
-                            color = Color.Black,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                    } else {
-                        Icon(Icons.Rounded.MovieFilter, contentDescription = null, tint = Color.Black)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (!canGenerate) "Elige las líneas del fragmento" else if (dedicationText.isNotBlank()) "Generar y Dedicar Historia" else "Generar y Compartir Historia",
-                            color = Color.Black,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
+                        Button(
+                            onClick = { shareVideoFile(context, done, songTitle, artistName, dedicationText) },
+                            modifier = Modifier.weight(1.4f).height(50.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = primaryColor)
+                        ) {
+                            Icon(Icons.Rounded.Share, null, tint = Color.Black)
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (dedicationText.isNotBlank()) "Dedicar" else "Compartir", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    TextButton(onClick = { generatedFile = null }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                        Text("Hacer otro con otros ajustes", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            if (isGenerating) return@Button
+                            isGenerating = true
+                            isPreviewPlaying = false
+                            generationProgress = 0f
+                            generationStartedAt = System.currentTimeMillis()
+                            coroutineScope.launch {
+                                val finalConfig = config.copy(startMs = startMs, endMs = endMs)
+                                val result = VideoClipGenerator.generateClip(context, finalConfig) { progress ->
+                                    generationProgress = progress
+                                }
+                                // Queda en "Mis videos" con los ajustes, para poder editarlo después
+                                val stored = result.getOrNull()?.let { file ->
+                                    ClipHistory.add(
+                                        context, file, songId, finalConfig,
+                                        ClipSettings(
+                                            templateStyle, format, quality, font, uppercase, textScale, background,
+                                            showWaveform, pixelPaletteKey, showTranslation && hasTranslation, dedicationText, fps, pixelArtMode
+                                        )
+                                    )
+                                }
+                                isGenerating = false
+                                result.onSuccess {
+                                    // No se abre Compartir solo: un toque sin querer en el menú lo enviaba
+                                    generatedFile = stored ?: return@onSuccess
+                                    Toast.makeText(context, "Video listo · guardado en Mis videos", Toast.LENGTH_SHORT).show()
+                                }.onFailure { err ->
+                                    val msg = err.message ?: err.localizedMessage ?: err.javaClass.simpleName
+                                    Toast.makeText(context, "Error al generar video: $msg", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        },
+                        enabled = !isGenerating && canGenerate,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = primaryColor)
+                    ) {
+                        if (isGenerating) {
+                            CircularProgressIndicator(
+                                progress = { generationProgress },
+                                color = Color.Black,
+                                trackColor = Color.Black.copy(alpha = 0.2f),
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.5.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            val elapsed = System.currentTimeMillis() - generationStartedAt
+                            val remaining = if (generationProgress > 0.08f) ((elapsed / generationProgress) * (1 - generationProgress) / 1000).toInt() else -1
+                            Text(
+                                text = "Creando video… ${(generationProgress * 100).toInt()}%" + if (remaining >= 0) " · quedan ${remaining + 1} s" else "",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        } else {
+                            Icon(Icons.Rounded.MovieFilter, contentDescription = null, tint = Color.Black)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (!canGenerate) "Elige las líneas del fragmento" else "Crear video",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
                     }
                 }
             }
@@ -924,384 +1047,86 @@ fun ShareClipDialog(
     }
 }
 
-// ==========================================
-// PREVIEWS FOR EACH TEMPLATE STYLE
-// ==========================================
+private fun formatLabel(f: ClipFormat) = when (f) {
+    ClipFormat.STORY -> "9:16 Historia"
+    ClipFormat.PORTRAIT -> "4:5 Feed"
+    ClipFormat.SQUARE -> "1:1 Cuadrado"
+    ClipFormat.LANDSCAPE -> "16:9 Horizontal"
+}
 
 @Composable
-private fun LyricsStoryPreview(
-    songTitle: String,
-    artistName: String,
-    albumArtBitmap: Bitmap?,
-    parsedLyrics: List<com.kevshupp.kevmusicplayer.data.LyricLine>,
-    translatedLyrics: Map<Long, String>?,
-    showTranslation: Boolean,
-    selectedStartIdx: Int,
-    selectedEndIdx: Int,
-    previewPosMs: Long,
-    primaryColor: Color
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(14.dp),
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        // Spotify Style Frosted Card
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = Color.White.copy(alpha = 0.08f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                // Lyric Quotes
-                Column {
-                    if (parsedLyrics.isNotEmpty() && selectedStartIdx in parsedLyrics.indices) {
-                        val endIdx = min(parsedLyrics.size - 1, selectedEndIdx)
-                        val activeLineIdx = parsedLyrics.indexOfLast { it.timeMs <= previewPosMs }.coerceAtLeast(0)
-
-                        for (i in selectedStartIdx..endIdx) {
-                            val line = parsedLyrics[i]
-                            val isCurrentSinging = i == activeLineIdx
-                            Column(modifier = Modifier.padding(vertical = 3.dp)) {
-                                Text(
-                                    text = line.text,
-                                    color = if (isCurrentSinging) Color.White else Color.White.copy(alpha = 0.5f),
-                                    fontSize = if (isCurrentSinging) 15.sp else 13.sp,
-                                    fontWeight = if (isCurrentSinging) FontWeight.Bold else FontWeight.Medium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (showTranslation && translatedLyrics != null) {
-                                    val trans = translatedLyrics[line.timeMs]
-                                    if (!trans.isNullOrBlank()) {
-                                        Text(
-                                            text = trans,
-                                            color = if (isCurrentSinging) primaryColor else Color.White.copy(alpha = 0.4f),
-                                            fontSize = 11.sp,
-                                            fontStyle = FontStyle.Italic,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        Text(
-                            text = "♫ Fragmento de música seleccionado",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
-                // Footer Song Badge
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF282838))
-                    ) {
-                        if (albumArtBitmap != null) {
-                            androidx.compose.foundation.Image(
-                                bitmap = albumArtBitmap.asImageBitmap(),
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = songTitle,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = artistName,
-                            color = Color.White.copy(alpha = 0.65f),
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(36.dp))
+private fun OptionSection(title: String, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title.uppercase(), color = Color.White.copy(alpha = 0.45f), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+        content()
     }
 }
 
 @Composable
-private fun CanvasStoryPreview(
-    songTitle: String,
-    artistName: String,
-    albumArtBitmap: Bitmap?,
-    parsedLyrics: List<com.kevshupp.kevmusicplayer.data.LyricLine>,
-    translatedLyrics: Map<Long, String>?,
-    showTranslation: Boolean,
-    previewPosMs: Long,
-    isPlaying: Boolean,
-    primaryColor: Color
-) {
+private fun TemplateCard(name: String, icon: ImageVector, selected: Boolean, accent: Color, modifier: Modifier, onClick: () -> Unit) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) accent.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.05f))
+            .border(if (selected) 1.5.dp else 1.dp, if (selected) accent else Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(2.dp))
-
-        // Large Artwork Card
-        Box(
-            modifier = Modifier
-                .size(105.dp)
-                .shadow(16.dp, RoundedCornerShape(16.dp))
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF282838)),
-            contentAlignment = Alignment.Center
-        ) {
-            if (albumArtBitmap != null) {
-                androidx.compose.foundation.Image(
-                    bitmap = albumArtBitmap.asImageBitmap(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
-            }
-        }
-
-        // Title and Artist
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = songTitle,
-                color = Color.White,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = artistName,
-                color = Color.White.copy(alpha = 0.65f),
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        // Active Singing Lyric
-        if (parsedLyrics.isNotEmpty()) {
-            val currentLine = parsedLyrics.findLast { it.timeMs <= previewPosMs } ?: parsedLyrics.first()
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = 14.dp)
-            ) {
-                Text(
-                    text = "“${currentLine.text}”",
-                    color = primaryColor,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2
-                )
-                if (showTranslation && translatedLyrics != null) {
-                    val t = translatedLyrics[currentLine.timeMs]
-                    if (!t.isNullOrBlank()) {
-                        Text(
-                            text = t,
-                            color = Color.White.copy(alpha = 0.7f),
-                            fontSize = 10.sp,
-                            fontStyle = FontStyle.Italic,
-                            textAlign = TextAlign.Center,
-                            maxLines = 2
-                        )
-                    }
-                }
-            }
-        }
-
-        // Waveform preview animation
-        AnimatedWaveformBar(isPlaying = isPlaying, primaryColor = primaryColor)
-
-        Spacer(modifier = Modifier.height(36.dp))
+        Icon(icon, null, tint = if (selected) accent else Color.White.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(name, color = if (selected) accent else Color.White.copy(alpha = 0.8f), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
 
 @Composable
-private fun VinylStoryPreview(
-    songTitle: String,
-    artistName: String,
-    albumArtBitmap: Bitmap?,
-    isPlaying: Boolean,
-    primaryColor: Color
-) {
-    val infiniteTransition = rememberInfiniteTransition(label = "VinylSpin")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = if (isPlaying) 360f else 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(4000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "VinylRotation"
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // Vinyl + Cover Sleeve Composite
-        Box(
-            modifier = Modifier
-                .height(100.dp)
-                .fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            // Spinning Vinyl Disc popping out to the right
-            Box(
-                modifier = Modifier
-                    .offset(x = 32.dp)
-                    .size(90.dp)
-                    .rotate(rotation)
-                    .clip(CircleShape)
-                    .background(Color(0xFF111116))
-                    .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                // Vinyl grooves
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val radius = size.minDimension / 2f
-                    drawCircle(Color.White.copy(alpha = 0.08f), radius * 0.8f, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5f))
-                    drawCircle(Color.White.copy(alpha = 0.08f), radius * 0.6f, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5f))
-                    drawCircle(Color.White.copy(alpha = 0.08f), radius * 0.4f, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5f))
-                }
-                // Center Label
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .background(primaryColor),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (albumArtBitmap != null) {
-                        androidx.compose.foundation.Image(
-                            bitmap = albumArtBitmap.asImageBitmap(),
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.Black))
-                }
-            }
-
-            // Cover Sleeve Box (Left)
-            Box(
-                modifier = Modifier
-                    .offset(x = (-24).dp)
-                    .size(92.dp)
-                    .shadow(12.dp, RoundedCornerShape(12.dp))
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF282838)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (albumArtBitmap != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = albumArtBitmap.asImageBitmap(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
-                }
-            }
-        }
-
-        // Title and Artist
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = songTitle,
-                color = Color.White,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = artistName,
-                color = Color.White.copy(alpha = 0.65f),
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        Spacer(modifier = Modifier.height(36.dp))
+private fun <T> ChipRow(options: List<T>, selected: T, label: (T) -> String, accent: Color, onSelect: (T) -> Unit) {
+    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        options.forEach { o -> StyledChip(label(o), o == selected, accent) { onSelect(o) } }
     }
 }
 
 @Composable
-private fun AnimatedWaveformBar(isPlaying: Boolean, primaryColor: Color) {
-    val infiniteTransition = rememberInfiniteTransition(label = "WaveformPulse")
-    val phase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = if (isPlaying) 6.28f else 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "WaveformPhase"
-    )
-
+private fun StyledChip(
+    label: String,
+    selected: Boolean,
+    accent: Color,
+    family: FontFamily? = null,
+    icon: ImageVector? = null,
+    onClick: () -> Unit
+) {
     Row(
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.height(20.dp)
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) accent else Color.White.copy(alpha = 0.07f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        for (i in 0 until 18) {
-            val barHeight = if (isPlaying) {
-                (4 + (sin(phase + i * 0.45f) + 1f) * 6).dp
-            } else {
-                5.dp
-            }
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height(barHeight)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(primaryColor.copy(alpha = 0.75f))
-            )
+        if (icon != null) {
+            Icon(icon, null, tint = if (selected) Color.Black else Color.White.copy(alpha = 0.75f), modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(5.dp))
         }
+        Text(label, color = if (selected) Color.Black else Color.White.copy(alpha = 0.85f), fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = family)
     }
 }
+
+/** Copia el video a Películas/KevMusic (MediaStore). Lo pide el usuario con "Guardar". */
+internal fun saveVideoToGallery(context: Context, file: File, title: String): Boolean = runCatching {
+    val values = ContentValues().apply {
+        put(MediaStore.Video.Media.DISPLAY_NAME, "KevMusic_${title.replace(Regex("[^\\p{L}\\p{N}]+"), "_").take(40)}_${System.currentTimeMillis()}.mp4")
+        put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+        put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/KevMusic")
+        put(MediaStore.Video.Media.IS_PENDING, 1)
+    }
+    val resolver = context.contentResolver
+    val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+    resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } } ?: return false
+    values.clear()
+    values.put(MediaStore.Video.Media.IS_PENDING, 0)
+    resolver.update(uri, values, null, null)
+    true
+}.getOrDefault(false)
 
 private fun formatTime(ms: Long): String {
     val totalSeconds = (ms / 1000).coerceAtLeast(0)
@@ -1310,7 +1135,7 @@ private fun formatTime(ms: Long): String {
     return String.format("%02d:%02d", minutes, seconds)
 }
 
-private fun shareVideoFile(
+internal fun shareVideoFile(
     context: Context,
     videoFile: File,
     songTitle: String,

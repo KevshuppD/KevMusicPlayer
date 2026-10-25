@@ -80,6 +80,8 @@ class MusicWidget : GlanceAppWidget() {
         val prefs = currentState<Preferences>()
         val title = prefs[stringPreferencesKey("title")] ?: ""
         val artist = prefs[stringPreferencesKey("artist")] ?: ""
+        // Colores del tema de la app (antes fijos en morado y no cambiaban con el tema)
+        val c = WidgetTheme.colors(context)
         val isPlaying = prefs[booleanPreferencesKey("isPlaying")] ?: false
 
         android.util.Log.d("WidgetDebug", "WidgetContent: title = $title, artist = $artist, isPlaying = $isPlaying")
@@ -101,7 +103,7 @@ class MusicWidget : GlanceAppWidget() {
         Box(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(ColorProvider(Color(0xFF161829)))
+                .background(ColorProvider(c.background))
                 .cornerRadius(16.dp)
                 .padding(12.dp)
                 .clickable(actionStartActivity<MainActivity>()),
@@ -115,7 +117,7 @@ class MusicWidget : GlanceAppWidget() {
                 Box(
                     modifier = GlanceModifier
                         .size(52.dp)
-                        .background(ColorProvider(Color(0xFF1E1B4B)))
+                        .background(ColorProvider(c.card))
                         .cornerRadius(12.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -131,7 +133,7 @@ class MusicWidget : GlanceAppWidget() {
                         Box(
                             modifier = GlanceModifier
                                 .size(36.dp)
-                                .background(ColorProvider(Color(0xFF7C4DFF)))
+                                .background(ColorProvider(c.primary))
                                 .cornerRadius(18.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -139,7 +141,7 @@ class MusicWidget : GlanceAppWidget() {
                                 provider = ImageProvider(android.R.drawable.ic_media_play),
                                 contentDescription = "Cover Placeholder",
                                 modifier = GlanceModifier.size(16.dp),
-                                colorFilter = ColorFilter.tint(ColorProvider(Color.Black))
+                                colorFilter = ColorFilter.tint(ColorProvider(c.onPrimary))
                             )
                         }
                     }
@@ -155,7 +157,7 @@ class MusicWidget : GlanceAppWidget() {
                     Text(
                         text = if (title.isEmpty()) "Kev Music Player" else title,
                         style = TextStyle(
-                            color = ColorProvider(Color.White),
+                            color = ColorProvider(c.text),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
                         ),
@@ -165,7 +167,7 @@ class MusicWidget : GlanceAppWidget() {
                     Text(
                         text = if (artist.isEmpty()) "Dispositivo Listo" else artist,
                         style = TextStyle(
-                            color = ColorProvider(Color(0xFFA9B2C3)),
+                            color = ColorProvider(c.muted),
                             fontSize = 12.sp
                         ),
                         maxLines = 1
@@ -183,7 +185,7 @@ class MusicWidget : GlanceAppWidget() {
                         modifier = GlanceModifier
                             .size(36.dp)
                             .cornerRadius(18.dp)
-                            .background(ColorProvider(Color(0xFF222436)))
+                            .background(ColorProvider(c.card))
                             .clickable(actionRunCallback<PreviousCallback>()),
                         contentAlignment = Alignment.Center
                     ) {
@@ -191,7 +193,7 @@ class MusicWidget : GlanceAppWidget() {
                             provider = ImageProvider(android.R.drawable.ic_media_previous),
                             contentDescription = "Previous",
                             modifier = GlanceModifier.size(18.dp),
-                            colorFilter = ColorFilter.tint(ColorProvider(Color.White))
+                            colorFilter = ColorFilter.tint(ColorProvider(c.text))
                         )
                     }
 
@@ -202,7 +204,7 @@ class MusicWidget : GlanceAppWidget() {
                         modifier = GlanceModifier
                             .size(44.dp)
                             .cornerRadius(22.dp)
-                            .background(ColorProvider(Color(0xFF7C4DFF)))
+                            .background(ColorProvider(c.primary))
                             .clickable(actionRunCallback<PlayPauseCallback>()),
                         contentAlignment = Alignment.Center
                     ) {
@@ -212,7 +214,7 @@ class MusicWidget : GlanceAppWidget() {
                             ),
                             contentDescription = "Play/Pause",
                             modifier = GlanceModifier.size(20.dp),
-                            colorFilter = ColorFilter.tint(ColorProvider(Color.Black))
+                            colorFilter = ColorFilter.tint(ColorProvider(c.onPrimary))
                         )
                     }
 
@@ -223,7 +225,7 @@ class MusicWidget : GlanceAppWidget() {
                         modifier = GlanceModifier
                             .size(36.dp)
                             .cornerRadius(18.dp)
-                            .background(ColorProvider(Color(0xFF222436)))
+                            .background(ColorProvider(c.card))
                             .clickable(actionRunCallback<NextCallback>()),
                         contentAlignment = Alignment.Center
                     ) {
@@ -231,7 +233,7 @@ class MusicWidget : GlanceAppWidget() {
                             provider = ImageProvider(android.R.drawable.ic_media_next),
                             contentDescription = "Next",
                             modifier = GlanceModifier.size(18.dp),
-                            colorFilter = ColorFilter.tint(ColorProvider(Color.White))
+                            colorFilter = ColorFilter.tint(ColorProvider(c.text))
                         )
                     }
                 }
