@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generado por tools/gen_launcher_icons.py: no editar a mano -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:scaleX="0.6111" android:scaleY="0.6111" android:pivotX="54" android:pivotY="54">
+    <group android:rotation="-22" android:pivotX="38" android:pivotY="72">
+        <path android:pathData="M28,72 a10,7.5 0 1,0 20,0 a10,7.5 0 1,0 -20,0 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="28" android:startY="64"
+                    android:endX="48" android:endY="80" android:startColor="#FF4081" android:endColor="#B388FF" />
+            </aapt:attr>
+        </path>
+    </group>
+    <path android:strokeColor="#FF4081" android:strokeWidth="6" android:strokeLineCap="round" android:fillColor="#00000000" android:pathData="M46,70 V30" />
+    <path android:strokeColor="#FF4081" android:strokeWidth="6" android:strokeLineCap="round" android:fillColor="#00000000" android:pathData="M46,52 C58,48 66,40 72,30" />
+    <path android:strokeColor="#B388FF" android:strokeWidth="6" android:strokeLineCap="round" android:fillColor="#00000000" android:pathData="M52,56 L74,78" />
+    </group>
+</vector>

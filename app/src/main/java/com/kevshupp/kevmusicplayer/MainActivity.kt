@@ -181,6 +181,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStop() {
+        super.onStop()
+        // El icono a juego con el tema se cambia al salir (ver LauncherIcon)
+        com.kevshupp.kevmusicplayer.data.LauncherIcon.apply(applicationContext)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         val settingsPrefs = getSharedPreferences("settings_prefs", MODE_PRIVATE)

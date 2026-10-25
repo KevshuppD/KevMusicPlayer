@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generado por tools/gen_launcher_icons.py: no editar a mano -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_bg_petrol" />
+    <foreground android:drawable="@drawable/ic_launcher_fg_petrol" />
+    <monochrome android:drawable="@drawable/ic_launcher_mono_petrol" />
+</adaptive-icon>

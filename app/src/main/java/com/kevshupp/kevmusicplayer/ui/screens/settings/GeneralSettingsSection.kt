@@ -170,6 +170,60 @@ fun GeneralSettingsSection(
         }
     }
 
+    var launcherIconFollowsTheme by remember {
+        mutableStateOf(settingsPrefs.getBoolean(com.kevshupp.kevmusicplayer.data.LauncherIcon.KEY_ENABLED, false))
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = settingsCardContainerColor()),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Apps,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = getLocalized("Icono a juego con el tema", "Icon matches the theme"),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = getLocalized(
+                        "El icono de la app toma los colores del tema (en pixel art con Pixel Retro). Cambia al salir de la app; algunos launchers quitan el acceso de la pantalla de inicio.",
+                        "The app icon takes the theme colors (pixel art with Pixel Retro). It changes when you leave the app; some launchers remove the home screen shortcut."
+                    ),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+            Switch(
+                checked = launcherIconFollowsTheme,
+                onCheckedChange = { checked ->
+                    launcherIconFollowsTheme = checked
+                    settingsPrefs.edit().putBoolean(com.kevshupp.kevmusicplayer.data.LauncherIcon.KEY_ENABLED, checked).apply()
+                }
+            )
+        }
+    }
+
     val initialLegacyTrans = settingsPrefs.getBoolean("enable_transparency", true)
     var enableNavBarTransparency by remember { mutableStateOf(settingsPrefs.getBoolean("enable_navbar_transparency", initialLegacyTrans)) }
     var enableCardTransparency by remember { mutableStateOf(settingsPrefs.getBoolean("enable_card_transparency", initialLegacyTrans)) }
