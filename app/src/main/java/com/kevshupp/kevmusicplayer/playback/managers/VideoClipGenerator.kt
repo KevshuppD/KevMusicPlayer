@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicLongArray
 import java.nio.ByteBuffer
 import java.util.concurrent.CountDownLatch
 import kotlin.concurrent.thread
@@ -33,6 +34,9 @@ private data class EncodedAudioSample(
 object VideoClipGenerator {
 
     private const val TAG = "VideoClipGenerator"
+    /** Cuadros que el dibujo puede ir por delante del codificador en el camino rápido. */
+    private const val MAX_FRAMES_AHEAD = 3
+
     private const val I_FRAME_INTERVAL = 1
     private const val AUDIO_SAMPLE_RATE = 44100
     private const val AUDIO_CHANNEL_COUNT = 2
@@ -148,7 +152,7 @@ object VideoClipGenerator {
         private var started = false
         private var audioIndex = 0
         private val pending = ArrayList<Pair<ByteArray, MediaCodec.BufferInfo>>()
-        var videoFrames = 0
+        @Volatile var videoFrames = 0
             private set
 
         fun setVideoFormat(format: MediaFormat) { videoFormat = format; tryStart(block = false) }
@@ -200,10 +204,19 @@ object VideoClipGenerator {
         fun abort() = runCatching { muxer.release() }
     }
 
-    /** Vacía el codificador en un hilo propio; el tiempo de cada cuadro sale del orden de salida. */
-    private fun startDrainer(encoder: MediaCodec, writer: MuxWriter, fps: Int): Thread = thread(name = "clip-drain") {
+    /**
+     * Vacía el codificador en un hilo propio. El tiempo de cada cuadro es su número / fps. En el camino rápido el
+     * número sale de [postTimes] (cuándo se envió cada cuadro a la Surface, que le pone esa hora): si la Surface
+     * descarta un cuadro, el siguiente conserva su tiempo y el anterior dura un poco más, sin desfasar la letra.
+     * Sin [postTimes], el número es el orden de salida.
+     */
+    private fun startDrainer(
+        encoder: MediaCodec, writer: MuxWriter, fps: Int, postTimes: AtomicLongArray? = null,
+        lastFrameOut: java.util.concurrent.atomic.AtomicInteger? = null
+    ): Thread = thread(name = "clip-drain") {
         val info = MediaCodec.BufferInfo()
         var outIndex = 0L
+        var frameIndex = -1
         while (true) {
             val index = encoder.dequeueOutputBuffer(info, 10_000)
             when {
@@ -212,7 +225,16 @@ object VideoClipGenerator {
                     val buffer = encoder.getOutputBuffer(index)
                     val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
                     if (buffer != null && !isConfig && info.size > 0) {
-                        info.presentationTimeUs = outIndex++ * 1_000_000L / fps
+                        val n = if (postTimes == null) outIndex++ else {
+                            // El primer cuadro enviado después de esta hora es el siguiente; este es el último anterior
+                            val ptsNs = info.presentationTimeUs * 1000
+                            var i = frameIndex + 1
+                            while (i + 1 < postTimes.length() && postTimes[i + 1] != 0L && postTimes[i + 1] <= ptsNs) i++
+                            frameIndex = i.coerceAtMost(postTimes.length() - 1)
+                            lastFrameOut?.set(frameIndex)
+                            frameIndex.toLong()
+                        }
+                        info.presentationTimeUs = n * 1_000_000L / fps
                         writer.writeVideo(buffer, info)
                     }
                     encoder.releaseOutputBuffer(index, false)
@@ -234,16 +256,26 @@ object VideoClipGenerator {
             encoder.configure(videoFormat(config, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             surface = encoder.createInputSurface()
             encoder.start()
-            drainer = startDrainer(encoder, writer, config.fps)
             val total = totalFrames(config)
+            val postTimes = AtomicLongArray(total)
+            val lastFrameOut = java.util.concurrent.atomic.AtomicInteger(-1)
+            drainer = startDrainer(encoder, writer, config.fps, postTimes, lastFrameOut)
             val sx = w / renderer.width
             val sy = h / renderer.height
             val t0 = System.nanoTime()
             var lockNs = 0L
             var drawNs = 0L
             var postNs = 0L
+            var waitNs = 0L
             for (frame in 0 until total) {
                 coroutineContext.ensureActive()
+                // La Surface descarta cuadros si le llegan más rápido de lo que el codificador los toma (hasta un
+                // 7 % en el moto g35). Se espera a que el codificador vaya a menos de MAX_FRAMES_AHEAD cuadros,
+                // con un límite por si retiene cuadros hasta recibir más.
+                val w0 = System.nanoTime()
+                var waited = 0
+                while (frame - lastFrameOut.get() > MAX_FRAMES_AHEAD && waited < 20) { Thread.sleep(1); waited++ }
+                waitNs += System.nanoTime() - w0
                 val a = System.nanoTime()
                 val canvas = surface.lockHardwareCanvas()
                 val b = System.nanoTime()
@@ -254,6 +286,7 @@ object VideoClipGenerator {
                     canvas.restore()
                 } finally {
                     val c = System.nanoTime()
+                    postTimes.set(frame, c)
                     surface.unlockCanvasAndPost(canvas)
                     postNs += System.nanoTime() - c
                     drawNs += c - b
@@ -265,9 +298,15 @@ object VideoClipGenerator {
             drainer.join(15_000)
             writer.finish()
             Log.i(TAG, "Surface ${w}x$h ${config.templateStyle}: $total frames in ${(System.nanoTime() - t0) / 1_000_000} ms " +
-                "(lock ${lockNs / 1_000_000}, draw ${drawNs / 1_000_000}, post ${postNs / 1_000_000}); audio ready=${audio.done}")
-            if (writer.videoFrames < total) {
-                Log.w(TAG, "Surface encoder produced ${writer.videoFrames}/$total frames")
+                "(wait ${waitNs / 1_000_000}, lock ${lockNs / 1_000_000}, draw ${drawNs / 1_000_000}, post ${postNs / 1_000_000}); " +
+                "audio ready=${audio.done}, drain done=${drainer?.isAlive == false}")
+            // Unos pocos cuadros descartados no se notan (el anterior dura 1/fps más); solo se repite por CPU si
+            // falta una parte apreciable del video
+            if (writer.videoFrames < total) Log.w(TAG, "Surface encoder produced ${writer.videoFrames}/$total frames")
+            if (writer.videoFrames < total * 0.9) {
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(
+                    "VideoClip", "Camino rápido incompleto (${writer.videoFrames}/$total cuadros, ${w}x$h ${config.fps} fps): se repite por CPU"
+                )
                 return false
             }
             return true

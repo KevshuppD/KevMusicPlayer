@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.kevshupp.kevmusicplayer.playback.managers.ClipDraft
 import com.kevshupp.kevmusicplayer.playback.managers.ClipEntry
 import com.kevshupp.kevmusicplayer.playback.managers.ClipHistory
 import com.kevshupp.kevmusicplayer.playback.managers.ClipTemplateStyle
@@ -45,11 +47,14 @@ import java.util.Locale
 @Composable
 fun ClipHistoryDialog(
     onEdit: (ClipEntry) -> Unit,
+    onResumeDraft: (ClipDraft) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val entries by ClipHistory.entries.collectAsState()
+    val drafts by ClipHistory.drafts.collectAsState()
+    val job by ClipHistory.job.collectAsState()
     var loading by remember { mutableStateOf(true) }
     var selected by remember { mutableStateOf<ClipEntry?>(null) }
     var toDelete by remember { mutableStateOf<List<ClipEntry>?>(null) }
@@ -102,7 +107,7 @@ fun ClipHistoryDialog(
 
             when {
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = primary) }
-                entries.isEmpty() -> Column(
+                entries.isEmpty() && drafts.isEmpty() -> Column(
                     Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -118,6 +123,22 @@ fun ClipHistoryDialog(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
+                    if (drafts.isNotEmpty()) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Text("Borradores", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        items(drafts, key = { "draft_" + it.id }, span = { GridItemSpan(maxLineSpan) }) { draft ->
+                            DraftRow(
+                                draft, primary,
+                                progress = job?.takeIf { it.draftId == draft.id && it.running }?.progress,
+                                onClick = { onResumeDraft(draft) },
+                                onDelete = { ClipHistory.deleteDraft(context, draft.id) }
+                            )
+                        }
+                        if (entries.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+                            Text("Videos", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+                        }
+                    }
                     items(entries, key = { it.id }) { entry ->
                         ClipCard(
                             entry, primary,
@@ -261,6 +282,47 @@ private fun ClipCard(
         }
     }
 }
+
+/** Borrador: tocarlo abre el creador con lo elegido; mientras se crea muestra el progreso. */
+@Composable
+private fun DraftRow(draft: ClipDraft, accent: Color, progress: Float?, onClick: () -> Unit, onDelete: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .clickable(onClick = onClick)
+            .padding(start = 12.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(accent.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+            if (progress != null) CircularProgressIndicator(progress = { progress }, color = accent, strokeWidth = 3.dp, modifier = Modifier.size(24.dp))
+            else Icon(Icons.Rounded.EditNote, null, tint = accent)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(draft.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "${draft.artist} · ${formatTime(draft.startMs)}–${formatTime(draft.endMs)} · ${templateName(draft.settings.template)}",
+                color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                when {
+                    progress != null -> "Creándose… ${(progress * 100).toInt()}%"
+                    draft.interrupted -> "Se interrumpió al crearlo · toca para continuar"
+                    else -> "Sin terminar · ${formatDate(draft.updatedAt)}"
+                },
+                color = if (draft.interrupted && progress == null) Color(0xFFFFB74D) else accent.copy(alpha = 0.85f),
+                fontSize = 10.sp, maxLines = 1
+            )
+        }
+        if (progress == null) IconButton(onClick = onDelete) {
+            Icon(Icons.Rounded.Delete, "Eliminar borrador", tint = Color.White.copy(alpha = 0.5f))
+        }
+    }
+}
+
+private fun formatTime(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
 
 @Composable
 private fun ActionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, tint: Color = Color.White, onClick: () -> Unit) {

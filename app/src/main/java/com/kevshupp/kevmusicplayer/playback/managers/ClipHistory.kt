@@ -3,9 +3,15 @@ package com.kevshupp.kevmusicplayer.playback.managers
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
+import android.widget.Toast
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -45,12 +51,51 @@ data class ClipEntry(
 )
 
 /**
+ * Video a medio hacer: el fragmento y el diseño elegidos en el creador. Se guarda al salir del creador (o de la app)
+ * sin haber creado el video, y al empezar a crearlo; si Android cierra la app a mitad, queda [interrupted].
+ */
+data class ClipDraft(
+    val id: String,
+    val songId: Long,
+    val title: String,
+    val artist: String,
+    val startMs: Long,
+    val endMs: Long,
+    val updatedAt: Long,
+    val settings: ClipSettings,
+    val generating: Boolean = false,
+    val interrupted: Boolean = false
+) {
+    /** Para abrir el creador con él, igual que al editar un video. */
+    fun toEntry() = ClipEntry(id, songId, title, artist, startMs, endMs, updatedAt, 0, 0, 0, settings, "")
+}
+
+/** Video que se está creando (uno a la vez). Vive fuera del creador: cerrarlo no lo detiene. */
+data class ClipJob(
+    val draftId: String,
+    val title: String,
+    val progress: Float = 0f,
+    val startedAt: Long = System.currentTimeMillis(),
+    val result: File? = null,
+    val error: String? = null
+) {
+    val running get() = result == null && error == null
+}
+
+/**
  * Historial de videos creados ("Mis videos"): el MP4, una miniatura y sus datos en `filesDir/clips/`
  * (`<id>.mp4`, `<id>.jpg` e `index.json`). Se conservan hasta que el usuario los borra; no entran en las copias.
  */
 object ClipHistory {
     private val _entries = MutableStateFlow<List<ClipEntry>>(emptyList())
     val entries: StateFlow<List<ClipEntry>> = _entries
+    private val _drafts = MutableStateFlow<List<ClipDraft>>(emptyList())
+    val drafts: StateFlow<List<ClipDraft>> = _drafts
+    private val _job = MutableStateFlow<ClipJob?>(null)
+    val job: StateFlow<ClipJob?> = _job
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val draftsLock = Mutex()
+    private const val MAX_DRAFTS = 20
     @Volatile private var loaded = false
 
     private fun dir(context: Context) = File(context.filesDir, "clips").apply { mkdirs() }
@@ -66,6 +111,13 @@ object ClipHistory {
         }.getOrDefault(emptyList())
         // Un video borrado a mano de la carpeta no se lista
         _entries.value = list.filter { videoFile(context, it).exists() }.sortedByDescending { it.createdAt }
+        // Un borrador que estaba creándose al cargar es de un proceso anterior: la app se cerró a mitad
+        _drafts.value = runCatching {
+            val arr = JSONArray(File(dir(context), "drafts.json").readText())
+            (0 until arr.length()).mapNotNull { parseDraft(arr.getJSONObject(it)) }
+        }.getOrDefault(emptyList())
+            .map { if (it.generating) it.copy(generating = false, interrupted = true) else it }
+            .sortedByDescending { it.updatedAt }
         loaded = true
     }
 
@@ -100,6 +152,99 @@ object ClipHistory {
         com.kevshupp.kevmusicplayer.widget.WidgetTheme.refreshClips(context.applicationContext)
     }
 
+    /** Guarda o actualiza un borrador (mismo id = mismo borrador). */
+    fun saveDraft(context: Context, draft: ClipDraft) {
+        val app = context.applicationContext
+        scope.launch(Dispatchers.IO) {
+            load(app)
+            draftsLock.withLock {
+                _drafts.value = (listOf(draft) + _drafts.value.filterNot { it.id == draft.id }).take(MAX_DRAFTS)
+                saveDrafts(app)
+            }
+        }
+    }
+
+    fun deleteDraft(context: Context, id: String) {
+        val app = context.applicationContext
+        scope.launch(Dispatchers.IO) {
+            load(app)
+            draftsLock.withLock {
+                _drafts.value = _drafts.value.filterNot { it.id == id }
+                saveDrafts(app)
+            }
+        }
+    }
+
+    /** Borrador más reciente de esa canción, para retomarlo al abrir el creador. */
+    fun latestDraftFor(songId: Long): ClipDraft? =
+        _drafts.value.filter { it.songId == songId && songId != 0L }.maxByOrNull { it.updatedAt }
+
+    /**
+     * Crea el video en segundo plano. Antes de empezar se guarda como borrador (si la app muere a mitad, queda
+     * ahí); al terminar pasa a Mis videos y el borrador se borra. Devuelve false si ya hay otro creándose.
+     */
+    fun startGeneration(context: Context, draft: ClipDraft, config: ShareClipConfig): Boolean {
+        if (_job.value?.running == true) return false
+        val app = context.applicationContext
+        _job.value = ClipJob(draft.id, draft.title)
+        scope.launch {
+            load(app)
+            draftsLock.withLock {
+                _drafts.value = listOf(draft.copy(generating = true, interrupted = false)) + _drafts.value.filterNot { it.id == draft.id }
+                saveDrafts(app)
+            }
+            val result = VideoClipGenerator.generateClip(app, config) { progress ->
+                _job.value = _job.value?.copy(progress = progress)
+            }
+            val stored = result.getOrNull()?.let { runCatching { add(app, it, draft.songId, config, draft.settings) }.getOrNull() }
+            if (stored != null) {
+                draftsLock.withLock {
+                    _drafts.value = _drafts.value.filterNot { it.id == draft.id }
+                    saveDrafts(app)
+                }
+                _job.value = _job.value?.copy(progress = 1f, result = stored)
+            } else {
+                val msg = result.exceptionOrNull()?.let { it.message ?: it.javaClass.simpleName } ?: "no se pudo guardar"
+                draftsLock.withLock {
+                    _drafts.value = _drafts.value.map { if (it.id == draft.id) it.copy(generating = false) else it }
+                    saveDrafts(app)
+                }
+                _job.value = _job.value?.copy(error = msg)
+            }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(
+                    app,
+                    if (stored != null) "Video listo · guardado en Mis videos" else "Error al crear el video: ${_job.value?.error}",
+                    if (stored != null) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+        return true
+    }
+
+    private fun saveDrafts(context: Context) {
+        val arr = JSONArray()
+        _drafts.value.forEach { d ->
+            arr.put(JSONObject()
+                .put("id", d.id).put("songId", d.songId).put("title", d.title).put("artist", d.artist)
+                .put("start", d.startMs).put("end", d.endMs).put("updated", d.updatedAt)
+                .put("generating", d.generating).put("interrupted", d.interrupted)
+                .put("settings", settingsJson(d.settings)))
+        }
+        val tmp = File(dir(context), "drafts.json.tmp")
+        tmp.writeText(arr.toString())
+        tmp.renameTo(File(dir(context), "drafts.json"))
+    }
+
+    private fun parseDraft(j: JSONObject): ClipDraft? = runCatching {
+        ClipDraft(
+            j.getString("id"), j.optLong("songId"), j.optString("title"), j.optString("artist"),
+            j.optLong("start"), j.optLong("end"), j.optLong("updated"),
+            parseSettings(j.optJSONObject("settings") ?: JSONObject()),
+            j.optBoolean("generating"), j.optBoolean("interrupted")
+        )
+    }.getOrNull()
+
     private fun saveThumbnail(video: File, out: File, atMs: Long) {
         val retriever = MediaMetadataRetriever()
         try {
@@ -129,38 +274,42 @@ object ClipHistory {
         .put("id", e.id).put("songId", e.songId).put("title", e.title).put("artist", e.artist)
         .put("start", e.startMs).put("end", e.endMs).put("created", e.createdAt)
         .put("w", e.width).put("h", e.height).put("size", e.sizeBytes).put("file", e.fileName)
-        .put("settings", JSONObject()
-            .put("template", e.settings.template.name).put("format", e.settings.format.name)
-            .put("quality", e.settings.quality.name).put("font", e.settings.font.name)
-            .put("upper", e.settings.uppercase).put("scale", e.settings.textScale.toDouble())
-            .put("bg", e.settings.background.name).put("wave", e.settings.waveform)
-            .put("palette", e.settings.pixelPalette).put("trans", e.settings.translation)
-            .put("dedication", e.settings.dedication).put("fps", e.settings.fps)
-            .put("pixelArt", e.settings.pixelArtMode.name))
+        .put("settings", settingsJson(e.settings))
+
+    private fun settingsJson(st: ClipSettings) = JSONObject()
+        .put("template", st.template.name).put("format", st.format.name)
+        .put("quality", st.quality.name).put("font", st.font.name)
+        .put("upper", st.uppercase).put("scale", st.textScale.toDouble())
+        .put("bg", st.background.name).put("wave", st.waveform)
+        .put("palette", st.pixelPalette).put("trans", st.translation)
+        .put("dedication", st.dedication).put("fps", st.fps)
+        .put("pixelArt", st.pixelArtMode.name)
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E) =
         runCatching { enumValueOf<E>(name ?: "") }.getOrDefault(default)
+
+    private fun parseSettings(s: JSONObject) = ClipSettings(
+        enumOr(s.optString("template"), ClipTemplateStyle.LYRICS_STORY),
+        enumOr(s.optString("format"), ClipFormat.STORY),
+        enumOr(s.optString("quality"), ClipQuality.HD),
+        enumOr(s.optString("font"), ClipFont.SANS),
+        s.optBoolean("upper"),
+        s.optDouble("scale", 1.0).toFloat(),
+        enumOr(s.optString("bg"), ClipBackground.AMBIENT),
+        s.optBoolean("wave", true),
+        s.optString("palette", "pixel"),
+        s.optBoolean("trans"),
+        s.optString("dedication"),
+        s.optInt("fps", 30),
+        enumOr(s.optString("pixelArt"), PixelArtMode.PALETTE)
+    )
 
     private fun parse(j: JSONObject): ClipEntry? = runCatching {
         val s = j.optJSONObject("settings") ?: JSONObject()
         ClipEntry(
             j.getString("id"), j.optLong("songId"), j.optString("title"), j.optString("artist"),
             j.optLong("start"), j.optLong("end"), j.optLong("created"), j.optInt("w"), j.optInt("h"), j.optLong("size"),
-            ClipSettings(
-                enumOr(s.optString("template"), ClipTemplateStyle.LYRICS_STORY),
-                enumOr(s.optString("format"), ClipFormat.STORY),
-                enumOr(s.optString("quality"), ClipQuality.HD),
-                enumOr(s.optString("font"), ClipFont.SANS),
-                s.optBoolean("upper"),
-                s.optDouble("scale", 1.0).toFloat(),
-                enumOr(s.optString("bg"), ClipBackground.AMBIENT),
-                s.optBoolean("wave", true),
-                s.optString("palette", "pixel"),
-                s.optBoolean("trans"),
-                s.optString("dedication"),
-                s.optInt("fps", 30),
-                enumOr(s.optString("pixelArt"), PixelArtMode.PALETTE)
-            ),
+            parseSettings(s),
             j.optString("file").ifEmpty { j.getString("id") + ".mp4" }
         )
     }.getOrNull()

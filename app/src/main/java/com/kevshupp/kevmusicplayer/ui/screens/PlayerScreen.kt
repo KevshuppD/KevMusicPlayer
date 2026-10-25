@@ -2132,8 +2132,16 @@ fun PlayerScreen(
         }
 
         // Share Video Clip Story Dialog
+        LaunchedEffect(Unit) { com.kevshupp.kevmusicplayer.playback.managers.ClipHistory.load(context) }
         if (showShareClipDialog && currentSongUriString != null) {
             val songDur = if (player.duration > 0) player.duration else (currentSongFile?.duration ?: 0L)
+            // Si esta canción tiene un video a medias (o creándose), se retoma
+            val draft = remember {
+                com.kevshupp.kevmusicplayer.playback.managers.ClipHistory.latestDraftFor(currentSongFile?.id ?: 0L)
+            }
+            LaunchedEffect(draft) {
+                if (draft != null && !draft.generating) android.widget.Toast.makeText(context, "Retomando tu borrador", android.widget.Toast.LENGTH_SHORT).show()
+            }
             ShareClipDialog(
                 songTitle = title,
                 artistName = artist,
@@ -2145,6 +2153,8 @@ fun PlayerScreen(
                 lyrics = lyricsText,
                 translatedLyrics = translatedLyricLines ?: LyricsRepository.deserializeTranslations(currentSongFile?.translatedLyrics),
                 songId = currentSongFile?.id ?: 0L,
+                initial = draft?.toEntry(),
+                draftId = draft?.id,
                 onOpenHistory = { showClipHistory = true },
                 onDismiss = { showShareClipDialog = false }
             )

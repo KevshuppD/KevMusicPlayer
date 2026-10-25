@@ -16,6 +16,8 @@ import kotlinx.coroutines.withContext
 /** Datos para editar un video de "Mis videos": su entrada y la canción con letra y carátula. */
 private class EditingClip(
     val entry: ClipEntry,
+    /** Si se retoma un borrador, su id (se sigue guardando en él). */
+    val draftId: String?,
     val song: AudioFile,
     val uri: String,
     val art: Bitmap?,
@@ -41,7 +43,7 @@ fun ClipHistoryHost(
     var editing by remember { mutableStateOf<EditingClip?>(null) }
     var historyOverEditor by remember { mutableStateOf(false) }
 
-    fun startEdit(entry: ClipEntry) {
+    fun startEdit(entry: ClipEntry, draftId: String? = null) {
         scope.launch {
             val song = viewModel?.audioFileMap?.get(entry.songId.toString())
             if (song == null) {
@@ -51,13 +53,14 @@ fun ClipHistoryHost(
             val stored = viewModel.ensureLyricsLoaded(song.id)
             val uri = "content://media/external/audio/media/${song.id}"
             val art = withContext(Dispatchers.IO) { loadAlbumArtBitmap(context, uri) }
-            editing = EditingClip(entry, song, uri, art, stored.lyrics, LyricsRepository.deserializeTranslations(stored.translatedLyrics))
+            editing = EditingClip(entry, draftId, song, uri, art, stored.lyrics, LyricsRepository.deserializeTranslations(stored.translatedLyrics))
         }
     }
 
     if (show) {
         ClipHistoryDialog(
             onEdit = { entry -> onEditStarted(); onDismiss(); startEdit(entry) },
+            onResumeDraft = { draft -> onEditStarted(); onDismiss(); startEdit(draft.toEntry(), draft.id) },
             onDismiss = onDismiss
         )
     }
@@ -77,6 +80,7 @@ fun ClipHistoryHost(
                 translatedLyrics = edit.translations,
                 songId = edit.song.id,
                 initial = edit.entry,
+                draftId = edit.draftId,
                 onOpenHistory = { historyOverEditor = true },
                 onDismiss = { editing = null }
             )
@@ -86,6 +90,7 @@ fun ClipHistoryHost(
     if (historyOverEditor) {
         ClipHistoryDialog(
             onEdit = { entry -> historyOverEditor = false; editing = null; startEdit(entry) },
+            onResumeDraft = { draft -> historyOverEditor = false; editing = null; startEdit(draft.toEntry(), draft.id) },
             onDismiss = { historyOverEditor = false }
         )
     }

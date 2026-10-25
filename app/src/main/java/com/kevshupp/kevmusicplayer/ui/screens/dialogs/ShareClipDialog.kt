@@ -51,6 +51,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.kevshupp.kevmusicplayer.data.LyricsRepository
 import com.kevshupp.kevmusicplayer.playback.managers.ClipBackground
 import com.kevshupp.kevmusicplayer.playback.managers.PixelArtMode
+import com.kevshupp.kevmusicplayer.playback.managers.ClipDraft
 import com.kevshupp.kevmusicplayer.playback.managers.ClipEntry
 import com.kevshupp.kevmusicplayer.playback.managers.ClipHistory
 import com.kevshupp.kevmusicplayer.playback.managers.ClipSettings
@@ -102,6 +103,8 @@ fun ShareClipDialog(
     songId: Long = 0L,
     /** Video del historial que se edita: se parte de su fragmento y su diseño. */
     initial: ClipEntry? = null,
+    /** Borrador que se retoma: se sigue guardando con el mismo id. */
+    draftId: String? = null,
     onOpenHistory: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
@@ -173,11 +176,16 @@ fun ShareClipDialog(
             .putString(PREF_PALETTE, pixelPaletteKey).putInt(PREF_FPS, fps).putString(PREF_PIXEL_ART, pixelArtMode.name).apply()
     }
 
-    // Generation state
-    var isGenerating by remember { mutableStateOf(false) }
-    var generationProgress by remember { mutableFloatStateOf(0f) }
-    var generationStartedAt by remember { mutableLongStateOf(0L) }
+    // El video se crea en ClipHistory (fuera del diálogo): cerrar el creador o salir de la app no lo corta
+    val sessionDraftId = remember { draftId ?: System.currentTimeMillis().toString() }
+    val clipJob by ClipHistory.job.collectAsState()
+    val myJob = clipJob?.takeIf { it.draftId == sessionDraftId }
+    val otherJobRunning = clipJob?.let { it.running && it.draftId != sessionDraftId } == true
+    val isGenerating = myJob?.running == true
+    val generationProgress = myJob?.progress ?: 0f
+    val generationStartedAt = myJob?.startedAt ?: 0L
     var generatedFile by remember { mutableStateOf<File?>(null) }
+    LaunchedEffect(myJob?.result) { myJob?.result?.let { generatedFile = it } }
 
     // Preview Player for pre-listening the snippet
     val previewPlayer = remember {
@@ -264,6 +272,24 @@ fun ShareClipDialog(
     // En "Por Letras" hace falta elegir al menos una línea; el modo manual siempre tiene rango.
     val canGenerate = selectedTab != 0 || parsedLyrics.isEmpty() || hasLyricSelection
 
+    fun currentSettings() = ClipSettings(
+        templateStyle, format, quality, font, uppercase, textScale, background,
+        showWaveform, pixelPaletteKey, showTranslation && hasTranslation, dedicationText, fps, pixelArtMode
+    )
+    fun currentDraft() = ClipDraft(
+        sessionDraftId, songId, songTitle, artistName, startMs, endMs, System.currentTimeMillis(), currentSettings()
+    )
+    // Al salir sin crear el video (cerrar el creador o la app), lo elegido queda en borradores
+    fun saveDraftIfPending() {
+        if (canGenerate && generatedFile == null && !isGenerating && songId != 0L) ClipHistory.saveDraft(context, currentDraft())
+    }
+    fun dismiss() {
+        saveDraftIfPending()
+        if (isGenerating) Toast.makeText(context, "El video se sigue creando · lo verás en Mis videos", Toast.LENGTH_SHORT).show()
+        onDismiss()
+    }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_STOP) { saveDraftIfPending() }
+
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.secondary
 
@@ -337,9 +363,7 @@ fun ShareClipDialog(
     }
 
     Dialog(
-        onDismissRequest = {
-            if (!isGenerating) onDismiss()
-        },
+        onDismissRequest = { dismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Box(
@@ -358,12 +382,12 @@ fun ShareClipDialog(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onDismiss, enabled = !isGenerating, modifier = Modifier.size(38.dp)) {
+                    IconButton(onClick = { dismiss() }, modifier = Modifier.size(38.dp)) {
                         Icon(Icons.Rounded.Close, contentDescription = "Cerrar", tint = Color.White)
                     }
                     Spacer(modifier = Modifier.width(6.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(if (initial != null) "Editar video" else "Crear video", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(if (draftId != null) "Continuar video" else if (initial != null) "Editar video" else "Crear video", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         val (vw, vh) = VideoClipGenerator.outputSize(config)
                         Text(
                             "${formatLabel(format)} · ${vw}×$vh · $fps fps · ${if (canGenerate) "${(endMs - startMs) / 1000} s" else "sin fragmento"}",
@@ -371,7 +395,7 @@ fun ShareClipDialog(
                         )
                     }
                     if (onOpenHistory != null) {
-                        TextButton(onClick = onOpenHistory, enabled = !isGenerating) {
+                        TextButton(onClick = onOpenHistory) {
                             Icon(Icons.Rounded.VideoLibrary, null, tint = Color.White, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Mis videos", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -883,37 +907,13 @@ fun ShareClipDialog(
                     Button(
                         onClick = {
                             if (isGenerating) return@Button
-                            isGenerating = true
                             isPreviewPlaying = false
-                            generationProgress = 0f
-                            generationStartedAt = System.currentTimeMillis()
-                            coroutineScope.launch {
-                                val finalConfig = config.copy(startMs = startMs, endMs = endMs)
-                                val result = VideoClipGenerator.generateClip(context, finalConfig) { progress ->
-                                    generationProgress = progress
-                                }
-                                // Queda en "Mis videos" con los ajustes, para poder editarlo después
-                                val stored = result.getOrNull()?.let { file ->
-                                    ClipHistory.add(
-                                        context, file, songId, finalConfig,
-                                        ClipSettings(
-                                            templateStyle, format, quality, font, uppercase, textScale, background,
-                                            showWaveform, pixelPaletteKey, showTranslation && hasTranslation, dedicationText, fps, pixelArtMode
-                                        )
-                                    )
-                                }
-                                isGenerating = false
-                                result.onSuccess {
-                                    // No se abre Compartir solo: un toque sin querer en el menú lo enviaba
-                                    generatedFile = stored ?: return@onSuccess
-                                    Toast.makeText(context, "Video listo · guardado en Mis videos", Toast.LENGTH_SHORT).show()
-                                }.onFailure { err ->
-                                    val msg = err.message ?: err.localizedMessage ?: err.javaClass.simpleName
-                                    Toast.makeText(context, "Error al generar video: $msg", Toast.LENGTH_LONG).show()
-                                }
+                            val finalConfig = config.copy(startMs = startMs, endMs = endMs)
+                            if (!ClipHistory.startGeneration(context, currentDraft(), finalConfig)) {
+                                Toast.makeText(context, "Espera a que termine el otro video", Toast.LENGTH_SHORT).show()
                             }
                         },
-                        enabled = !isGenerating && canGenerate,
+                        enabled = !isGenerating && !otherJobRunning && canGenerate,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp),
@@ -941,7 +941,11 @@ fun ShareClipDialog(
                             Icon(Icons.Rounded.MovieFilter, contentDescription = null, tint = Color.Black)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = if (!canGenerate) "Elige las líneas del fragmento" else "Crear video",
+                                text = when {
+                                    otherJobRunning -> "Creando otro video… ${((clipJob?.progress ?: 0f) * 100).toInt()}%"
+                                    !canGenerate -> "Elige las líneas del fragmento"
+                                    else -> "Crear video"
+                                },
                                 color = Color.Black,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
