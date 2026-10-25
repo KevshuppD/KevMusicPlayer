@@ -1,0 +1,4 @@
+- **Tema Pixel Retro:** letra pixelada y las 8 paletas de la app (PICO-8, Game Boy, NES Arcade, Commodore 64, Virtual Boy, Monitor ámbar, Fósforo verde y Mazmorra). Las tarjetas de Inicio toman los colores de la paleta.
+- **Cuenta de Soulseek en el teléfono:** al iniciar sesión se guarda en el teléfono (y en su copia de la nube); un PC nuevo la recibe al conectarse y entra solo. Requiere KevMusicPlayer 1.8.7.
+- **Recuerda varios teléfonos:** el PC guarda todos los teléfonos emparejados y al reconectar prueba con cada uno; si uno rechaza la conexión, solo se olvida ese.
+- **Sin conexión, la canción se detiene en el PC:** la letra y la barra ya no siguen avanzando cuando se pierde la conexión con el teléfono.
