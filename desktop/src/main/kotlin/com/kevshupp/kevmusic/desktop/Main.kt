@@ -17,6 +17,7 @@ import com.kevshupp.kevmusic.desktop.ui.LocalSoulseek
 import com.kevshupp.kevmusic.desktop.soulseek.PhoneTarget
 import com.kevshupp.kevmusic.desktop.soulseek.SoulseekClient
 import com.kevshupp.kevmusic.desktop.soulseek.SoulseekConfig
+import com.kevshupp.kevmusic.desktop.soulseek.SlskStatus
 import com.kevshupp.kevmusic.desktop.ui.MainScreen
 import com.kevshupp.kevmusic.desktop.ui.Section
 import com.kevshupp.kevmusic.desktop.ui.UpdateDialog
@@ -86,6 +87,21 @@ private fun app() = application {
     // Pantalla principal en cuanto hay un teléfono emparejado; si se cae la conexión, se queda y reintenta
     var paired by remember { mutableStateOf(Config.load() != null) }
 
+    // Cuenta de Soulseek: el PC sin cuenta toma la del teléfono; tras iniciar sesión, se la guarda al teléfono
+    LaunchedEffect(Unit) {
+        client.slskAccount.collect { acc ->
+            if (acc != null && !SoulseekConfig.hasAccount) {
+                SoulseekConfig.username = acc.first; SoulseekConfig.password = acc.second; SoulseekConfig.autoConnect = true
+                SoulseekConfig.save()
+                soulseek.start()
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.flow.combine(soulseek.status, client.status) { s, c -> s to c }.collect { (s, c) ->
+            if (s is SlskStatus.Online && c is ConnStatus.Connected) client.saveSlskAccount(SoulseekConfig.username, SoulseekConfig.password)
+        }
+    }
     LaunchedEffect(Unit) {
         // cds-train.sh: abrir la ventana, dibujar unos segundos y salir, para que la JVM guarde las clases usadas
         // (AppCDS) sin conectar con nada

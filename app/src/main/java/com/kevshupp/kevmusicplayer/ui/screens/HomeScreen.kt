@@ -1,5 +1,6 @@
 package com.kevshupp.kevmusicplayer.ui.screens
 
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -296,6 +297,11 @@ fun HomeScreen(
                         .padding(horizontal = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    // Con Pixel Retro los accesos toman colores planos de la paleta (sin degradado, como píxeles)
+                    val pixel = com.kevshupp.kevmusicplayer.ui.theme.LocalPixelPalette.current
+                    val scheme = MaterialTheme.colorScheme
+                    fun quick(default: Brush, color: () -> Color) = if (pixel != null) SolidColor(color()) else default
+                    val iconTint = if (pixel != null) scheme.onPrimary else Color.White
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -303,7 +309,8 @@ fun HomeScreen(
                         QuickActionCard(
                             title = if (isEs) "Modo Aleatorio" else "Shuffle All",
                             icon = Icons.Rounded.Shuffle,
-                            gradient = Brush.linearGradient(listOf(Color(0xFF8E2DE2), Color(0xFF4A00E0))),
+                            gradient = quick(Brush.linearGradient(listOf(Color(0xFF8E2DE2), Color(0xFF4A00E0)))) { scheme.primary },
+                            iconTint = iconTint,
                             onClick = {
                                 if (audioFiles.isNotEmpty()) {
                                     if (onShuffleClick != null) {
@@ -321,7 +328,8 @@ fun HomeScreen(
                         QuickActionCard(
                             title = if (isEs) "Favoritas" else "Favorites",
                             icon = Icons.Rounded.Favorite,
-                            gradient = Brush.linearGradient(listOf(Color(0xFFFF007F), Color(0xFFE0115F))),
+                            gradient = quick(Brush.linearGradient(listOf(Color(0xFFFF007F), Color(0xFFE0115F)))) { scheme.secondary },
+                            iconTint = iconTint,
                             onClick = {
                                 if (viewModel != null) {
                                     val favExists = viewModel.playlists.containsKey("Favoritos")
@@ -332,6 +340,7 @@ fun HomeScreen(
                                     viewModel.requestedSubViewType.value = "Playlist"
                                     viewModel.requestedSubViewName.value = "Favoritos"
                                     viewModel.returnToHomeScreenOnDetailBack.value = true
+                                    viewModel.returnToPlayerOnDetailBack.value = false
                                     onNavigateToLibrary()
                                 }
                             },
@@ -346,13 +355,15 @@ fun HomeScreen(
                         QuickActionCard(
                             title = if (isEs) "Historial" else "History",
                             icon = Icons.Rounded.History,
-                            gradient = Brush.linearGradient(listOf(Color(0xFF00F0FF), Color(0xFF0083B0))),
+                            gradient = quick(Brush.linearGradient(listOf(Color(0xFF00F0FF), Color(0xFF0083B0)))) { scheme.tertiary },
+                            iconTint = iconTint,
                             onClick = {
                                 if (viewModel != null) {
                                     viewModel.requestedTab.value = "Songs"
                                     viewModel.requestedSubViewType.value = "History"
                                     viewModel.requestedSubViewName.value = "History"
                                     viewModel.returnToHomeScreenOnDetailBack.value = true
+                                    viewModel.returnToPlayerOnDetailBack.value = false
                                     onNavigateToLibrary()
                                 }
                             },
@@ -361,13 +372,15 @@ fun HomeScreen(
                         QuickActionCard(
                             title = if (isEs) "Nuevas" else "New Added",
                             icon = Icons.Rounded.NewReleases,
-                            gradient = Brush.linearGradient(listOf(Color(0xFF11998E), Color(0xFF38EF7D))),
+                            gradient = quick(Brush.linearGradient(listOf(Color(0xFF11998E), Color(0xFF38EF7D)))) { scheme.onSurfaceVariant },
+                            iconTint = iconTint,
                              onClick = {
                                  if (viewModel != null) {
                                      viewModel.requestedTab.value = "Songs"
                                      viewModel.requestedSubViewType.value = "RecentlyAdded"
                                      viewModel.requestedSubViewName.value = "RecentlyAdded"
                                      viewModel.returnToHomeScreenOnDetailBack.value = true
+                                     viewModel.returnToPlayerOnDetailBack.value = false
                                      onNavigateToLibrary()
                                  }
                              },
@@ -460,6 +473,7 @@ fun QuickActionCard(
     title: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     gradient: Brush,
+    iconTint: Color = Color.White,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -491,7 +505,7 @@ fun QuickActionCard(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = iconTint,
                     modifier = Modifier.size(24.dp)
                 )
             }

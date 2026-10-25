@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kevshupp.kevmusic.desktop.Config
 import com.kevshupp.kevmusic.desktop.ConnStatus
 import com.kevshupp.kevmusic.desktop.Discovery
 
@@ -56,12 +57,15 @@ fun ConnectScreen(discovery: Discovery, status: ConnStatus) {
                         Text("Buscando en la red… también puedes escribir la dirección.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+                val saved = remember(found, status) { Config.all() }
                 found.forEach { phone ->
                     val address = "${phone.host}:${phone.port}"
+                    // Ya emparejado (misma dirección): se conecta con su token, sin código
+                    val known = saved.firstOrNull { it.host == phone.host && it.port == phone.port }
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                             .background(if (host == address) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable { host = address }
+                            .clickable { if (known != null) client.resume(known) else host = address }
                             .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -69,7 +73,10 @@ fun ConnectScreen(discovery: Discovery, status: ConnStatus) {
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(phone.name, fontWeight = FontWeight.Medium)
-                            Text(address, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                if (known != null) "$address · emparejado, toca para conectar" else address,
+                                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }

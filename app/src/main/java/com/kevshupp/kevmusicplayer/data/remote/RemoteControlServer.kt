@@ -1,5 +1,6 @@
 package com.kevshupp.kevmusicplayer.data.remote
 
+import com.kevshupp.kevmusicplayer.BuildConfig
 import android.content.Context
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
@@ -63,12 +64,15 @@ class RemoteControlServer(
     private val onSkip: (next: Boolean) -> Unit
 ) {
     companion object {
-        const val PORT = 47820
+        // La app debug usa otro puerto: con las dos instaladas, cada una tiene su servidor y sus PCs emparejados
+        val PORT = if (BuildConfig.DEBUG) 47821 else 47820
+        /** Nombre que ve el PC; la debug lo indica para distinguirla. */
+        val DEVICE_NAME: String get() = if (BuildConfig.DEBUG) "${Build.MODEL} (debug)" else Build.MODEL
         const val KEY_ENABLED = "remote_enabled"
         const val SERVICE_TYPE = "_kevmusic._tcp."
         private const val PREFS = "remote_prefs"
         private const val KEY_TOKENS = "tokens"
-        private const val PROTOCOL_VERSION = 3
+        private const val PROTOCOL_VERSION = 4
         private const val MAX_UPLOAD_BYTES = 2L * 1024 * 1024 * 1024
         private val UPLOAD_EXTENSIONS = setOf("mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "wma", "alac", "ape")
 
@@ -147,6 +151,11 @@ class RemoteControlServer(
     // Referencia fuerte: SharedPreferences solo guarda los oyentes con referencias débiles
     private val themeListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "app_theme") broadcast(themeJson())
+        // Cambia al restaurar una copia o al guardarla otro PC
+        if (key == SoulseekAccount.KEY_PASS) slskAccountJson()?.let { broadcast(it) }
+    }
+    private fun slskAccountJson() = SoulseekAccount.get(context)?.let { (user, pass) ->
+        JSONObject().put("type", "slskAccount").put("username", user).put("password", pass)
     }
 
     private val telegram = RemoteTelegramBridge(context, scope) { broadcast(it) }
@@ -307,6 +316,7 @@ class RemoteControlServer(
         mainHandler.post {
             val player = playerProvider() ?: return@post
             socket.post(themeJson().toString())
+            slskAccountJson()?.let { socket.post(it.toString()) }
             telegram.snapshot().forEach { socket.post(it.toString()) }
             socket.post(buildQueue(player).toString())
             socket.post(buildState(player).toString())
@@ -330,6 +340,11 @@ class RemoteControlServer(
                 mainHandler.post { playerProvider()?.let { broadcast(buildState(it)) } }
             }
             "getLyrics" -> sendLyrics(msg.optLong("id"), socket)
+            "slskAccountSave" -> {
+                val user = msg.optString("username").trim()
+                val pass = msg.optString("password")
+                if (user.isNotEmpty() && pass.isNotEmpty()) SoulseekAccount.set(context, user, pass)
+            }
             "playIds", "enqueue" -> scope.launch {
                 val ids = msg.optJSONArray("ids")?.let { a -> (0 until a.length()).map { a.optLong(it) } } ?: emptyList()
                 val items = withContext(Dispatchers.IO) { mediaItemsFor(ids) }
@@ -467,7 +482,7 @@ class RemoteControlServer(
     private fun registerNsd() {
         val nsd = context.getSystemService(NsdManager::class.java) ?: return
         val info = NsdServiceInfo().apply {
-            serviceName = "KevMusic ${Build.MODEL}"
+            serviceName = "KevMusic $DEVICE_NAME"
             serviceType = SERVICE_TYPE
             port = PORT
         }
@@ -638,7 +653,7 @@ class RemoteControlServer(
         smartPlaylistsJson(known).let { smart -> for (i in 0 until smart.length()) playlistsJson.put(smart.get(i)) }
         return JSONObject()
             .put("version", PROTOCOL_VERSION)
-            .put("device", Build.MODEL)
+            .put("device", DEVICE_NAME)
             .put("songs", songsJson)
             .put("playlists", playlistsJson)
             .toString()
@@ -678,7 +693,7 @@ class RemoteControlServer(
                 runCatching {
                     send(
                         JSONObject().put("type", "auth").put("ok", true).put("token", token)
-                            .put("device", Build.MODEL).put("version", PROTOCOL_VERSION).toString()
+                            .put("device", DEVICE_NAME).put("version", PROTOCOL_VERSION).toString()
                     )
                 }
                 updateConnectedClients()

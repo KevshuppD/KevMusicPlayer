@@ -76,14 +76,18 @@ fun HomeScreen(
 
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 val mod = Modifier.weight(1f)
-                QuickCard("Modo aleatorio", "Toda la biblioteca", Icons.Rounded.Shuffle, Color(0xFFFF4081), Color(0xFF7C4DFF), mod) {
+                // Con Pixel Retro, colores planos de la paleta (como en la app)
+                val pixel = LocalPixelTheme.current
+                val cs = MaterialTheme.colorScheme
+                fun c(default: Color, themed: Color) = if (pixel) themed else default
+                QuickCard("Modo aleatorio", "Toda la biblioteca", Icons.Rounded.Shuffle, c(Color(0xFFFF4081), cs.primary), c(Color(0xFF7C4DFF), cs.primary), mod) {
                     client.playSongs(lib.songs.map { it.id }, shuffle = true)
                 }
-                QuickCard("Favoritas", "${favorites?.songIds?.size ?: 0} canciones", Icons.Rounded.Favorite, Color(0xFFFF1744), Color(0xFFFF4081), mod) {
+                QuickCard("Favoritas", "${favorites?.songIds?.size ?: 0} canciones", Icons.Rounded.Favorite, c(Color(0xFFFF1744), cs.secondary), c(Color(0xFFFF4081), cs.secondary), mod) {
                     onOpenPlaylist(FAVORITES)
                 }
-                QuickCard("Historial", "Lo último que sonó", Icons.Rounded.History, Color(0xFF00B8D4), Color(0xFF2962FF), mod, onOpenHistory)
-                QuickCard("Nuevas", "Agregadas hace poco", Icons.Rounded.NewReleases, Color(0xFF00BFA5), Color(0xFF00E676), mod, onOpenNew)
+                QuickCard("Historial", "Lo último que sonó", Icons.Rounded.History, c(Color(0xFF00B8D4), cs.tertiary), c(Color(0xFF2962FF), cs.tertiary), mod, onOpenHistory)
+                QuickCard("Nuevas", "Agregadas hace poco", Icons.Rounded.NewReleases, c(Color(0xFF00BFA5), cs.onSurfaceVariant), c(Color(0xFF00E676), cs.onSurfaceVariant), mod, onOpenNew)
             }
 
             SongShelf("Escuchado recientemente", "Aquí aparecerán tus últimas reproducciones", recent, currentId)
@@ -114,20 +118,23 @@ fun HomeScreen(
 
 @Composable
 private fun QuickCard(title: String, subtitle: String, icon: ImageVector, from: Color, to: Color, modifier: Modifier, onClick: () -> Unit) {
+    val pixel = LocalPixelTheme.current
+    // Sobre los colores claros de una paleta pixel el blanco no se lee: se usa el contraste de la paleta
+    val ink = if (pixel) MaterialTheme.colorScheme.background else Color.White
     Row(
         modifier.height(76.dp).clip(RoundedCornerShape(20.dp))
-            .background(Brush.linearGradient(listOf(from.copy(alpha = 0.85f), to.copy(alpha = 0.55f))))
+            .background(if (pixel) Brush.linearGradient(listOf(from, to)) else Brush.linearGradient(listOf(from.copy(alpha = 0.85f), to.copy(alpha = 0.55f))))
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(42.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = Color.White)
+        Box(Modifier.size(42.dp).clip(CircleShape).background(ink.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = ink)
         }
         Spacer(Modifier.width(12.dp))
         Column {
-            Text(title, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
-            Text(subtitle, fontSize = 12.sp, color = Color.White.copy(alpha = 0.8f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontWeight = FontWeight.Bold, color = ink, maxLines = 1)
+            Text(subtitle, fontSize = 12.sp, color = ink.copy(alpha = 0.8f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

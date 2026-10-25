@@ -432,12 +432,12 @@ fun SongSearchResultItem(
             shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape,
             modifier = Modifier.size(50.dp)
         ) {
-            SubcomposeAsyncImage(
-                model = artBytes,
+            AlbumArtImage(
+                bitmap = artBytes,
+                modifier = Modifier.fillMaxSize(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-                error = {
+                placeholder = {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -504,12 +504,12 @@ fun AlbumSearchResultItem(
             shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape,
             modifier = Modifier.size(50.dp)
         ) {
-            SubcomposeAsyncImage(
-                model = artBytes,
+            AlbumArtImage(
+                bitmap = artBytes,
+                modifier = Modifier.fillMaxSize(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-                error = {
+                placeholder = {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()

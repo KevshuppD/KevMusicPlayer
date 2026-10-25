@@ -177,28 +177,38 @@ fun LibraryScreen(
     val navigateBack: () -> Unit = {
         if (subViewHistory.isNotEmpty()) {
             currentSubView = subViewHistory.removeAt(subViewHistory.size - 1)
+        } else if (viewModel?.returnToPlayerOnDetailBack?.value == true) {
+            // Se abrió desde el reproductor: se vuelve a él, y debajo queda la categoría (Artistas o Álbumes)
+            viewModel.returnToPlayerOnDetailBack.value = false
+            onMiniPlayerClick()
+            currentSubView = null
+        } else if (viewModel?.returnToHomeScreenOnDetailBack?.value == true) {
+            // Se vuelve a Inicio sin cerrar antes la vista: si no, durante la transición se veía la biblioteca.
+            // La pantalla sale de la pila, así que la próxima vez abre sin vista
+            viewModel.returnToHomeScreenOnDetailBack.value = false
+            onNavigateToHome()
         } else {
             currentSubView = null
-            if (viewModel?.returnToHomeScreenOnDetailBack?.value == true) {
-                viewModel.returnToHomeScreenOnDetailBack.value = false
-                onNavigateToHome()
-            }
         }
     }
 
     // Intercept system back gestures to exit active subview details, clear search queries, exit multi-select, or return to Home
-    BackHandler(enabled = isActive && (isMultiSelectMode || searchQuery.isNotEmpty() || currentSubView != null || showInsights || viewModel?.returnToHomeScreenOnDetailBack?.value == true)) {
+    // Sin nada abierto, atrás vuelve a Inicio: Biblioteca reemplaza a Inicio en la pila y, si no, la app se cerraba
+    BackHandler(enabled = isActive) {
         if (isMultiSelectMode) {
             isMultiSelectMode = false
             selectedSongs.clear()
-        } else if (searchQuery.isNotEmpty()) {
-            searchQuery = ""
         } else if (showInsights) {
             showInsights = false
         } else if (currentSubView != null) {
+            // Antes que la búsqueda: dentro de un artista o álbum la búsqueda no se ve, y atrás parecía no
+            // hacer nada (la borraba). Así se vuelve a la lista con la búsqueda intacta
             navigateBack()
-        } else if (viewModel?.returnToHomeScreenOnDetailBack?.value == true) {
-            viewModel.returnToHomeScreenOnDetailBack.value = false
+        } else if (searchQuery.isNotEmpty()) {
+            searchQuery = ""
+        } else {
+            viewModel?.returnToHomeScreenOnDetailBack?.value = false
+            viewModel?.returnToPlayerOnDetailBack?.value = false
             onNavigateToHome()
         }
     }
@@ -222,8 +232,15 @@ fun LibraryScreen(
     var playlistContextForOptionsSheet by remember { mutableStateOf<String?>(null) }
     var playlistSortBy by remember { mutableStateOf("Date") }
 
+    // Colaboraciones separadas ("Bad Bunny & Jhay Cortez" cuenta para los dos); ver ArtistSplitter
+    val artistSplitter by remember(audioFiles) {
+        derivedStateOf { com.kevshupp.kevmusicplayer.data.ArtistSplitter(audioFiles.map { it.artist }.distinct()) }
+    }
+
     if (viewModel != null) {
-        LaunchedEffect(viewModel.requestedTab.value, viewModel.requestedSubViewType.value, viewModel.requestedSubViewName.value) {
+        // Se aplica durante la composición, no en un LaunchedEffect: el efecto corre después de dibujar el primer
+        // cuadro y al abrir Favoritos, Nuevas o Historial desde Inicio se veía la lista de la biblioteca un instante
+        run {
             val reqTab = viewModel.requestedTab.value
             val reqType = viewModel.requestedSubViewType.value
             val reqName = viewModel.requestedSubViewName.value
@@ -235,7 +252,8 @@ fun LibraryScreen(
                 subViewHistory.clear()
                 currentSubView = when (reqType) {
                     "Album" -> SubView.AlbumDetail(reqName)
-                    "Artist" -> SubView.ArtistDetail(reqName)
+                    // Desde el reproductor llega el campo completo ("Bad Bunny & Jhay Cortez"): se abre el principal
+                    "Artist" -> SubView.ArtistDetail(artistSplitter.primary(reqName))
                     "Genre" -> SubView.GenreDetail(reqName)
                     "Folder" -> SubView.FolderDetail(reqName)
                     "Playlist" -> SubView.PlaylistDetail(reqName)
@@ -314,7 +332,7 @@ fun LibraryScreen(
                             compareBy<AudioFile> { if (it.track > 0) it.track else Int.MAX_VALUE }
                                 .thenBy { it.title.lowercase() }
                         )
-                    is SubView.ArtistDetail -> filteredFiles.filter { it.artist == sv.artistName }
+                    is SubView.ArtistDetail -> filteredFiles.filter { artistSplitter.matches(it.artist, sv.artistName) }
                     is SubView.GenreDetail -> filteredFiles.filter { it.genre == sv.genreName }
                     is SubView.FolderDetail -> filteredFiles.filter { it.folderName == sv.folderName }
                     is SubView.PlaylistDetail -> {
@@ -344,7 +362,12 @@ fun LibraryScreen(
             }
         }
     }
-    val artists by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.artist } } }
+    val artists by remember(filteredFiles) {
+        derivedStateOf {
+            filteredFiles.flatMap { file -> artistSplitter.split(file.artist).map { it to file } }
+                .groupBy({ it.first }, { it.second })
+        }
+    }
     val genres by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.genre } } }
     val folders by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.folderName } } }
 
@@ -467,7 +490,7 @@ fun LibraryScreen(
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Text(
-                                text = "Discover your premium sounds",
+                                text = if (systemLang == "es") "Tu música, a tu manera" else "Your music, your way",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
                             )
@@ -865,6 +888,7 @@ fun LibraryScreen(
                                 "Artists" -> {
                                     ArtistListView(
                                         artists = artists,
+                                        query = searchQuery,
                                         bottomPadding = bottomBarPadding,
                                         onArtistClick = { navigateToSubView(SubView.ArtistDetail(it)) }
                                     )
@@ -926,11 +950,11 @@ fun LibraryScreen(
                     is SubView.RecentlyAddedDetail -> if (systemLang == "es") "Canciones Nuevas" else "Recently Added"
                 }
                 val typeLabel = when (subView) {
-                    is SubView.AlbumDetail -> "Album"
-                    is SubView.ArtistDetail -> "Artist"
-                    is SubView.GenreDetail -> "Genre"
-                    is SubView.FolderDetail -> "Folder"
-                    is SubView.PlaylistDetail -> "Playlist"
+                    is SubView.AlbumDetail -> if (systemLang == "es") "Álbum" else "Album"
+                    is SubView.ArtistDetail -> if (systemLang == "es") "Artista" else "Artist"
+                    is SubView.GenreDetail -> if (systemLang == "es") "Género" else "Genre"
+                    is SubView.FolderDetail -> if (systemLang == "es") "Carpeta" else "Folder"
+                    is SubView.PlaylistDetail -> if (systemLang == "es") "Lista" else "Playlist"
                     is SubView.HistoryDetail -> if (systemLang == "es") "Historial" else "History"
                     is SubView.RecentlyAddedDetail -> if (systemLang == "es") "Nuevas" else "New Added"
                 }
@@ -947,7 +971,7 @@ fun LibraryScreen(
                                         .thenBy { it.title.lowercase() }
                                 )
                         }
-                        is SubView.ArtistDetail -> filteredFiles.filter { it.artist == subView.artistName }
+                        is SubView.ArtistDetail -> filteredFiles.filter { artistSplitter.matches(it.artist, subView.artistName) }
                         is SubView.GenreDetail -> filteredFiles.filter { it.genre == subView.genreName }
                         is SubView.FolderDetail -> filteredFiles.filter { it.folderName == subView.folderName }
                         is SubView.PlaylistDetail -> {
@@ -1294,20 +1318,12 @@ fun LibraryScreen(
                                                     .clickable { albumForCoverEditing = subView.albumName },
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                coil.compose.SubcomposeAsyncImage(
-                                                    model = artBytes,
+                                                AlbumArtImage(
+                                                    bitmap = artBytes,
+                                                    modifier = Modifier.fillMaxSize(),
                                                     contentDescription = "Album Cover",
                                                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    loading = {
-                                                        Icon(
-                                                            imageVector = Icons.Rounded.MusicNote,
-                                                            contentDescription = null,
-                                                            tint = Color.White.copy(alpha = 0.8f),
-                                                            modifier = Modifier.size(48.dp)
-                                                        )
-                                                    },
-                                                    error = {
+                                                    placeholder = {
                                                         Icon(
                                                             imageVector = Icons.Rounded.MusicNote,
                                                             contentDescription = null,
@@ -1555,6 +1571,9 @@ fun LibraryScreen(
                                             ) {
                                                 items(artistAlbums.keys.toList()) { albumName ->
                                                     val albumSongs = artistAlbums[albumName] ?: emptyList()
+                                                    // El álbum completo (como al abrirlo): incluye las colaboraciones,
+                                                    // que tienen otro artista ("Bad Bunny, Daddy Yankee")
+                                                    val albumTrackCount = albums[albumName]?.size ?: albumSongs.size
                                                     val firstSong = albumSongs.firstOrNull()
                                                     val artBytes = rememberAlbumArt(firstSong?.uriString)
                                                     
@@ -1574,12 +1593,12 @@ fun LibraryScreen(
                                                                 .background(getGradientForString(albumName)),
                                                             contentAlignment = Alignment.Center
                                                         ) {
-                                                            SubcomposeAsyncImage(
-                                                                model = artBytes,
+                                                            AlbumArtImage(
+                                                                bitmap = artBytes,
+                                                                modifier = Modifier.fillMaxSize(),
                                                                 contentDescription = null,
                                                                 contentScale = ContentScale.Crop,
-                                                                modifier = Modifier.fillMaxSize(),
-                                                                error = {
+                                                                placeholder = {
                                                                     Icon(
                                                                         imageVector = Icons.Rounded.MusicNote,
                                                                         contentDescription = null,
@@ -1599,7 +1618,7 @@ fun LibraryScreen(
                                                             color = MaterialTheme.colorScheme.onBackground
                                                         )
                                                         Text(
-                                                            text = "${albumSongs.size} ${if (albumSongs.size == 1) getLocalized("Tema", "Track") else getLocalized("Temas", "Tracks")}",
+                                                            text = "$albumTrackCount ${if (albumTrackCount == 1) getLocalized("Tema", "Track") else getLocalized("Temas", "Tracks")}",
                                                             fontSize = 10.sp,
                                                             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                                                             maxLines = 1

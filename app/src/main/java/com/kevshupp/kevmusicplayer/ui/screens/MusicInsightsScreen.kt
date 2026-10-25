@@ -648,12 +648,12 @@ fun MusicInsightsScreen(
                                                     shape = RoundedCornerShape(10.dp),
                                                     modifier = Modifier.size(44.dp)
                                                 ) {
-                                                    SubcomposeAsyncImage(
-                                                        model = artBytes,
+                                                    AlbumArtImage(
+                                                        bitmap = artBytes,
+                                                        modifier = Modifier.fillMaxSize(),
                                                         contentDescription = null,
                                                         contentScale = ContentScale.Crop,
-                                                        modifier = Modifier.fillMaxSize(),
-                                                        error = {
+                                                        placeholder = {
                                                             Box(
                                                                 modifier = Modifier
                                                                     .fillMaxSize()
@@ -818,12 +818,12 @@ fun MusicInsightsScreen(
                                                     shape = RoundedCornerShape(10.dp),
                                                     modifier = Modifier.size(44.dp)
                                                 ) {
-                                                    SubcomposeAsyncImage(
-                                                        model = artBytes,
+                                                    AlbumArtImage(
+                                                        bitmap = artBytes,
+                                                        modifier = Modifier.fillMaxSize(),
                                                         contentDescription = null,
                                                         contentScale = ContentScale.Crop,
-                                                        modifier = Modifier.fillMaxSize(),
-                                                        error = {
+                                                        placeholder = {
                                                             Box(
                                                                 modifier = Modifier
                                                                     .fillMaxSize()
@@ -1607,12 +1607,12 @@ fun MusicInsightsScreen(
                                                     .clip(RoundedCornerShape(24.dp))
                                                     .background(Color.DarkGray)
                                             ) {
-                                                SubcomposeAsyncImage(
-                                                    model = artBytes,
+                                                AlbumArtImage(
+                                                    bitmap = artBytes,
+                                                    modifier = Modifier.fillMaxSize(),
                                                     contentDescription = null,
                                                     contentScale = ContentScale.Crop,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    error = {
+                                                    placeholder = {
                                                         Box(
                                                             modifier = Modifier
                                                                 .fillMaxSize()
@@ -1880,11 +1880,11 @@ fun MusicInsightsScreen(
                                                             .clip(RoundedCornerShape(16.dp))
                                                             .background(Color.DarkGray)
                                                     ) {
-                                                        SubcomposeAsyncImage(
-                                                            model = artBytes,
+                                                        AlbumArtImage(
+                                                            bitmap = artBytes,
+                                                            modifier = Modifier.fillMaxSize(),
                                                             contentDescription = null,
-                                                            contentScale = ContentScale.Crop,
-                                                            modifier = Modifier.fillMaxSize()
+                                                            contentScale = ContentScale.Crop
                                                         )
                                                     }
                                                     Text(

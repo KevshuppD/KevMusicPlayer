@@ -383,12 +383,12 @@ fun AlbumGridView(
                         ) {
                             val firstSongUri = albumSongs.firstOrNull()?.uriString
                             val artBytes = rememberAlbumArt(firstSongUri)
-                            SubcomposeAsyncImage(
-                                model = artBytes,
+                            AlbumArtImage(
+                                bitmap = artBytes,
+                                modifier = Modifier.fillMaxSize(),
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                                error = {
+                                placeholder = {
                                     Box(
                                         modifier = Modifier.fillMaxSize(),
                                         contentAlignment = Alignment.Center
@@ -472,9 +472,24 @@ fun ArtistListView(
     artists: Map<String, List<AudioFile>>,
     onArtistClick: (String) -> Unit,
     listState: LazyListState = rememberLazyListState(),
-    bottomPadding: androidx.compose.ui.unit.Dp = 160.dp
+    bottomPadding: androidx.compose.ui.unit.Dp = 160.dp,
+    query: String = ""
 ) {
-    val artistNames = remember(artists) { artists.keys.toList() }
+    // Al buscar, primero los artistas cuyo nombre coincide: la búsqueda filtra canciones y con las colaboraciones
+    // separadas también aparecen quienes colaboraron (buscar "Bad Bunny" mostraba antes a Abra o Arcángel)
+    // En orden alfabético (sin tildes ni mayúsculas), como el índice A-Z de la derecha; antes salían en el
+    // orden de la primera canción de cada uno
+    val artistNames = remember(artists, query) {
+        val collator = java.text.Collator.getInstance(java.util.Locale("es")).apply { strength = java.text.Collator.PRIMARY }
+        val sorted = artists.keys.sortedWith(collator)
+        val q = com.kevshupp.kevmusicplayer.data.ArtistSplitter.key(query)
+        if (q.isEmpty()) sorted
+        else sorted.sortedBy { if (com.kevshupp.kevmusicplayer.data.ArtistSplitter.key(it).contains(q)) 0 else 1 }
+    }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val isEs = remember { context.resources.configuration.locales[0].language == "es" }
+    // La lista se ancla al primer artista visible: sin esto, el que más coincide quedaba justo encima, fuera de vista
+    LaunchedEffect(query) { if (query.isNotEmpty()) listState.scrollToItem(0) }
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -511,7 +526,12 @@ fun ArtistListView(
                             color = MaterialTheme.colorScheme.onBackground
                         )
                         Text(
-                            text = "${artistSongs.size} Songs",
+                            text = "${artistSongs.size} " + when {
+                                isEs && artistSongs.size == 1 -> "canción"
+                                isEs -> "canciones"
+                                artistSongs.size == 1 -> "song"
+                                else -> "songs"
+                            },
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
                         )
@@ -634,20 +654,12 @@ fun MiniPlayer(
                     contentAlignment = Alignment.Center
                 ) {
                     val artBytes = rememberAlbumArt(currentSongUriString, thumbnail = true)
-                    SubcomposeAsyncImage(
-                        model = artBytes,
+                    AlbumArtImage(
+                        bitmap = artBytes,
+                        modifier = Modifier.fillMaxSize(),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                        loading = {
-                            Icon(
-                                imageVector = Icons.Rounded.MusicNote,
-                                contentDescription = null,
-                                tint = Color.White.copy(alpha = 0.8f),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        error = {
+                        placeholder = {
                             Icon(
                                 imageVector = Icons.Rounded.MusicNote,
                                 contentDescription = null,
@@ -1387,6 +1399,42 @@ fun rememberAlbumArt(uriString: String?, thumbnail: Boolean = false): android.gr
     return bitmap
 }
 
+
+/**
+ * Carátula ya cargada por [rememberAlbumArt]. Se dibuja directamente: antes se pasaba el Bitmap a
+ * SubcomposeAsyncImage y Coil lo procesaba en segundo plano aunque ya estuviera en memoria, de modo que al
+ * cambiar de pantalla el mini-reproductor y las filas mostraban unos cuadros el icono de "cargando".
+ */
+@Composable
+fun AlbumArtImage(
+    bitmap: android.graphics.Bitmap?,
+    modifier: Modifier = Modifier,
+    contentDescription: String? = null,
+    contentScale: ContentScale = ContentScale.Crop,
+    placeholder: @Composable () -> Unit = {}
+) {
+    val image = remember(bitmap) { bitmap?.takeIf { !it.isRecycled }?.asImageBitmap() }
+    if (image != null) {
+        androidx.compose.foundation.Image(image, contentDescription, modifier, contentScale = contentScale)
+    } else {
+        Box(modifier, contentAlignment = Alignment.Center) { placeholder() }
+    }
+}
+
+/**
+ * Deja en caché la miniatura (mini-reproductor) y la carátula completa (reproductor) de una canción, con el mismo
+ * uri que usan ellos. Modo aleatorio la llama antes de empezar: la canción elegida al azar casi nunca está en caché
+ * y el mini-reproductor y el reproductor se abrían un instante sin carátula. Espera como máximo [timeoutMs].
+ */
+suspend fun warmAlbumArt(context: android.content.Context, songId: Long, timeoutMs: Long = 400) {
+    val uri = "content://media/external/audio/media/$songId"
+    kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            if (peekAlbumArtThumbnail(uri) == null) loadAlbumArtThumbnail(context, uri)
+            if (albumArtCache.get(uri) == null) loadAlbumArtBitmap(context, uri)
+        }
+    }
+}
 
 fun savePlaylistCoverLocally(context: android.content.Context, playlistName: String, uri: Uri): String? {
     return try {
@@ -2445,12 +2493,12 @@ fun SongOptionsBottomSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     val artBytes = rememberAlbumArt(song.uriString, thumbnail = true)
-                    SubcomposeAsyncImage(
-                        model = artBytes,
+                    AlbumArtImage(
+                        bitmap = artBytes,
+                        modifier = Modifier.fillMaxSize(),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                        error = {
+                        placeholder = {
                             Icon(
                                 imageVector = Icons.Rounded.MusicNote,
                                 contentDescription = null,

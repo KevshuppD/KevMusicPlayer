@@ -48,6 +48,7 @@ import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 import com.kevshupp.kevmusicplayer.ui.screens.LibraryScreen
 import com.kevshupp.kevmusicplayer.ui.screens.HomeScreen
 import com.kevshupp.kevmusicplayer.ui.screens.PlayerScreen
+import com.kevshupp.kevmusicplayer.ui.screens.warmAlbumArt
 import com.kevshupp.kevmusicplayer.ui.screens.SettingsScreen
 import com.kevshupp.kevmusicplayer.ui.theme.KevMusicPlayerTheme
 import kotlinx.serialization.Serializable
@@ -307,9 +308,14 @@ fun AppNavigation() {
                             }
                         },
                         onShuffleClick = { list, startSong ->
-                            val startedSong = viewModel.shuffleAll(list, startSong)
-                            if (startedSong != null && backStack.none { it is Screen.Player && it.fileId == startedSong.id }) {
-                                backStack.add(Screen.Player(startedSong.id))
+                            // Primero la carátula de la canción elegida (ver warmAlbumArt), después a sonar
+                            val first = startSong ?: (list ?: viewModel.localAudioFiles).randomOrNull()
+                            if (first != null) scope.launch {
+                                warmAlbumArt(context, first.id)
+                                val startedSong = viewModel.shuffleAll(list, first)
+                                if (startedSong != null && backStack.none { it is Screen.Player && it.fileId == startedSong.id }) {
+                                    backStack.add(Screen.Player(startedSong.id))
+                                }
                             }
                         },
                         onMiniPlayerClick = {
@@ -348,9 +354,14 @@ fun AppNavigation() {
                             }
                         },
                         onShuffleClick = { list, startSong ->
-                            val startedSong = viewModel.shuffleAll(list, startSong)
-                            if (startedSong != null && backStack.none { it is Screen.Player && it.fileId == startedSong.id }) {
-                                backStack.add(Screen.Player(startedSong.id))
+                            // Primero la carátula de la canción elegida (ver warmAlbumArt), después a sonar
+                            val first = startSong ?: (list ?: viewModel.localAudioFiles).randomOrNull()
+                            if (first != null) scope.launch {
+                                warmAlbumArt(context, first.id)
+                                val startedSong = viewModel.shuffleAll(list, first)
+                                if (startedSong != null && backStack.none { it is Screen.Player && it.fileId == startedSong.id }) {
+                                    backStack.add(Screen.Player(startedSong.id))
+                                }
                             }
                         },
                         onMiniPlayerClick = {
@@ -400,6 +411,8 @@ fun AppNavigation() {
                         onNavigateToArtist = { artistName ->
                             viewModel.requestedTab.value = "Artists"
                             viewModel.requestedSubViewType.value = "Artist"
+                            viewModel.returnToPlayerOnDetailBack.value = true
+                            viewModel.returnToHomeScreenOnDetailBack.value = false
                             viewModel.requestedSubViewName.value = artistName
                             if (backStack.lastOrNull() is Screen.Player) {
                                 backStack.removeAt(backStack.size - 1)
@@ -409,6 +422,8 @@ fun AppNavigation() {
                         onNavigateToAlbum = { albumName ->
                             viewModel.requestedTab.value = "Albums"
                             viewModel.requestedSubViewType.value = "Album"
+                            viewModel.returnToPlayerOnDetailBack.value = true
+                            viewModel.returnToHomeScreenOnDetailBack.value = false
                             viewModel.requestedSubViewName.value = albumName
                             if (backStack.lastOrNull() is Screen.Player) {
                                 backStack.removeAt(backStack.size - 1)
@@ -1262,7 +1277,8 @@ fun OnboardingFlow(
                                     Triple("petrol", "Azul Petróleo", Brush.horizontalGradient(listOf(Color(0xFF005F73), Color(0xFF0A9396)))),
                                     Triple("turquoise", "Turquesa", Brush.horizontalGradient(listOf(Color(0xFF00F5D4), Color(0xFF00BBF9)))),
                                     Triple("obsidian", "Obsidiana", Brush.horizontalGradient(listOf(Color(0xFF1A1A1A), Color(0xFF0A0A0A)))),
-                                    Triple("monochrome", "Blanco y Negro", Brush.horizontalGradient(listOf(Color(0xFFFFFFFF), Color(0xFF888888))))
+                                    Triple("monochrome", "Blanco y Negro", Brush.horizontalGradient(listOf(Color(0xFFFFFFFF), Color(0xFF888888)))),
+                                    Triple("pixel", "Pixel Retro", Brush.horizontalGradient(listOf(Color(0xFF1D2B53), Color(0xFFFF77A8), Color(0xFFFFA300))))
                                 )
 
                                 Column(

@@ -1,5 +1,6 @@
 package com.kevshupp.kevmusicplayer.playback.managers
 
+import com.kevshupp.kevmusicplayer.data.remote.SoulseekAccount
 import android.content.Context
 import android.net.Uri
 import com.kevshupp.kevmusicplayer.data.AudioDao
@@ -51,6 +52,12 @@ class BackupManager(
             }
             settingsPrefs.getString("extra_music_folders", null)?.let { settingsJson.put("extra_music_folders", it) }
             settingsPrefs.getString("telegram_bot_username", null)?.takeIf { it.isNotBlank() }?.let { settingsJson.put("telegram_bot_username", it) }
+            // Cuenta de Soulseek de KevMusic Desktop (contraseña ya cifrada, ver SoulseekAccount)
+            settingsPrefs.getString(SoulseekAccount.KEY_USER, null)?.takeIf { it.isNotBlank() }?.let { user ->
+                settingsPrefs.getString(SoulseekAccount.KEY_PASS, null)?.let { pass ->
+                    settingsJson.put(SoulseekAccount.KEY_USER, user).put(SoulseekAccount.KEY_PASS, pass)
+                }
+            }
             
             val playbackPrefs = context.getSharedPreferences("playback_prefs", Context.MODE_PRIVATE)
             settingsJson.put("enabled_tabs", playbackPrefs.getString("enabled_tabs", ""))
@@ -332,6 +339,10 @@ class BackupManager(
             }
             if (settingsJson.has("extra_music_folders")) edit.putString("extra_music_folders", settingsJson.getString("extra_music_folders"))
             if (settingsJson.has("telegram_bot_username")) edit.putString("telegram_bot_username", settingsJson.getString("telegram_bot_username"))
+            if (settingsJson.has(SoulseekAccount.KEY_USER) && settingsJson.has(SoulseekAccount.KEY_PASS)) {
+                edit.putString(SoulseekAccount.KEY_USER, settingsJson.getString(SoulseekAccount.KEY_USER))
+                edit.putString(SoulseekAccount.KEY_PASS, settingsJson.getString(SoulseekAccount.KEY_PASS))
+            }
             if (settingsJson.has("excluded_folders")) edit.putString("excluded_folders", settingsJson.getString("excluded_folders"))
             
             if (settingsJson.has("ambient_glow_enabled")) edit.putBoolean("ambient_glow_enabled", settingsJson.getBoolean("ambient_glow_enabled"))

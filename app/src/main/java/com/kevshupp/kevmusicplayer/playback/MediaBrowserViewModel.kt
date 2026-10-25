@@ -155,6 +155,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     val requestedSubViewType = mutableStateOf<String?>(null)
     val requestedSubViewName = mutableStateOf<String?>(null)
     val returnToHomeScreenOnDetailBack = mutableStateOf(false)
+    /** Artista o álbum abierto desde el reproductor: atrás vuelve al reproductor (LibraryScreen.navigateBack). */
+    val returnToPlayerOnDetailBack = mutableStateOf(false)
 
     val isScanning = mutableStateOf(false)
     val isShuffleActive = mutableStateOf(false)

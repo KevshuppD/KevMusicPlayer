@@ -181,7 +181,7 @@ fun KevMusicPlayerTheme(
         "turquoise" -> TurquoiseColorScheme
         "monochrome" -> MonochromeColorScheme
         "cyberpunk_purpura" -> CyberpunkPurpuraColorScheme
-        else -> DarkColorScheme
+        else -> if (isPixelTheme(currentTheme)) pixelPalette(currentTheme).scheme else DarkColorScheme
     }
 
     val view = LocalView.current
@@ -196,7 +196,12 @@ fun KevMusicPlayerTheme(
             }
         }
     }
+    // Pixelify Sans es más ancha que la fuente del sistema: se reduce el texto (sp) un 10 % para que quepa igual
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val themedDensity = if (isPixelTheme(currentTheme)) androidx.compose.ui.unit.Density(density.density, density.fontScale * 0.9f) else density
     CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalDensity provides themedDensity,
+        LocalPixelPalette provides (if (isPixelTheme(currentTheme)) pixelPalette(currentTheme) else null),
         LocalDisableAnimations provides currentDisableAnimations,
         LocalSongImageRounded provides currentSongImageRounded,
         LocalTransparencyEnabled provides currentTransparencyEnabled,
@@ -205,7 +210,7 @@ fun KevMusicPlayerTheme(
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = Typography,
+            typography = if (isPixelTheme(currentTheme)) PixelTypography else Typography,
             content = content
         )
     }

@@ -804,7 +804,9 @@ fun SettingsScreen(
                                 "turquoise" -> getLocalized("Turquesa", "Turquoise")
                                 "obsidian" -> getLocalized("Obsidiana Oscuro", "Deep Obsidian")
                                 "monochrome" -> getLocalized("Monocromo", "Monochrome")
-                                else -> getLocalized("Cyberpunk Rosa", "Cyberpunk Pink")
+                                else -> if (com.kevshupp.kevmusicplayer.ui.theme.isPixelTheme(selectedTheme))
+                                    "Pixel Retro · " + com.kevshupp.kevmusicplayer.ui.theme.pixelPalette(selectedTheme).nameEs
+                                else getLocalized("Cyberpunk Rosa", "Cyberpunk Pink")
                             }} • ${if (selectedLanguage == "es") "Español" else "English"}",
                             chips = listOf(
                                 getLocalized("Temas", "Themes"),
@@ -1078,6 +1080,8 @@ fun SettingsScreen(
                                     viewModel = viewModel,
                                     getLocalized = getLocalized
                                 )
+                                Spacer(modifier = Modifier.height(14.dp))
+                                SoulseekAccountCard(getLocalized = getLocalized)
                             }
                             "about" -> {
                                 AboutSettingsSection(

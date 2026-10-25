@@ -1,5 +1,6 @@
 package com.kevshupp.kevmusicplayer.ui.screens
 
+import com.kevshupp.kevmusicplayer.data.LyricsTranslator
 import com.kevshupp.kevmusicplayer.ui.screens.dialogs.*
 import androidx.compose.animation.*
 import androidx.compose.animation.animateColorAsState
@@ -488,226 +489,37 @@ fun PlayerScreen(
             val getLocalized: (String, String) -> String = { es, en ->
                 if (targetLang == "es") es else en
             }
-            if (lyricLines.isNotEmpty()) {
-                isTranslating = true
-                val results = mutableMapOf<Long, String>()
-                try {
-                    withContext(Dispatchers.IO) {
-                        val client = com.kevshupp.kevmusicplayer.data.HttpClients.shared.newBuilder()
-                            .connectTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
-                            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                            .build()
-                        val linesToTranslate = lyricLines.filter { it.text.isNotBlank() }
-                        
-                        // Chunking into batches of at most 15 lines or 600 characters
-                        val batches = mutableListOf<List<LyricLine>>()
-                        var currentBatch = mutableListOf<LyricLine>()
-                        var currentBatchLength = 0
-                        
-                        linesToTranslate.forEach { line ->
-                            if (currentBatchLength + line.text.length > 600 || currentBatch.size >= 15) {
-                                batches.add(currentBatch)
-                                currentBatch = mutableListOf()
-                                currentBatchLength = 0
-                            }
-                            currentBatch.add(line)
-                            currentBatchLength += line.text.length + 1
-                        }
-                        if (currentBatch.isNotEmpty()) {
-                            batches.add(currentBatch)
-                        }
-                        
-                        // 1. Try Google Translate API first with newline separation
-                        var googleTranslateSuccess = false
-                        try {
-                            val resultsTemp = mutableMapOf<Long, String>()
-                            
-                            for (batch in batches) {
-                                val joinedText = batch.joinToString("\n") { it.text }
-                                val encodedText = java.net.URLEncoder.encode(joinedText, "UTF-8")
-                                val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetLang&dt=t&q=$encodedText"
-                                val request = okhttp3.Request.Builder()
-                                    .url(url)
-                                    .header("User-Agent", "Mozilla/5.0 (Android; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0")
-                                    .build()
-                                
-                                var batchTranslated = false
-                                client.newCall(request).execute().use { response ->
-                                    if (response.isSuccessful) {
-                                        val body = response.body?.string() ?: ""
-                                        val jsonArray = org.json.JSONArray(body)
-                                        val segments = jsonArray.optJSONArray(0)
-                                        if (segments != null) {
-                                            val sb = java.lang.StringBuilder()
-                                            for (i in 0 until segments.length()) {
-                                                val segment = segments.optJSONArray(i)
-                                                if (segment != null) {
-                                                    sb.append(segment.optString(0, ""))
-                                                }
-                                            }
-                                            val translatedBlock = sb.toString()
-                                            val translatedLines = translatedBlock.split(Regex("\\r?\\n"))
-                                            if (translatedLines.size == batch.size) {
-                                                batch.forEachIndexed { index, line ->
-                                                    val t = translatedLines.getOrNull(index)?.trim()
-                                                    if (!t.isNullOrBlank()) {
-                                                        resultsTemp[line.timeMs] = t
-                                                    }
-                                                }
-                                                batchTranslated = true
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                if (!batchTranslated) {
-                                    // Fallback: translate line-by-line for this batch
-                                    for (line in batch) {
-                                        val encLine = java.net.URLEncoder.encode(line.text, "UTF-8")
-                                        val lUrl = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetLang&dt=t&q=$encLine"
-                                        val lRequest = okhttp3.Request.Builder()
-                                            .url(lUrl)
-                                            .header("User-Agent", "Mozilla/5.0 (Android; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0")
-                                            .build()
-                                        try {
-                                            client.newCall(lRequest).execute().use { lResp ->
-                                                if (lResp.isSuccessful) {
-                                                    val lBody = lResp.body?.string() ?: ""
-                                                    val lArr = org.json.JSONArray(lBody)
-                                                    val lSegs = lArr.optJSONArray(0)
-                                                    if (lSegs != null) {
-                                                        val lSb = java.lang.StringBuilder()
-                                                        for (j in 0 until lSegs.length()) {
-                                                            val s = lSegs.optJSONArray(j)
-                                                            if (s != null) {
-                                                                lSb.append(s.optString(0, ""))
-                                                            }
-                                                        }
-                                                        val resText = lSb.toString().trim()
-                                                        if (resText.isNotBlank()) {
-                                                            resultsTemp[line.timeMs] = resText
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        } catch (ex: Exception) {
-                                            // Continue with other lines
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            val nonBlankCount = linesToTranslate.size
-                            val translatedCount = resultsTemp.keys.size
-                            if (translatedCount >= nonBlankCount * 0.7) {
-                                results.putAll(resultsTemp)
-                                googleTranslateSuccess = true
-                            }
-                        } catch (e: Exception) {
-                            if (e is kotlinx.coroutines.CancellationException) throw e
-                            e.printStackTrace()
-                            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                                "Translation_Google",
-                                "Google Translate failed",
-                                e
-                            )
-                        }
-                        
-                        // 2. Fall back to MyMemory ONLY if Google Translate failed!
-                        if (!googleTranslateSuccess) {
-                            for (batch in batches) {
-                                val joinedText = batch.joinToString("\n") { it.text }
-                                val encodedText = java.net.URLEncoder.encode(joinedText, "UTF-8")
-                                val url = "https://api.mymemory.translated.net/get?q=$encodedText&langpair=autodetect|$targetLang&de=kevshupp.musicplayer@gmail.com"
-                                val request = okhttp3.Request.Builder()
-                                    .url(url)
-                                    .header("User-Agent", "KevMusicPlayer/1.5.4")
-                                    .build()
-                                
-                                var success = false
-                                try {
-                                    client.newCall(request).execute().use { response ->
-                                        if (response.isSuccessful) {
-                                            val body = response.body?.string() ?: ""
-                                            val json = org.json.JSONObject(body)
-                                            val status = json.optInt("responseStatus", 200)
-                                            if (status == 200) {
-                                                val translatedText = json.getJSONObject("responseData").getString("translatedText")
-                                                val translatedLines = translatedText.split(Regex("\\r?\\n"))
-                                                if (translatedLines.size == batch.size) {
-                                                    batch.forEachIndexed { index, line ->
-                                                        val t = translatedLines.getOrNull(index)?.trim()
-                                                        if (!t.isNullOrBlank()) {
-                                                            results[line.timeMs] = t
-                                                        }
-                                                    }
-                                                    success = true
-                                                }
-                                            }
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    if (e is kotlinx.coroutines.CancellationException) throw e
-                                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                                        "Translation_MyMemory_Batch",
-                                        "MyMemory Batch failed",
-                                        e
-                                    )
-                                }
-                                
-                                if (!success) {
-                                    for (line in batch) {
-                                        val encodedLine = java.net.URLEncoder.encode(line.text, "UTF-8")
-                                        val fallbackUrl = "https://api.mymemory.translated.net/get?q=$encodedLine&langpair=autodetect|$targetLang&de=kevshupp.musicplayer@gmail.com"
-                                        val fallbackRequest = okhttp3.Request.Builder().url(fallbackUrl).build()
-                                        try {
-                                            client.newCall(fallbackRequest).execute().use { resp ->
-                                                if (resp.isSuccessful) {
-                                                    val b = resp.body?.string() ?: ""
-                                                    val json = org.json.JSONObject(b)
-                                                    val translated = json.getJSONObject("responseData").getString("translatedText")
-                                                    if (translated.isNotBlank()) {
-                                                        results[line.timeMs] = translated.trim()
-                                                    }
-                                                }
-                                            }
-                                        } catch (e: Exception) {
-                                            if (e is kotlinx.coroutines.CancellationException) throw e
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (results.isNotEmpty()) {
-                        translatedLyricLines = results
-                        showTranslation = true
-                        // Persist to database cache
-                        if (currentSongFile != null && viewModel != null) {
-                            val serialized = LyricsRepository.serializeTranslations(results)
-                            viewModel.updateSongTranslatedLyrics(currentSongFile.id, serialized)
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    e.printStackTrace()
-                    com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError(
-                        "Translation_Outer",
-                        "Outer translation task failed",
-                        e
-                    )
-                    if (!isAuto) {
-                        withContext(Dispatchers.Main) {
-                            val msg = getLocalized(
-                                "Error de red al traducir letras",
-                                "Network error while translating lyrics"
-                            )
-                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                } finally {
-                    isTranslating = false
+            if (lyricLines.isEmpty()) return
+            isTranslating = true
+            try {
+                // Por idioma de cada fragmento (canciones en coreano + inglés, etc.); ver LyricsTranslator
+                val results = LyricsTranslator.translate(lyricLines.map { it.timeMs to it.text }, targetLang)
+                translatedLyricLines = results
+                showTranslation = true
+                // También se guarda vacía ("{}"): la letra ya está en tu idioma y la traducción automática no
+                // vuelve a intentarlo en cada reproducción
+                if (currentSongFile != null && viewModel != null) {
+                    viewModel.updateSongTranslatedLyrics(currentSongFile.id, LyricsRepository.serializeTranslations(results))
                 }
+                if (results.isEmpty() && !isAuto) {
+                    android.widget.Toast.makeText(
+                        context,
+                        getLocalized("La letra ya está en tu idioma", "The lyrics are already in your language"),
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                com.kevshupp.kevmusicplayer.data.TelemetryLogger.logError("Translation", "Lyrics translation failed", e)
+                if (!isAuto) {
+                    android.widget.Toast.makeText(
+                        context,
+                        getLocalized("Error de red al traducir letras", "Network error while translating lyrics"),
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } finally {
+                isTranslating = false
             }
         }
 
@@ -755,7 +567,7 @@ fun PlayerScreen(
                 }
 
                 Text(
-                    text = "NOW PLAYING",
+                    text = if (isEs) "REPRODUCIENDO" else "NOW PLAYING",
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     letterSpacing = 2.sp,
@@ -795,7 +607,7 @@ fun PlayerScreen(
                             translatedLines = if (showTranslation) translatedLyricLines else null,
                             isTranslating = isTranslating,
                             onTranslateClick = {
-                                if (translatedLyricLines != null) {
+                                if (!translatedLyricLines.isNullOrEmpty()) {
                                     showTranslation = !showTranslation
                                 } else {
                                     scope.launch {
@@ -1203,13 +1015,15 @@ fun PlayerScreen(
                                          )
                                      }
 
-                                     // Play / Pause Fab circle
+                                     // Play / Pause Fab circle (con Pixel Retro, color plano de la paleta, sin degradado)
+                                     val pixelPalette = com.kevshupp.kevmusicplayer.ui.theme.LocalPixelPalette.current
                                      Box(
                                          modifier = Modifier
                                              .size(72.dp)
                                              .clip(CircleShape)
                                              .background(
-                                                 Brush.linearGradient(
+                                                 if (pixelPalette != null) androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary)
+                                                 else Brush.linearGradient(
                                                      colors = listOf(
                                                          MaterialTheme.colorScheme.primary,
                                                          MaterialTheme.colorScheme.secondary
@@ -1231,7 +1045,7 @@ fun PlayerScreen(
                                          Icon(
                                              imageVector = if (playerState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                              contentDescription = "Play/Pause",
-                                             tint = Color.White,
+                                             tint = if (pixelPalette != null) MaterialTheme.colorScheme.onPrimary else Color.White,
                                              modifier = Modifier.size(38.dp)
                                          )
                                      }
@@ -1461,12 +1275,12 @@ fun PlayerScreen(
                                     .background(artGradient),
                                 contentAlignment = Alignment.Center
                             ) {
-                                SubcomposeAsyncImage(
-                                    model = artBytes,
+                                AlbumArtImage(
+                                    bitmap = artBytes,
+                                    modifier = Modifier.fillMaxSize(),
                                     contentDescription = null,
                                     contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize(),
-                                    error = {
+                                    placeholder = {
                                         Icon(
                                             imageVector = Icons.Rounded.MusicNote,
                                             contentDescription = null,

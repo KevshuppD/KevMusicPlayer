@@ -123,20 +123,12 @@ fun BottomNavBar(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         val artBytes = rememberAlbumArt(currentSongUriString, thumbnail = true)
-                                        SubcomposeAsyncImage(
-                                            model = artBytes,
+                                        AlbumArtImage(
+                                            bitmap = artBytes,
+                                            modifier = Modifier.fillMaxSize(),
                                             contentDescription = null,
                                             contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize(),
-                                            loading = {
-                                                Icon(
-                                                    imageVector = Icons.Rounded.MusicNote,
-                                                    contentDescription = null,
-                                                    tint = Color.White.copy(alpha = 0.8f),
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            },
-                                            error = {
+                                            placeholder = {
                                                 Icon(
                                                     imageVector = Icons.Rounded.MusicNote,
                                                     contentDescription = null,

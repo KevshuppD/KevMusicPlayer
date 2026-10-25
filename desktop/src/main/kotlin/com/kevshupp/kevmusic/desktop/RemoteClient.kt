@@ -36,7 +36,7 @@ class RemoteClient(private val scope: CoroutineScope) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(4, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .pingInterval(15, TimeUnit.SECONDS)
+        .pingInterval(5, TimeUnit.SECONDS)
         .build()
 
     private val _status = MutableStateFlow<ConnStatus>(ConnStatus.Disconnected)
@@ -90,14 +90,24 @@ class RemoteClient(private val scope: CoroutineScope) {
         open(saved.host, saved.port, JSONObject().put("type", "hello").put("token", saved.token))
     }
 
+    /**
+     * Sin conexión no se sabe qué hace el teléfono: se deja la canción en pausa en la posición estimada, para que
+     * la letra, la barra y MPRIS no sigan avanzando solos. El siguiente `state` al reconectar trae la real.
+     */
+    private fun freezeState() {
+        val now = System.currentTimeMillis()
+        _state.value = _state.value?.let { if (it.playing) it.copy(position = it.positionAt(now), playing = false, receivedAt = now) else it }
+    }
+
     fun disconnect(forget: Boolean) {
+        freezeState()
         userClosed = true
         reconnectJob?.cancel()
         socket?.close(1000, "bye")
         socket = null
         if (forget) {
+            device?.let { Config.forget(it) }
             device = null
-            Config.save(null)
             _library.value = null
         }
         _status.value = ConnStatus.Disconnected
@@ -134,27 +144,49 @@ class RemoteClient(private val scope: CoroutineScope) {
 
     /** Con un teléfono ya emparejado se reintenta cada 3 s (pantalla apagada, Wi-Fi caída, app cerrada). */
     private fun onLost(message: String) {
+        freezeState()
         if (userClosed) return
         val saved = device
         _status.value = ConnStatus.Failed(message)
         if (saved != null) {
             reconnectJob?.cancel()
+            // Con varios emparejados se van alternando: suena el que esté abierto (release, debug u otro teléfono)
+            val all = Config.all()
+            val next = all.getOrNull((all.indexOfFirst { it.key == saved.key } + 1) % all.size.coerceAtLeast(1)) ?: saved
             reconnectJob = scope.launch {
-                delay(3000)
-                if (!userClosed) resume(saved)
+                delay(if (all.size > 1) 1500 else 3000)
+                if (!userClosed) resume(next)
             }
         }
     }
 
+    // Mientras suena, el teléfono manda `state` cada segundo: sin noticias en 4 s (Wi-Fi caído sin cerrar el
+    // socket), se congela la posición aunque OkHttp aún no haya notado la caída
+    @Volatile private var lastStateAt = 0L
+    private val stallWatch = scope.launch {
+        while (true) {
+            delay(1000)
+            val st = _state.value
+            if (st != null && st.playing && lastStateAt > 0 && System.currentTimeMillis() - lastStateAt > 4000) freezeState()
+        }
+    }
+
     private fun handle(host: String, port: Int, msg: JSONObject) {
+        if (msg.optString("type") == "state") lastStateAt = System.currentTimeMillis()
         when (msg.optString("type")) {
             "auth" -> {
                 if (!msg.optBoolean("ok")) {
                     // Código erróneo o token revocado ("Olvidar todos" en el teléfono)
-                    val hadToken = device != null
+                    val rejected = device
+                    val hadToken = rejected != null
                     userClosed = true
                     socket?.close(1000, "auth")
-                    if (hadToken) { device = null; Config.save(null) }
+                    if (rejected != null) {
+                        // Solo se olvida este emparejamiento; si hay otros (app debug/release, otro teléfono), se prueban
+                        Config.forget(rejected)
+                        device = null
+                        Config.load()?.let { resume(it); return }
+                    }
                     _status.value = ConnStatus.Failed(
                         if (hadToken) "El teléfono ya no reconoce este equipo. Vuelve a emparejar."
                         else "Código incorrecto. Revisa el que muestra el teléfono."
@@ -214,6 +246,7 @@ class RemoteClient(private val scope: CoroutineScope) {
                     .map { p -> p.copy(songIds = p.songIds.filter { it in lib.byId }) }
                 _library.value = lib.copy(playlists = lib.playlists.filterNot { it.smart } + smart)
             }
+            "slskAccount" -> _slskAccount.value = msg.optString("username") to msg.optString("password")
             "theme" -> _phoneTheme.value = msg.optString("theme", "cyberpunk")
             "tgStatus" -> _telegram.value = TelegramStatus(msg.optBoolean("ready"), msg.optString("reason"))
             "tgQueue" -> {
@@ -258,6 +291,17 @@ class RemoteClient(private val scope: CoroutineScope) {
     }
 
     // ---------- Comandos ----------
+
+    /** Cuenta de Soulseek guardada en el teléfono (viaja en su copia de la nube); null si no tiene. */
+    private val _slskAccount = MutableStateFlow<Pair<String, String>?>(null)
+    val slskAccount: StateFlow<Pair<String, String>?> = _slskAccount
+
+    /** Guarda la cuenta en el teléfono (protocolo 4+); los anteriores ignoran el mensaje. */
+    fun saveSlskAccount(user: String, pass: String) {
+        if (phoneProtocol < 4 || _slskAccount.value == (user to pass)) return
+        cmd("slskAccountSave") { put("username", user); put("password", pass) }
+        _slskAccount.value = user to pass
+    }
 
     private fun send(json: JSONObject) {
         socket?.send(json.toString())

@@ -1,5 +1,10 @@
 package com.kevshupp.kevmusicplayer.ui.screens.settings
 
+import com.kevshupp.kevmusicplayer.ui.screens.AlbumArtImage
+import androidx.compose.foundation.border
+import com.kevshupp.kevmusicplayer.ui.theme.pixelPalette
+import com.kevshupp.kevmusicplayer.ui.theme.isPixelTheme
+import com.kevshupp.kevmusicplayer.ui.theme.PixelPalettes
 import com.kevshupp.kevmusicplayer.ui.screens.*
 
 import android.Manifest
@@ -87,27 +92,28 @@ fun GeneralSettingsSection(
                     Triple("petrol", getLocalized("Azul Petróleo", "Petrol Blue"), getLocalized("Sofisticado azul petróleo y cian minimalista", "Sophisticated petrol blue and clean cyan")),
                     Triple("turquoise", getLocalized("Turquesa", "Turquoise"), getLocalized("Estilo turquesa y verde menta refrescante", "Refreshing turquoise and mint green style")),
                     Triple("obsidian", getLocalized("Obsidiana Oscuro", "Deep Obsidian"), getLocalized("Fondo negro puro de alto contraste (AMOLED)", "Pure black background with high contrast (AMOLED)")),
-                    Triple("monochrome", getLocalized("Blanco y Negro", "Monochrome"), getLocalized("Elegante diseño minimalista en escala de grises", "Elegant minimalist grayscale design"))
+                    Triple("monochrome", getLocalized("Blanco y Negro", "Monochrome"), getLocalized("Elegante diseño minimalista en escala de grises", "Elegant minimalist grayscale design")),
+                    Triple("pixel", getLocalized("Pixel Retro", "Pixel Retro"), getLocalized("Letra pixelada y paletas de consolas retro", "Pixel font and retro console palettes"))
                 )
 
                 themes.forEachIndexed { index, (tag, name, desc) ->
-                    val isSelected = selectedTheme == tag
+                    // Pixel Retro agrupa sus paletas (pixel, pixel_gameboy…): elegirlo de nuevo no cambia la paleta
+                    val isSelected = if (tag == "pixel") isPixelTheme(selectedTheme) else selectedTheme == tag
+                    fun select() {
+                        if (tag == "pixel" && isSelected) return
+                        onThemeSelected(tag)
+                        settingsPrefs.edit().putString("app_theme", tag).apply()
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                onThemeSelected(tag)
-                                settingsPrefs.edit().putString("app_theme", tag).apply()
-                            }
+                            .clickable { select() }
                             .padding(horizontal = 16.dp, vertical = 16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
                             selected = isSelected,
-                            onClick = {
-                                onThemeSelected(tag)
-                                settingsPrefs.edit().putString("app_theme", tag).apply()
-                            },
+                            onClick = { select() },
                             colors = RadioButtonDefaults.colors(
                                 selectedColor = MaterialTheme.colorScheme.primary
                             )
@@ -139,10 +145,18 @@ fun GeneralSettingsSection(
                                         "obsidian" -> Brush.horizontalGradient(listOf(Color(0xFF0E0E0E), Color(0xFFFFFFFF)))
                                         "turquoise" -> Brush.horizontalGradient(listOf(Color(0xFF071F1B), Color(0xFF00F5D4)))
                                         "monochrome" -> Brush.horizontalGradient(listOf(Color(0xFF000000), Color(0xFFFFFFFF)))
+                                        "pixel" -> Brush.horizontalGradient(pixelPalette(selectedTheme).swatch)
                                         else -> Brush.horizontalGradient(listOf(Color(0xFF121422), Color(0xFFFF4081)))
                                     }
                                 )
                         )
+                    }
+
+                    if (tag == "pixel" && isSelected) {
+                        PixelPaletteChooser(selectedTheme, getLocalized) { key ->
+                            onThemeSelected(key)
+                            settingsPrefs.edit().putString("app_theme", key).apply()
+                        }
                     }
 
                     if (index < themes.lastIndex) {
@@ -468,12 +482,12 @@ fun GeneralSettingsSection(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         if (hasLocalSongs) {
-                                            SubcomposeAsyncImage(
-                                                model = artBytes,
+                                            AlbumArtImage(
+                                                bitmap = artBytes,
+                                                modifier = Modifier.fillMaxSize(),
                                                 contentDescription = null,
                                                 contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize(),
-                                                error = {
+                                                placeholder = {
                                                     Box(
                                                         modifier = Modifier
                                                             .fillMaxSize(0.9f)
@@ -922,3 +936,46 @@ fun GeneralSettingsSection(
     }
 }
 
+
+/** Paletas de Pixel Retro: una muestra de 4 colores por paleta, en cuadritos (sin redondear) como píxeles. */
+@Composable
+private fun PixelPaletteChooser(selected: String, getLocalized: (String, String) -> String, onSelect: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(start = 56.dp, end = 16.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            getLocalized("Paleta", "Palette"),
+            fontSize = 12.sp, fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        )
+        PixelPalettes.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { palette ->
+                    val active = palette.key == selected
+                    Column(
+                        Modifier.weight(1f)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
+                            .border(
+                                if (active) 2.dp else 1.dp,
+                                if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
+                                RoundedCornerShape(4.dp)
+                            )
+                            .clickable { onSelect(palette.key) }
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(Modifier.height(14.dp).fillMaxWidth()) {
+                            palette.swatch.forEach { c -> Box(Modifier.weight(1f).fillMaxHeight().background(c)) }
+                        }
+                        Text(
+                            getLocalized(palette.nameEs, palette.nameEn),
+                            fontSize = 13.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                            color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                    }
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
