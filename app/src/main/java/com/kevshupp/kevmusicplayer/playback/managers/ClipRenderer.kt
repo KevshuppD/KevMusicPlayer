@@ -39,6 +39,9 @@ enum class PixelArtMode { PALETTE, PIXELATED, ORIGINAL }
 /** Fondo animado de la plantilla Pixel art; todos usan los colores de la paleta elegida. */
 enum class PixelScene { STARS, FOREST, ROAD, CYBER_CITY, DISCO, CITY, JAPAN }
 
+/** Composición del Pixel art: carátula con letra (escena), letra protagonista estilo karaoke o vinilo girando. */
+enum class PixelLayout { SCENE, LYRICS, VINYL }
+
 data class ShareClipConfig(
     val songTitle: String,
     val artistName: String,
@@ -67,6 +70,7 @@ data class ShareClipConfig(
     /** Plantilla Pixel art: fondo, superficie, principal, secundario y texto (paletas del tema Pixel Retro). */
     val pixelArtMode: PixelArtMode = PixelArtMode.PALETTE,
     val pixelScene: PixelScene = PixelScene.STARS,
+    val pixelLayout: PixelLayout = PixelLayout.SCENE,
     val pixelColors: IntArray = intArrayOf(0xFF130E26.toInt(), 0xFF1D2B53.toInt(), 0xFFFF77A8.toInt(), 0xFF29ADFF.toInt(), 0xFFFFF1E8.toInt())
 ) {
     val isVertical get() = format == ClipFormat.STORY
@@ -169,7 +173,7 @@ class ClipRenderer(context: Context, val config: ShareClipConfig) {
             drawPixelScene(pc, width / PX, height / PX, timeMs, progress, frame)
             canvas.drawBitmap(pixelBitmap!!, null, RectF(0f, 0f, width, height), nearest)
             val original = config.albumArtBitmap
-            if (config.pixelArtMode == PixelArtMode.ORIGINAL && original != null && !original.isRecycled) {
+            if (config.pixelArtMode == PixelArtMode.ORIGINAL && original != null && !original.isRecycled && !lastPixelArtRect.isEmpty) {
                 val r = lastPixelArtRect
                 canvas.drawBitmap(original, null, RectF(r.left * PX, r.top * PX, r.right * PX, r.bottom * PX), smooth)
             }
@@ -542,6 +546,58 @@ class ClipRenderer(context: Context, val config: ShareClipConfig) {
 
         drawPixelBackdrop(c, sw, sh, frame, bg, surface, primary, secondary, ink, px)
 
+        fun pixelText(size: Float, color: Int, bold: Boolean) = Paint().apply {
+            isAntiAlias = false; textSize = size; this.color = color
+            typeface = if (bold) boldTf else regularTf; textAlign = Paint.Align.CENTER
+        }
+        when (config.pixelLayout) {
+            PixelLayout.SCENE -> drawPixelSceneLayout(c, sw, sh, timeMs, frame, ::pixelText, px)
+            PixelLayout.LYRICS -> drawPixelLyricsLayout(c, sw, sh, timeMs, frame, ::pixelText, px)
+            PixelLayout.VINYL -> drawPixelVinylLayout(c, sw, sh, timeMs, frame, ::pixelText, px)
+        }
+
+        // Ecualizador de bloques
+        if (config.showWaveform) {
+            val bars = if (config.isLandscape) 24 else 14
+            val block = 3f
+            val barW = 4f
+            val total = bars * barW + (bars - 1) * 2
+            val left = (sw - total) / 2f
+            val base = sh - 14
+            for (i in 0 until bars) {
+                val maxLevel = if (config.isVertical) 11 else 7
+                val level = (((sin(frame * 0.25 + i * 0.9) + 1) * (maxLevel / 2.8)) + ((i * 7 + (frame / 3).toInt()) % 3)).toInt().coerceIn(1, maxLevel)
+                for (b in 0 until level) {
+                    px.color = if (b >= level - 1) primary else secondary
+                    val x = left + i * (barW + 2)
+                    val by = base - b * (block + 1)
+                    c.drawRect(x, by - block, x + barW, by, px)
+                }
+            }
+        }
+        // Barra de progreso por segmentos
+        val segments = 20
+        val segW = (sw - 20 - (segments - 1)) / segments
+        val filled = (progress * segments).toInt()
+        for (i in 0 until segments) {
+            px.color = if (i < filled) primary else surface
+            val x = 10 + i * (segW + 1)
+            c.drawRect(x, sh - 7, x + segW, sh - 4, px)
+        }
+        config.dedicationText?.takeIf { it.isNotBlank() }?.let { text ->
+            val p = pixelText(9f, ink, true)
+            val w = (p.measureText(text) + 10).coerceAtMost(sw - 8)
+            px.color = primary
+            c.drawRect((sw - w) / 2f, 6f, (sw + w) / 2f, 20f, px)
+            c.drawText(truncate(text, p, w - 6), sw / 2f, 16f, p.apply { color = bg })
+        }
+    }
+
+    /** Escena clásica: carátula grande con marco, título, artista y letra (en vertical, con la anterior y la siguiente). */
+    private fun drawPixelSceneLayout(
+        c: Canvas, sw: Float, sh: Float, timeMs: Long, frame: Float, pixelText: (Float, Int, Boolean) -> Paint, px: Paint
+    ) {
+        val (bg, surface, primary, secondary, ink) = config.pixelColors.let { listOf(it[0], it[1], it[2], it[3], it[4]) }
         val artSize = pixelArtSize()
         val artRect = if (config.isLandscape) {
             RectF(sw * 0.07f, (sh - artSize) / 2f - 6, sw * 0.07f + artSize, (sh - artSize) / 2f - 6 + artSize)
@@ -571,10 +627,6 @@ class ClipRenderer(context: Context, val config: ShareClipConfig) {
             centerX = sw / 2f
             textW = sw - 16
             y = artRect.bottom + 18
-        }
-        fun pixelText(size: Float, color: Int, bold: Boolean) = Paint().apply {
-            isAntiAlias = false; textSize = size; this.color = color
-            typeface = if (bold) boldTf else regularTf; textAlign = Paint.Align.CENTER
         }
         val big = config.isVertical
         val title = pixelText(if (big) 15f else 12f, ink, true)
@@ -612,40 +664,172 @@ class ClipRenderer(context: Context, val config: ShareClipConfig) {
             }
         }
 
-        // Ecualizador de bloques
-        if (config.showWaveform) {
-            val bars = if (config.isLandscape) 24 else 14
-            val block = 3f
-            val barW = 4f
-            val total = bars * barW + (bars - 1) * 2
-            val left = (sw - total) / 2f
-            val base = sh - 14
-            for (i in 0 until bars) {
-                val maxLevel = if (config.isVertical) 11 else 7
-                val level = (((sin(frame * 0.25 + i * 0.9) + 1) * (maxLevel / 2.8)) + ((i * 7 + (frame / 3).toInt()) % 3)).toInt().coerceIn(1, maxLevel)
-                for (b in 0 until level) {
-                    px.color = if (b >= level - 1) primary else secondary
-                    val x = left + i * (barW + 2)
-                    val by = base - b * (block + 1)
-                    c.drawRect(x, by - block, x + barW, by, px)
-                }
+    }
+
+    /**
+     * Letra protagonista: carátula pequeña con título y artista arriba, y la letra en grande con varias líneas
+     * alrededor de la actual, que va resaltada sobre un bloque del color principal (karaoke).
+     */
+    private fun drawPixelLyricsLayout(
+        c: Canvas, sw: Float, sh: Float, timeMs: Long, frame: Float, pixelText: (Float, Int, Boolean) -> Paint, px: Paint
+    ) {
+        val (bg, surface, primary, secondary, ink) = config.pixelColors.let { listOf(it[0], it[1], it[2], it[3], it[4]) }
+        val big = config.isVertical
+        // Cabecera: carátula pequeña a la izquierda, título y artista a su derecha
+        val art = if (big) 34f else 26f
+        val top = if (config.dedicationText.isNullOrBlank()) 10f else 26f
+        val artRect = RectF(10f, top, 10f + art, top + art)
+        px.color = primary
+        c.drawRect(artRect.left - 1, artRect.top - 1, artRect.right + 1, artRect.bottom + 1, px)
+        lastPixelArtRect = RectF(artRect)
+        if (pixelArt != null) c.drawBitmap(pixelArt, null, artRect, nearest)
+        else { px.color = surface; c.drawRect(artRect, px) }
+        val textLeft = artRect.right + 6
+        val textW = sw - textLeft - 8
+        val title = pixelText(if (big) 12f else 10f, ink, true).apply { textAlign = Paint.Align.LEFT }
+        val artist = pixelText(if (big) 9f else 8f, secondary, false).apply { textAlign = Paint.Align.LEFT }
+        c.drawText(truncate(cased(config.songTitle), title, textW), textLeft, artRect.top + art * 0.45f, title)
+        c.drawText(truncate(config.artistName, artist, textW), textLeft, artRect.top + art * 0.45f + artist.textSize + 3, artist)
+
+        val lines = config.lyricsLines
+        val idx = lines.indexOfLast { it.timeMs <= timeMs + 50 }
+        val areaTop = artRect.bottom + 12
+        // Por encima del ecualizador de bloques (hasta 11 bloques de 4 px en vertical) y de la barra de progreso
+        val areaBottom = sh - if (config.showWaveform) (if (big) 62f else 46f) else 14f
+        val textW2 = sw - 20
+        val size = (if (big) 17f else 13f) * config.textScale
+        val active = pixelText(size, bg, true)
+        val other = pixelText(size * 0.82f, ink, false).apply { alpha = 150 }
+        val lineGap = 4f
+        if (idx < 0) {
+            // Antes de la primera línea: tres puntos que parpadean
+            val dots = ".".repeat(1 + (frame / 8).toInt() % 3)
+            c.drawText(dots, sw / 2f, (areaTop + areaBottom) / 2f, pixelText(size, primary, true))
+            return
+        }
+        val activeWrapped = wrapText(cased(lines[idx].text), active, textW2 - 8).take(4)
+        val activeH = activeWrapped.size * (active.textSize + lineGap) + 6
+        val centerY = (areaTop + areaBottom) / 2f
+        // Línea actual sobre un bloque del color principal, con sombra escalonada
+        val boxTop = centerY - activeH / 2f
+        px.color = Color.argb(160, 0, 0, 0)
+        c.drawRect(8f + 2, boxTop + 2, sw - 8 + 2, boxTop + activeH + 2, px)
+        px.color = primary
+        c.drawRect(8f, boxTop, sw - 8, boxTop + activeH, px)
+        var y = boxTop + active.textSize + 2
+        activeWrapped.forEach { t -> c.drawText(t, sw / 2f, y, active); y += active.textSize + lineGap }
+        // Donde termina el bloque actual (con su traducción): de ahí hacia abajo van las siguientes
+        var blockBottom = boxTop + activeH
+        translationOf(lines[idx])?.let { trans ->
+            val tp = pixelText((if (big) 10f else 8f) * config.textScale, secondary, false)
+            var ty = boxTop + activeH + tp.textSize + 4
+            wrapText(trans, tp, textW2).take(2).forEach { t -> c.drawText(t, sw / 2f, ty, tp); blockBottom = ty; ty += tp.textSize + 2 }
+        }
+        // Anteriores hacia arriba y siguientes hacia abajo mientras quepan
+        var upY = boxTop - 8
+        var i = idx - 1
+        while (i >= 0 && upY > areaTop + other.textSize) {
+            val wrapped = wrapText(cased(lines[i].text), other, textW2).take(2)
+            for (t in wrapped.reversed()) {
+                if (upY <= areaTop + other.textSize) break
+                c.drawText(t, sw / 2f, upY, other); upY -= other.textSize + lineGap
             }
+            upY -= 4; i--
         }
-        // Barra de progreso por segmentos
-        val segments = 20
-        val segW = (sw - 20 - (segments - 1)) / segments
-        val filled = (progress * segments).toInt()
-        for (i in 0 until segments) {
-            px.color = if (i < filled) primary else surface
-            val x = 10 + i * (segW + 1)
-            c.drawRect(x, sh - 7, x + segW, sh - 4, px)
+        var downY = blockBottom + other.textSize + 8
+        i = idx + 1
+        while (i < lines.size && downY < areaBottom) {
+            for (t in wrapText(cased(lines[i].text), other, textW2).take(2)) {
+                if (downY >= areaBottom) break
+                c.drawText(t, sw / 2f, downY, other); downY += other.textSize + lineGap
+            }
+            downY += 4; i++
         }
-        config.dedicationText?.takeIf { it.isNotBlank() }?.let { text ->
-            val p = pixelText(9f, ink, true)
-            val w = (p.measureText(text) + 10).coerceAtMost(sw - 8)
-            px.color = primary
-            c.drawRect((sw - w) / 2f, 6f, (sw + w) / 2f, 20f, px)
-            c.drawText(truncate(text, p, w - 6), sw / 2f, 16f, p.apply { color = bg })
+    }
+
+    /**
+     * Vinilo pixel: disco negro con surcos que giran (un reflejo que da vueltas) y la carátula como etiqueta,
+     * dibujado sin antialias para que al ampliar los bordes queden en escalones. Debajo, título y letra.
+     */
+    private fun drawPixelVinylLayout(
+        c: Canvas, sw: Float, sh: Float, timeMs: Long, frame: Float, pixelText: (Float, Int, Boolean) -> Paint, px: Paint
+    ) {
+        val (bg, surface, primary, secondary, ink) = config.pixelColors.let { listOf(it[0], it[1], it[2], it[3], it[4]) }
+        val big = config.isVertical
+        val r = when {
+            config.isLandscape -> sh * 0.36f
+            big -> sw * 0.38f
+            else -> minOf(sw * 0.26f, sh * 0.25f)
+        }
+        val cx = if (config.isLandscape) sw * 0.07f + r else sw / 2f
+        val cy = if (config.isLandscape) sh / 2f - 4 else if (big) sh * 0.11f + r else (sh - 2 * r) * 0.22f + r
+        // Sombra y disco
+        px.color = Color.argb(150, 0, 0, 0)
+        c.drawCircle(cx + 3, cy + 3, r, px)
+        px.color = 0xFF0B0B0F.toInt()
+        c.drawCircle(cx, cy, r, px)
+        // Surcos: anillos de 1 px en el tono de superficie
+        px.style = Paint.Style.STROKE; px.strokeWidth = 1f
+        px.color = surface
+        var ring = r - 3
+        while (ring > r * 0.42f) { c.drawCircle(cx, cy, ring, px); ring -= 3 }
+        // Reflejo que gira: dos arcos opuestos del color principal
+        val angle = (frame * 4f) % 360f
+        px.color = primary; px.strokeWidth = 2f
+        val oval = RectF(cx - r + 4, cy - r + 4, cx + r - 4, cy + r - 4)
+        c.drawArc(oval, angle, 26f, false, px)
+        c.drawArc(oval, angle + 180f, 26f, false, px)
+        px.color = secondary; px.strokeWidth = 1f
+        val oval2 = RectF(cx - r * 0.7f, cy - r * 0.7f, cx + r * 0.7f, cy + r * 0.7f)
+        c.drawArc(oval2, angle + 90f, 18f, false, px)
+        px.style = Paint.Style.FILL
+        // Etiqueta: la carátula recortada en círculo, girando con el disco
+        val label = r * 0.4f
+        val save = c.save()
+        val clip = android.graphics.Path().apply { addCircle(cx, cy, label, android.graphics.Path.Direction.CW) }
+        c.clipPath(clip)
+        c.rotate(angle, cx, cy)
+        if (pixelArt != null) c.drawBitmap(pixelArt, null, RectF(cx - label, cy - label, cx + label, cy + label), nearest)
+        else { px.color = primary; c.drawRect(cx - label, cy - label, cx + label, cy + label, px) }
+        c.restoreToCount(save)
+        px.color = bg
+        c.drawCircle(cx, cy, 2f, px)
+        // "Sin alterar" no aplica: la carátula forma parte del disco que gira
+        lastPixelArtRect = RectF()
+
+        val centerX: Float
+        val textW: Float
+        var y: Float
+        if (config.isLandscape) {
+            centerX = (cx + r + 10 + sw - 6) / 2f
+            textW = sw - 6 - (cx + r + 10)
+            y = cy - r * 0.5f
+        } else {
+            centerX = sw / 2f
+            textW = sw - 16
+            y = cy + r + 18
+        }
+        val title = pixelText(if (big) 15f else 12f, ink, true)
+        c.drawText(truncate(cased(config.songTitle), title, textW), centerX, y, title)
+        y += if (big) 13 else 11
+        val artist = pixelText(if (big) 11f else 9f, secondary, false)
+        c.drawText(truncate(config.artistName, artist, textW), centerX, y, artist)
+        y += if (big) 24 else 16
+        val lines = config.lyricsLines
+        val idx = lines.indexOfLast { it.timeMs <= timeMs + 50 }
+        if (idx >= 0) {
+            val size = (if (big) 14f else 11f) * config.textScale
+            val lyric = pixelText(size, ink, true)
+            val shadow = pixelText(size, primary, true)
+            wrapText(cased(lines[idx].text), lyric, textW).take(3).forEach { t ->
+                c.drawText(t, centerX + 1, y + 1, shadow)
+                c.drawText(t, centerX, y, lyric)
+                y += lyric.textSize + 3
+            }
+            translationOf(lines[idx])?.let { trans ->
+                val tp = pixelText((if (big) 10f else 8f) * config.textScale, secondary, false)
+                wrapText(trans, tp, textW).take(2).forEach { t -> c.drawText(t, centerX, y, tp); y += tp.textSize + 2 }
+            }
         }
     }
 

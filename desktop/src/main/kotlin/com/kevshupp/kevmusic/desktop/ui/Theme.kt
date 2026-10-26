@@ -34,7 +34,14 @@ val Themes: List<Pair<String, String>> = listOf(
     "pixel_virtualboy" to "Pixel Retro · Virtual Boy",
     "pixel_amber" to "Pixel Retro · Monitor ámbar",
     "pixel_phosphor" to "Pixel Retro · Fósforo verde",
-    "pixel_dungeon" to "Pixel Retro · Mazmorra"
+    "pixel_dungeon" to "Pixel Retro · Mazmorra",
+    "pixel_synthwave" to "Pixel Retro · Synthwave",
+    "pixel_vaporwave" to "Pixel Retro · Vaporwave",
+    "pixel_ocean" to "Pixel Retro · Océano",
+    "pixel_lava" to "Pixel Retro · Lava",
+    "pixel_sakura" to "Pixel Retro · Sakura",
+    "pixel_ice" to "Pixel Retro · Hielo",
+    "pixel_candy" to "Pixel Retro · Golosina"
 )
 
 fun isPixelTheme(theme: String) = theme == "pixel" || theme.startsWith("pixel_")
@@ -120,6 +127,48 @@ fun colorSchemeFor(theme: String): ColorScheme = when (theme) {
         secondary = Color(0xFF41A6F6), tertiary = Color(0xFFFFCD75),
         background = Color(0xFF0B0A12), onBackground = Color(0xFFF4F4F4), surface = Color(0xFF15131F), onSurface = Color(0xFFF4F4F4),
         surfaceVariant = Color(0xFF1E1B2E), onSurfaceVariant = Color(0xFF94B0C2), outline = Color(0xFF333C57), error = Color(0xFFEF7D57)
+    )
+    "pixel_synthwave" -> darkColorScheme(
+        primary = Color(0xFFFF2A6D), onPrimary = Color(0xFF0D0221), primaryContainer = Color(0xFF7A0F3D), onPrimaryContainer = Color(0xFFF7E8FF),
+        secondary = Color(0xFF05D9E8), tertiary = Color(0xFFF9C80E),
+        background = Color(0xFF0D0221), onBackground = Color(0xFFF7E8FF), surface = Color(0xFF1A0B3B), onSurface = Color(0xFFF7E8FF),
+        surfaceVariant = Color(0xFF2D1B69), onSurfaceVariant = Color(0xFFB39DDB), outline = Color(0xFF3D2A75), error = Color(0xFFFF6B6B)
+    )
+    "pixel_vaporwave" -> darkColorScheme(
+        primary = Color(0xFFFF71CE), onPrimary = Color(0xFF1B1035), primaryContainer = Color(0xFF6B2A5E), onPrimaryContainer = Color(0xFFFFF5FF),
+        secondary = Color(0xFF01CDFE), tertiary = Color(0xFF05FFA1),
+        background = Color(0xFF1B1035), onBackground = Color(0xFFFFF5FF), surface = Color(0xFF2A1B4D), onSurface = Color(0xFFFFF5FF),
+        surfaceVariant = Color(0xFF3B2667), onSurfaceVariant = Color(0xFFC9B6FF), outline = Color(0xFF4A3580), error = Color(0xFFFFFB96)
+    )
+    "pixel_ocean" -> darkColorScheme(
+        primary = Color(0xFF4CC9F0), onPrimary = Color(0xFF04122B), primaryContainer = Color(0xFF0B4F6C), onPrimaryContainer = Color(0xFFE0F7FF),
+        secondary = Color(0xFF80FFDB), tertiary = Color(0xFFFFD166),
+        background = Color(0xFF04122B), onBackground = Color(0xFFE0F7FF), surface = Color(0xFF0B2447), onSurface = Color(0xFFE0F7FF),
+        surfaceVariant = Color(0xFF19376D), onSurfaceVariant = Color(0xFF8FB8DE), outline = Color(0xFF1F4E79), error = Color(0xFFFF6F59)
+    )
+    "pixel_lava" -> darkColorScheme(
+        primary = Color(0xFFFF6B1A), onPrimary = Color(0xFF120404), primaryContainer = Color(0xFF7A1E05), onPrimaryContainer = Color(0xFFFFE8D6),
+        secondary = Color(0xFFFFD23F), tertiary = Color(0xFFFF2E2E),
+        background = Color(0xFF120404), onBackground = Color(0xFFFFE8D6), surface = Color(0xFF2A0A06), onSurface = Color(0xFFFFE8D6),
+        surfaceVariant = Color(0xFF4A1208), onSurfaceVariant = Color(0xFFE0A080), outline = Color(0xFF5C1A0A), error = Color(0xFFFFF3B0)
+    )
+    "pixel_sakura" -> darkColorScheme(
+        primary = Color(0xFFFFA7C4), onPrimary = Color(0xFF1A0F14), primaryContainer = Color(0xFF7D3C55), onPrimaryContainer = Color(0xFFFFF0F5),
+        secondary = Color(0xFF9EE6CF), tertiary = Color(0xFFFFE5A8),
+        background = Color(0xFF1A0F14), onBackground = Color(0xFFFFF0F5), surface = Color(0xFF2B1820), onSurface = Color(0xFFFFF0F5),
+        surfaceVariant = Color(0xFF432634), onSurfaceVariant = Color(0xFFD9A6B9), outline = Color(0xFF5A3346), error = Color(0xFFFF6B81)
+    )
+    "pixel_ice" -> darkColorScheme(
+        primary = Color(0xFF9BE7FF), onPrimary = Color(0xFF06121C), primaryContainer = Color(0xFF1E5A7A), onPrimaryContainer = Color(0xFFEAF8FF),
+        secondary = Color(0xFFFFFFFF), tertiary = Color(0xFF7FB5FF),
+        background = Color(0xFF06121C), onBackground = Color(0xFFEAF8FF), surface = Color(0xFF0E2233), onSurface = Color(0xFFEAF8FF),
+        surfaceVariant = Color(0xFF1C3A52), onSurfaceVariant = Color(0xFFA0C4DA), outline = Color(0xFF2A4F6B), error = Color(0xFFFF8FA3)
+    )
+    "pixel_candy" -> darkColorScheme(
+        primary = Color(0xFFFF5CA8), onPrimary = Color(0xFF1E1029), primaryContainer = Color(0xFF7A2453), onPrimaryContainer = Color(0xFFFFF5FB),
+        secondary = Color(0xFF7CF5FF), tertiary = Color(0xFFFFE45C),
+        background = Color(0xFF1E1029), onBackground = Color(0xFFFFF5FB), surface = Color(0xFF2E1A3D), onSurface = Color(0xFFFFF5FB),
+        surfaceVariant = Color(0xFF45285C), onSurfaceVariant = Color(0xFFD6A8E8), outline = Color(0xFF553071), error = Color(0xFFFF8A5C)
     )
     else -> darkColorScheme(
         primary = Color(0xFFFF4081), onPrimary = Color.White, secondary = Color(0xFFB388FF), tertiary = Color(0xFF18FFFF),

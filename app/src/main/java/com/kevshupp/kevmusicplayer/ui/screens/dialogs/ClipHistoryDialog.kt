@@ -350,7 +350,7 @@ private fun formatSize(bytes: Long) = when {
     else -> "${bytes / 1000} KB"
 }
 
-private fun playVideo(context: android.content.Context, file: java.io.File) {
+internal fun playVideo(context: android.content.Context, file: java.io.File) {
     runCatching {
         val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         context.startActivity(Intent(Intent.ACTION_VIEW).apply {

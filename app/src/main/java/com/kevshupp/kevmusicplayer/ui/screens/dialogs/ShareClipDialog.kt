@@ -15,6 +15,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -52,6 +59,7 @@ import com.kevshupp.kevmusicplayer.data.LyricsRepository
 import com.kevshupp.kevmusicplayer.playback.managers.ClipBackground
 import com.kevshupp.kevmusicplayer.playback.managers.PixelArtMode
 import com.kevshupp.kevmusicplayer.playback.managers.PixelScene
+import com.kevshupp.kevmusicplayer.playback.managers.PixelLayout
 import com.kevshupp.kevmusicplayer.playback.managers.ClipDraft
 import com.kevshupp.kevmusicplayer.playback.managers.ClipEntry
 import com.kevshupp.kevmusicplayer.playback.managers.ClipHistory
@@ -86,6 +94,7 @@ private const val PREF_PALETTE = "clip_pixel_palette"
 private const val PREF_FPS = "clip_fps"
 private const val PREF_PIXEL_ART = "clip_pixel_art"
 private const val PREF_PIXEL_SCENE = "clip_pixel_scene"
+private const val PREF_PIXEL_LAYOUT = "clip_pixel_layout"
 
 private inline fun <reified E : Enum<E>> enumPref(prefs: android.content.SharedPreferences, key: String, default: E): E =
     runCatching { enumValueOf<E>(prefs.getString(key, default.name) ?: default.name) }.getOrDefault(default)
@@ -166,18 +175,19 @@ fun ShareClipDialog(
     var fps by remember { mutableIntStateOf(saved?.fps ?: prefs.getInt(PREF_FPS, 30)) }
     var pixelArtMode by remember { mutableStateOf(saved?.pixelArtMode ?: enumPref(prefs, PREF_PIXEL_ART, PixelArtMode.PALETTE)) }
     var pixelScene by remember { mutableStateOf(saved?.pixelScene ?: enumPref(prefs, PREF_PIXEL_SCENE, PixelScene.STARS)) }
+    var pixelLayout by remember { mutableStateOf(saved?.pixelLayout ?: enumPref(prefs, PREF_PIXEL_LAYOUT, PixelLayout.SCENE)) }
     var showTranslation by remember { mutableStateOf(if (saved != null) saved.translation else hasTranslation) }
     var dedicationText by remember { mutableStateOf(saved?.dedication ?: "") }
     var showDedicationDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(templateStyle, format, quality, font, uppercase, textScale, background, showWaveform, pixelPaletteKey, fps, pixelArtMode, pixelScene) {
+    LaunchedEffect(templateStyle, format, quality, font, uppercase, textScale, background, showWaveform, pixelPaletteKey, fps, pixelArtMode, pixelScene, pixelLayout) {
         prefs.edit()
             .putString(PREF_TEMPLATE, templateStyle.name).putString(PREF_FORMAT, format.name)
             .putString(PREF_QUALITY, quality.name).putString(PREF_FONT, font.name)
             .putBoolean(PREF_UPPER, uppercase).putFloat(PREF_SIZE, textScale)
             .putString(PREF_BG, background.name).putBoolean(PREF_WAVE, showWaveform)
             .putString(PREF_PALETTE, pixelPaletteKey).putInt(PREF_FPS, fps).putString(PREF_PIXEL_ART, pixelArtMode.name)
-            .putString(PREF_PIXEL_SCENE, pixelScene.name).apply()
+            .putString(PREF_PIXEL_SCENE, pixelScene.name).putString(PREF_PIXEL_LAYOUT, pixelLayout.name).apply()
     }
 
     // El video se crea en ClipHistory (fuera del diálogo): cerrar el creador o salir de la app no lo corta
@@ -278,7 +288,7 @@ fun ShareClipDialog(
 
     fun currentSettings() = ClipSettings(
         templateStyle, format, quality, font, uppercase, textScale, background,
-        showWaveform, pixelPaletteKey, showTranslation && hasTranslation, dedicationText, fps, pixelArtMode, pixelScene
+        showWaveform, pixelPaletteKey, showTranslation && hasTranslation, dedicationText, fps, pixelArtMode, pixelScene, pixelLayout
     )
     fun currentDraft() = ClipDraft(
         sessionDraftId, songId, songTitle, artistName, startMs, endMs, System.currentTimeMillis(), currentSettings()
@@ -303,7 +313,7 @@ fun ShareClipDialog(
 
     val config = remember(
         templateStyle, format, quality, font, uppercase, textScale, background, showWaveform, pixelPaletteKey,
-        showTranslation, dedicationText, previewStart, previewEnd, fps, pixelArtMode, pixelScene
+        showTranslation, dedicationText, previewStart, previewEnd, fps, pixelArtMode, pixelScene, pixelLayout
     ) {
         val palette = PixelPalettes.firstOrNull { it.key == pixelPaletteKey } ?: PixelPalettes.first()
         ShareClipConfig(
@@ -329,6 +339,7 @@ fun ShareClipDialog(
             fps = fps,
             pixelArtMode = pixelArtMode,
             pixelScene = pixelScene,
+            pixelLayout = pixelLayout,
             primaryColor = primaryColor.toArgb(),
             accentColor = secondaryColor.toArgb(),
             pixelColors = palette.scheme.let {
@@ -496,8 +507,8 @@ fun ShareClipDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 if (panel == 0) {
-                // 4. Fragment Selector (Letras vs Manual)
-                if (parsedLyrics.isNotEmpty()) {
+                // 4. Fragment Selector (Letras, Deslizar o Manual)
+                run {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -509,39 +520,32 @@ fun ShareClipDialog(
                                 .background(Color(0xFF161824))
                                 .padding(2.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (selectedTab == 0) primaryColor.copy(alpha = 0.2f) else Color.Transparent)
-                                    .clickable { selectedTab = 0; isPreviewPlaying = false }
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    "Por Letras",
-                                    color = if (selectedTab == 0) primaryColor else Color.White.copy(alpha = 0.6f),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                            val tabs = buildList {
+                                if (parsedLyrics.isNotEmpty()) add(0 to "Por letras")
+                                add(2 to "Deslizar")
+                                add(1 to "Manual")
                             }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (selectedTab == 1) primaryColor.copy(alpha = 0.2f) else Color.Transparent)
-                                    .clickable { selectedTab = 1; isPreviewPlaying = false }
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    "Tiempo Manual",
-                                    color = if (selectedTab == 1) primaryColor else Color.White.copy(alpha = 0.6f),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                            tabs.forEach { (tab, label) ->
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (selectedTab == tab) primaryColor.copy(alpha = 0.2f) else Color.Transparent)
+                                        .clickable { selectedTab = tab; isPreviewPlaying = false }
+                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        label,
+                                        color = if (selectedTab == tab) primaryColor else Color.White.copy(alpha = 0.6f),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = if (canGenerate) "${((endMs - startMs) / 1000)}s seleccionados" else "Sin selección",
+                                text = if (canGenerate) "${((endMs - startMs) / 1000)} s" else "Sin selección",
                                 color = if (canGenerate) primaryColor else Color.White.copy(alpha = 0.5f),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
@@ -567,9 +571,9 @@ fun ShareClipDialog(
                     if (selectedTab == 0 && parsedLyrics.isNotEmpty()) {
                         Text(
                             text = when {
-                                !hasLyricSelection -> "Toca la primera línea del fragmento"
+                                !hasLyricSelection -> "Toca la primera línea, o mantén pulsado y arrastra"
                                 selectedLyricStartIdx == selectedLyricEndIdx -> "Ahora toca la última línea (máx. 60 s)"
-                                else -> "Toca fuera para ampliar · un extremo para quitarlo · mantén pulsado para empezar de nuevo"
+                                else -> "Toca fuera para ampliar · un extremo para quitarlo · mantén pulsado y arrastra para elegir varias"
                             },
                             color = Color.White.copy(alpha = 0.5f),
                             fontSize = 11.sp,
@@ -593,7 +597,93 @@ fun ShareClipDialog(
                         val listState = rememberLazyListState(
                             initialFirstVisibleItemIndex = max(0, initialIdx - 1)
                         )
-                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        // Mantener pulsado y arrastrar: la selección va desde la línea donde se pulsó hasta la que
+                        // queda bajo el dedo (en cualquier dirección), y la lista se desplaza sola cerca de los bordes.
+                        // Antes el mantener pulsado solo marcaba esa línea y arrastrar no seleccionaba nada
+                        var dragAnchor by remember { mutableIntStateOf(-1) }
+                        var dragY by remember { mutableFloatStateOf(-1f) }
+                        fun indexAt(y: Float): Int? = listState.layoutInfo.visibleItemsInfo
+                            .firstOrNull { y >= it.offset && y < it.offset + it.size }?.index
+                            ?: listState.layoutInfo.visibleItemsInfo.let { items ->
+                                when {
+                                    items.isEmpty() -> null
+                                    y < items.first().offset -> items.first().index
+                                    else -> items.last().index
+                                }
+                            }
+                        fun dragTo(index: Int) {
+                            val a = dragAnchor.takeIf { it >= 0 } ?: return
+                            var lo = min(a, index)
+                            var hi = max(a, index)
+                            // Máximo 60 s: se recorta por el lado que se está arrastrando
+                            while (hi > lo && lineEndMs(hi) - parsedLyrics[lo].timeMs > 60000L) { if (index >= a) hi-- else lo++ }
+                            if (lo != selectedLyricStartIdx || hi != selectedLyricEndIdx) {
+                                selectedLyricStartIdx = lo
+                                selectedLyricEndIdx = hi
+                                applyLyricRange()
+                            }
+                        }
+                        LaunchedEffect(dragAnchor) {
+                            if (dragAnchor < 0) return@LaunchedEffect
+                            val edge = 48f
+                            while (dragAnchor >= 0) {
+                                val h = listState.layoutInfo.viewportSize.height
+                                val y = dragY
+                                val delta = when {
+                                    y in 0f..edge -> -(edge - y) / 3f
+                                    y > h - edge -> (y - (h - edge)) / 3f
+                                    else -> 0f
+                                }
+                                if (delta != 0f) {
+                                    listState.scrollBy(delta)
+                                    indexAt(y)?.let { dragTo(it) }
+                                }
+                                kotlinx.coroutines.delay(16)
+                            }
+                        }
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(parsedLyrics) {
+                                    // En la pasada inicial: si no, tras mantener pulsado el arrastre se lo quedaba el
+                                    // desplazamiento de la lista y la selección no crecía
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                        // Pulsación larga: el dedo quieto (dentro del margen de toque) durante el tiempo del sistema
+                                        var lastPos = down.position
+                                        val held = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                            while (true) {
+                                                val e = awaitPointerEvent(PointerEventPass.Initial)
+                                                val ch = e.changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull false
+                                                if (!ch.pressed) return@withTimeoutOrNull false
+                                                if ((ch.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull false
+                                                lastPos = ch.position
+                                            }
+                                            @Suppress("UNREACHABLE_CODE") false
+                                        }
+                                        if (held != null) return@awaitEachGesture
+                                        val i = indexAt(lastPos.y) ?: return@awaitEachGesture
+                                        dragY = lastPos.y
+                                        dragAnchor = i
+                                        selectedLyricStartIdx = i
+                                        selectedLyricEndIdx = i
+                                        applyLyricRange()
+                                        try {
+                                            while (true) {
+                                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                                if (!change.pressed) { change.consume(); break }
+                                                change.consume()
+                                                dragY = change.position.y
+                                                indexAt(change.position.y)?.let { dragTo(it) }
+                                            }
+                                        } finally {
+                                            dragAnchor = -1
+                                        }
+                                    }
+                                }
+                        ) {
                             itemsIndexed(parsedLyrics) { index, line ->
                                 val isSelected = hasLyricSelection && index in selectedLyricStartIdx..selectedLyricEndIdx
                                 val isNowPlaying = !hasLyricSelection && index == initialIdx
@@ -609,10 +699,7 @@ fun ShareClipDialog(
                                                 else -> Color.Transparent
                                             }
                                         )
-                                        .combinedClickable(
-                                            onClick = { handleLyricClick(index) },
-                                            onLongClick = { handleLyricClick(index, startNew = true) }
-                                        )
+                                        .clickable { handleLyricClick(index) }
                                         .padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -669,6 +756,16 @@ fun ShareClipDialog(
                                 }
                             }
                         }
+                    } else if (selectedTab == 2) {
+                        SwipeFragmentPicker(
+                            startMs = startMs,
+                            endMs = endMs,
+                            songDurationMs = songDurationMs,
+                            lyrics = parsedLyrics,
+                            primaryColor = primaryColor,
+                            seed = songTitle.hashCode(),
+                            onChange = { s0, e0 -> startMs = s0; endMs = e0; isPreviewPlaying = false }
+                        )
                     } else {
                         // Manual Slider Selector
                         Column(
@@ -757,6 +854,18 @@ fun ShareClipDialog(
                                         else if (font == ClipFont.PIXEL) font = ClipFont.SANS
                                     }
                                 }
+                            }
+                        }
+
+                        if (templateStyle == ClipTemplateStyle.PIXEL_ART) {
+                            OptionSection("Estilo") {
+                                ChipRow(PixelLayout.entries.toList(), pixelLayout, {
+                                    when (it) {
+                                        PixelLayout.SCENE -> "Portada"
+                                        PixelLayout.LYRICS -> "Letras"
+                                        PixelLayout.VINYL -> "Vinilo"
+                                    }
+                                }, primaryColor) { pixelLayout = it }
                             }
                         }
 
@@ -1192,5 +1301,110 @@ internal fun shareVideoFile(
         context.startActivity(Intent.createChooser(shareIntent, if (dedicationText.isNotBlank()) "Dedicar historia" else "Compartir historia"))
     } catch (e: Exception) {
         Toast.makeText(context, "No se pudo compartir el archivo: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
+
+/**
+ * Selector de fragmento estilo Instagram: una franja con la canción entera que se arrastra de lado bajo una
+ * ventana fija del largo elegido (15, 30, 45 o 60 s). Arriba se ve la línea de la letra con la que empieza.
+ * Las barras son decorativas (estables por canción), no la forma de onda real.
+ */
+@Composable
+private fun SwipeFragmentPicker(
+    startMs: Long,
+    endMs: Long,
+    songDurationMs: Long,
+    lyrics: List<com.kevshupp.kevmusicplayer.data.LyricLine>,
+    primaryColor: Color,
+    seed: Int,
+    onChange: (Long, Long) -> Unit
+) {
+    val lengthMs = (endMs - startMs).coerceIn(5000L, 60000L).coerceAtMost(songDurationMs.coerceAtLeast(1L))
+    val maxStart = (songDurationMs - lengthMs).coerceAtLeast(0L)
+    val currentLine = lyrics.lastOrNull { it.timeMs <= startMs + 300 }?.text?.takeIf { it.isNotBlank() }
+    val latestStart by rememberUpdatedState(startMs)
+    val latestLength by rememberUpdatedState(lengthMs)
+    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("${formatTime(startMs)} – ${formatTime(startMs + lengthMs)}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("Desliza para elegir", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
+        }
+        Text(
+            currentLine ?: "♪",
+            color = primaryColor,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth()
+        )
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+        ) {
+            val widthPx = constraints.maxWidth.toFloat()
+            // La ventana ocupa el 60 % del ancho y está centrada; la franja se mueve debajo
+            val windowPx = widthPx * 0.6f
+            val pxPerMs = windowPx / lengthMs
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(songDurationMs, pxPerMs) {
+                        var acc = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { acc = latestStart.toFloat() },
+                            onHorizontalDrag = { change, dx ->
+                                change.consume()
+                                acc = (acc - dx / pxPerMs).coerceIn(0f, maxStart.toFloat())
+                                val s = (acc.toLong() / 250L) * 250L
+                                onChange(s, s + latestLength)
+                            }
+                        )
+                    }
+            ) {
+                val left = (size.width - windowPx) / 2f
+                val barStepMs = 400L
+                val firstMs = ((startMs - (left / pxPerMs).toLong()) / barStepMs).coerceAtLeast(0L) * barStepMs
+                val barW = (barStepMs * pxPerMs * 0.55f).coerceIn(2f, 10f)
+                var t = firstMs
+                while (t <= songDurationMs) {
+                    val x = left + (t - startMs) * pxPerMs
+                    if (x > size.width) break
+                    val n = ((t / barStepMs).toInt() * 1103515245 + seed) ushr 8
+                    val h = size.height * (0.25f + (n % 70) / 100f)
+                    val inside = t in startMs until (startMs + lengthMs)
+                    drawRoundRect(
+                        color = if (inside) primaryColor else Color.White.copy(alpha = 0.25f),
+                        topLeft = androidx.compose.ui.geometry.Offset(x, (size.height - h) / 2f),
+                        size = androidx.compose.ui.geometry.Size(barW, h),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(barW / 2f)
+                    )
+                    t += barStepMs
+                }
+                drawRoundRect(
+                    color = primaryColor,
+                    topLeft = androidx.compose.ui.geometry.Offset(left - 4f, 0f),
+                    size = androidx.compose.ui.geometry.Size(windowPx + 8f, size.height),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx()),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx())
+                )
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(15, 30, 45, 60).forEach { sec ->
+                FilterChip(
+                    selected = (lengthMs / 1000L).toInt() == sec,
+                    onClick = {
+                        val len = min(sec * 1000L, songDurationMs)
+                        val s = startMs.coerceAtMost((songDurationMs - len).coerceAtLeast(0L))
+                        onChange(s, s + len)
+                    },
+                    label = { Text("${sec}s", fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = primaryColor, selectedLabelColor = Color.Black)
+                )
+            }
+        }
     }
 }

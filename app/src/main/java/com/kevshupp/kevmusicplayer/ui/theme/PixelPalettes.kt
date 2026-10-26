@@ -151,6 +151,125 @@ val PixelPalettes: List<PixelPalette> = listOf(
             outline = Color(0xFF333C57),
             error = Color(0xFFEF7D57), onError = Color(0xFF0B0A12)
         )
+    ),
+    // Atardecer synthwave: rosa neón y cian sobre violeta noche
+    PixelPalette(
+        "pixel_synthwave", "Synthwave", "Synthwave",
+        listOf(Color(0xFF0D0221), Color(0xFF2D1B69), Color(0xFFFF2A6D), Color(0xFF05D9E8)),
+        darkColorScheme(
+            primary = Color(0xFFFF2A6D), onPrimary = Color(0xFF0D0221),
+            primaryContainer = Color(0xFF7A0F3D), onPrimaryContainer = Color(0xFFF7E8FF),
+            secondary = Color(0xFF05D9E8), onSecondary = Color(0xFF0D0221),
+            secondaryContainer = Color(0xFF1A0B3B), onSecondaryContainer = Color(0xFF05D9E8),
+            tertiary = Color(0xFFF9C80E), onTertiary = Color(0xFF0D0221),
+            background = Color(0xFF0D0221), onBackground = Color(0xFFF7E8FF),
+            surface = Color(0xFF1A0B3B), onSurface = Color(0xFFF7E8FF),
+            surfaceVariant = Color(0xFF2D1B69), onSurfaceVariant = Color(0xFFB39DDB),
+            outline = Color(0xFF3D2A75),
+            error = Color(0xFFFF6B6B), onError = Color(0xFF0D0221)
+        )
+    ),
+    // Vaporwave: rosa, celeste y verde menta
+    PixelPalette(
+        "pixel_vaporwave", "Vaporwave", "Vaporwave",
+        listOf(Color(0xFF1B1035), Color(0xFF3B2667), Color(0xFFFF71CE), Color(0xFF01CDFE)),
+        darkColorScheme(
+            primary = Color(0xFFFF71CE), onPrimary = Color(0xFF1B1035),
+            primaryContainer = Color(0xFF6B2A5E), onPrimaryContainer = Color(0xFFFFF5FF),
+            secondary = Color(0xFF01CDFE), onSecondary = Color(0xFF1B1035),
+            secondaryContainer = Color(0xFF2A1B4D), onSecondaryContainer = Color(0xFF01CDFE),
+            tertiary = Color(0xFF05FFA1), onTertiary = Color(0xFF1B1035),
+            background = Color(0xFF1B1035), onBackground = Color(0xFFFFF5FF),
+            surface = Color(0xFF2A1B4D), onSurface = Color(0xFFFFF5FF),
+            surfaceVariant = Color(0xFF3B2667), onSurfaceVariant = Color(0xFFC9B6FF),
+            outline = Color(0xFF4A3580),
+            error = Color(0xFFFFFB96), onError = Color(0xFF1B1035)
+        )
+    ),
+    // Océano: azules profundos, aguamarina y un toque de arena
+    PixelPalette(
+        "pixel_ocean", "Océano", "Océano",
+        listOf(Color(0xFF04122B), Color(0xFF19376D), Color(0xFF4CC9F0), Color(0xFF80FFDB)),
+        darkColorScheme(
+            primary = Color(0xFF4CC9F0), onPrimary = Color(0xFF04122B),
+            primaryContainer = Color(0xFF0B4F6C), onPrimaryContainer = Color(0xFFE0F7FF),
+            secondary = Color(0xFF80FFDB), onSecondary = Color(0xFF04122B),
+            secondaryContainer = Color(0xFF0B2447), onSecondaryContainer = Color(0xFF80FFDB),
+            tertiary = Color(0xFFFFD166), onTertiary = Color(0xFF04122B),
+            background = Color(0xFF04122B), onBackground = Color(0xFFE0F7FF),
+            surface = Color(0xFF0B2447), onSurface = Color(0xFFE0F7FF),
+            surfaceVariant = Color(0xFF19376D), onSurfaceVariant = Color(0xFF8FB8DE),
+            outline = Color(0xFF1F4E79),
+            error = Color(0xFFFF6F59), onError = Color(0xFF04122B)
+        )
+    ),
+    // Lava: naranja, amarillo y rojo sobre roca oscura
+    PixelPalette(
+        "pixel_lava", "Lava", "Lava",
+        listOf(Color(0xFF120404), Color(0xFF4A1208), Color(0xFFFF6B1A), Color(0xFFFFD23F)),
+        darkColorScheme(
+            primary = Color(0xFFFF6B1A), onPrimary = Color(0xFF120404),
+            primaryContainer = Color(0xFF7A1E05), onPrimaryContainer = Color(0xFFFFE8D6),
+            secondary = Color(0xFFFFD23F), onSecondary = Color(0xFF120404),
+            secondaryContainer = Color(0xFF2A0A06), onSecondaryContainer = Color(0xFFFFD23F),
+            tertiary = Color(0xFFFF2E2E), onTertiary = Color(0xFF120404),
+            background = Color(0xFF120404), onBackground = Color(0xFFFFE8D6),
+            surface = Color(0xFF2A0A06), onSurface = Color(0xFFFFE8D6),
+            surfaceVariant = Color(0xFF4A1208), onSurfaceVariant = Color(0xFFE0A080),
+            outline = Color(0xFF5C1A0A),
+            error = Color(0xFFFFF3B0), onError = Color(0xFF120404)
+        )
+    ),
+    // Sakura: rosa cerezo y verde hoja sobre noche
+    PixelPalette(
+        "pixel_sakura", "Sakura", "Sakura",
+        listOf(Color(0xFF1A0F14), Color(0xFF432634), Color(0xFFFFA7C4), Color(0xFF9EE6CF)),
+        darkColorScheme(
+            primary = Color(0xFFFFA7C4), onPrimary = Color(0xFF1A0F14),
+            primaryContainer = Color(0xFF7D3C55), onPrimaryContainer = Color(0xFFFFF0F5),
+            secondary = Color(0xFF9EE6CF), onSecondary = Color(0xFF1A0F14),
+            secondaryContainer = Color(0xFF2B1820), onSecondaryContainer = Color(0xFF9EE6CF),
+            tertiary = Color(0xFFFFE5A8), onTertiary = Color(0xFF1A0F14),
+            background = Color(0xFF1A0F14), onBackground = Color(0xFFFFF0F5),
+            surface = Color(0xFF2B1820), onSurface = Color(0xFFFFF0F5),
+            surfaceVariant = Color(0xFF432634), onSurfaceVariant = Color(0xFFD9A6B9),
+            outline = Color(0xFF5A3346),
+            error = Color(0xFFFF6B81), onError = Color(0xFF1A0F14)
+        )
+    ),
+    // Hielo: celeste glaciar y blanco sobre azul polar
+    PixelPalette(
+        "pixel_ice", "Hielo", "Hielo",
+        listOf(Color(0xFF06121C), Color(0xFF1C3A52), Color(0xFF9BE7FF), Color(0xFFFFFFFF)),
+        darkColorScheme(
+            primary = Color(0xFF9BE7FF), onPrimary = Color(0xFF06121C),
+            primaryContainer = Color(0xFF1E5A7A), onPrimaryContainer = Color(0xFFEAF8FF),
+            secondary = Color(0xFFFFFFFF), onSecondary = Color(0xFF06121C),
+            secondaryContainer = Color(0xFF0E2233), onSecondaryContainer = Color(0xFFFFFFFF),
+            tertiary = Color(0xFF7FB5FF), onTertiary = Color(0xFF06121C),
+            background = Color(0xFF06121C), onBackground = Color(0xFFEAF8FF),
+            surface = Color(0xFF0E2233), onSurface = Color(0xFFEAF8FF),
+            surfaceVariant = Color(0xFF1C3A52), onSurfaceVariant = Color(0xFFA0C4DA),
+            outline = Color(0xFF2A4F6B),
+            error = Color(0xFFFF8FA3), onError = Color(0xFF06121C)
+        )
+    ),
+    // Golosina: chicle rosa, celeste y limón
+    PixelPalette(
+        "pixel_candy", "Golosina", "Golosina",
+        listOf(Color(0xFF1E1029), Color(0xFF45285C), Color(0xFFFF5CA8), Color(0xFF7CF5FF)),
+        darkColorScheme(
+            primary = Color(0xFFFF5CA8), onPrimary = Color(0xFF1E1029),
+            primaryContainer = Color(0xFF7A2453), onPrimaryContainer = Color(0xFFFFF5FB),
+            secondary = Color(0xFF7CF5FF), onSecondary = Color(0xFF1E1029),
+            secondaryContainer = Color(0xFF2E1A3D), onSecondaryContainer = Color(0xFF7CF5FF),
+            tertiary = Color(0xFFFFE45C), onTertiary = Color(0xFF1E1029),
+            background = Color(0xFF1E1029), onBackground = Color(0xFFFFF5FB),
+            surface = Color(0xFF2E1A3D), onSurface = Color(0xFFFFF5FB),
+            surfaceVariant = Color(0xFF45285C), onSurfaceVariant = Color(0xFFD6A8E8),
+            outline = Color(0xFF553071),
+            error = Color(0xFFFF8A5C), onError = Color(0xFF1E1029)
+        )
     )
 )
 

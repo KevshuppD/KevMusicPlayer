@@ -31,6 +31,13 @@ THEMES = {
     "pixel_amber": ("pixel_amber", "#FFB000", "#FFCC66", "#050300"),
     "pixel_phosphor": ("pixel_phosphor", "#33FF33", "#7DFF7D", "#000500"),
     "pixel_dungeon": ("pixel_dungeon", "#B13E53", "#41A6F6", "#0B0A12"),
+    "pixel_synthwave": ("pixel_synthwave", "#FF2A6D", "#05D9E8", "#0D0221"),
+    "pixel_vaporwave": ("pixel_vaporwave", "#FF71CE", "#01CDFE", "#1B1035"),
+    "pixel_ocean": ("pixel_ocean", "#4CC9F0", "#80FFDB", "#04122B"),
+    "pixel_lava": ("pixel_lava", "#FF6B1A", "#FFD23F", "#120404"),
+    "pixel_sakura": ("pixel_sakura", "#FFA7C4", "#9EE6CF", "#1A0F14"),
+    "pixel_ice": ("pixel_ice", "#9BE7FF", "#FFFFFF", "#06121C"),
+    "pixel_candy": ("pixel_candy", "#FF5CA8", "#7CF5FF", "#1E1029"),
 }
 
 HEADER = ('<?xml version="1.0" encoding="utf-8"?>\n'

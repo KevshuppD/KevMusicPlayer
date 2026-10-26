@@ -399,6 +399,9 @@ fun HomeScreen(
                     onItemClick = { song -> onFileClick(song, recentlyPlayed) }
                 )
 
+                // Últimos videos creados: solo aparece si hay alguno
+                HomeClipsSection(isEs = isEs)
+
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // Section: Most Played
@@ -655,6 +658,89 @@ fun HomeSongCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+    }
+}
+
+
+/**
+ * "Tus videos": miniaturas de los últimos videos de Mis videos. Tocar uno lo reproduce y "Ver todos" abre
+ * Mis videos (el mismo aviso que usa el widget), sin tener que entrar al reproductor de una canción.
+ */
+@Composable
+private fun HomeClipsSection(isEs: Boolean) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) { com.kevshupp.kevmusicplayer.playback.managers.ClipHistory.load(context) }
+    val entries by com.kevshupp.kevmusicplayer.playback.managers.ClipHistory.entries.collectAsState()
+    if (entries.isEmpty()) return
+    val openAll = { com.kevshupp.kevmusicplayer.MainActivity.openClipHistoryRequest.value = true }
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (isEs) "Tus videos" else "Your videos",
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = if (isEs) "Ver todos (${entries.size})" else "See all (${entries.size})",
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { openAll() }.padding(horizontal = 6.dp, vertical = 4.dp)
+            )
+        }
+        androidx.compose.foundation.lazy.LazyRow(
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(entries.take(10), key = { it.id }) { entry ->
+                val thumb = remember(entry.id) { com.kevshupp.kevmusicplayer.playback.managers.ClipHistory.thumbFile(context, entry.id) }
+                // Misma proporción que el video, con un alto fijo
+                val ratio = (entry.width.toFloat() / entry.height.coerceAtLeast(1)).coerceIn(0.5f, 1.8f)
+                Column(
+                    modifier = Modifier
+                        .width((150 * ratio).dp.coerceAtLeast(96.dp))
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable {
+                            com.kevshupp.kevmusicplayer.ui.screens.dialogs.playVideo(
+                                context, com.kevshupp.kevmusicplayer.playback.managers.ClipHistory.videoFile(context, entry)
+                            )
+                        }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        coil.compose.AsyncImage(
+                            model = thumb,
+                            contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        Icon(
+                            Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.45f))
+                                .padding(6.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(entry.title, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground)
+                    Text(entry.artist, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
+                }
+            }
         }
     }
 }

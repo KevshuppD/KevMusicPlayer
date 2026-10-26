@@ -18,7 +18,8 @@ object LauncherIcon {
     private const val DEFAULT = "Cyberpunk"
     private val ALIASES = listOf(
         "Cyberpunk", "Purpura", "Petrol", "Turquoise", "Obsidian", "Monochrome",
-        "Pixel", "PixelGameboy", "PixelNes", "PixelC64", "PixelVirtualboy", "PixelAmber", "PixelPhosphor", "PixelDungeon"
+        "Pixel", "PixelGameboy", "PixelNes", "PixelC64", "PixelVirtualboy", "PixelAmber", "PixelPhosphor", "PixelDungeon",
+        "PixelSynthwave", "PixelVaporwave", "PixelOcean", "PixelLava", "PixelSakura", "PixelIce", "PixelCandy"
     )
 
     private fun aliasFor(theme: String): String = when (theme) {
