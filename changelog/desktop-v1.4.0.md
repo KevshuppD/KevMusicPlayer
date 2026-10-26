@@ -1,0 +1,7 @@
+- **KevMusic Desktop ya está disponible para Windows 10/11**
+  - Instalador `.msi` (con accesos directos en el menú Inicio y el escritorio) o `.zip` portable.
+  - Icono en la bandeja del sistema con menú: mostrar, reproducir/pausa, siguiente, anterior y salir.
+  - Las actualizaciones se descargan e instalan desde la propia app.
+  - El instalador aún no está firmado: si SmartScreen avisa, pulsa **Más información → Ejecutar de todas formas**.
+  - Las teclas multimedia todavía no funcionan en Windows.
+- README renovado con todas las funciones de la app y del escritorio.
