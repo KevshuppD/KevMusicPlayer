@@ -11,6 +11,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kevshupp.kevmusic.desktop.BuildInfo
+import com.kevshupp.kevmusic.desktop.Platform
 import com.kevshupp.kevmusic.desktop.UpdateState
 import com.kevshupp.kevmusic.desktop.Updater
 import kotlinx.coroutines.launch
@@ -47,12 +48,12 @@ fun UpdateDialog(onExit: () -> Unit) {
                     }
                     is UpdateState.Installing -> {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
-                        Text("Instalando… el sistema te pedirá tu contraseña.", fontSize = 12.sp)
+                        Text(if (Platform.isWindows) "Abriendo el instalador… la app se cerrará." else "Instalando… el sistema te pedirá tu contraseña.", fontSize = 12.sp)
                     }
                     is UpdateState.Installed -> Text("Reinicia la app para usar la nueva versión.")
                     is UpdateState.Failed -> Text(s.message, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                     else -> if (!Updater.isInstalledBuild) Text(
-                        "Estás usando la versión de desarrollo (probar.sh). Se instalará el paquete en ${Updater.INSTALL_DIR}.",
+                        "Estás usando la versión de desarrollo. Se instalará el paquete en ${Updater.INSTALL_DIR}.",
                         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -62,7 +63,7 @@ fun UpdateDialog(onExit: () -> Unit) {
             when (state) {
                 is UpdateState.Installed -> Button(onClick = { Updater.relaunch(onExit) }) { Text("Reiniciar") }
                 is UpdateState.Available, is UpdateState.Failed ->
-                    Button(onClick = { scope.launch { Updater.downloadAndInstall(release) } }) {
+                    Button(onClick = { scope.launch { Updater.downloadAndInstall(release, onExit) } }) {
                         Text(if (state is UpdateState.Failed) "Reintentar" else "Descargar e instalar")
                     }
                 else -> {}

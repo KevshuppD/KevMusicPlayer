@@ -15,7 +15,7 @@ data class SavedDevice(val host: String, val port: Int, val token: String, val n
  * primero. Antes solo se guardaba uno y emparejar la app debug (u otro teléfono) hacía olvidar el anterior.
  */
 object Config {
-    val dir = File(System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() } ?: (System.getProperty("user.home") + "/.config"), "kevmusic-desktop")
+    val dir = Platform.configDir
     private val file = File(dir, "config.json")
 
     /** El último teléfono usado, o null si no hay ninguno. */

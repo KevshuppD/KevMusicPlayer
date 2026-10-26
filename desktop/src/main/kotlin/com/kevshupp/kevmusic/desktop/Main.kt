@@ -7,6 +7,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.MenuBar
+import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
@@ -35,6 +36,7 @@ private const val WM_CLASS = "kevmusic-desktop-kevmusic-desktop"
 private val CDS_TRAINING = System.getenv("KEVMUSIC_CDS_TRAIN") == "1"
 
 private fun setWmClass() {
+    if (Platform.isWindows) return
     runCatching {
         val toolkit = java.awt.Toolkit.getDefaultToolkit()
         val field = toolkit.javaClass.getDeclaredField("awtAppClassName")
@@ -113,7 +115,7 @@ private fun app() = application {
         Config.load()?.let { client.resume(it) }
         discovery.start()
         // La conexión a D-Bus tarda: fuera del hilo de la interfaz para no retrasar el primer dibujo
-        launch(kotlinx.coroutines.Dispatchers.IO) { mpris.start() }
+        if (!Platform.isWindows) launch(kotlinx.coroutines.Dispatchers.IO) { mpris.start() }
         if (SoulseekConfig.autoConnect && SoulseekConfig.hasAccount) soulseek.start()
         if (Settings.autoCheckUpdates) Updater.check()
     }
@@ -122,10 +124,12 @@ private fun app() = application {
         if (status is ConnStatus.Disconnected || (status is ConnStatus.Failed && Config.load() == null)) paired = false
     }
 
-    // Bandeja del sistema por D-Bus (ver StatusNotifier); si el escritorio no la tiene, la X minimiza
+    // Bandeja del sistema: en Linux por D-Bus (ver StatusNotifier), en Windows la de AWT (Tray de Compose, abajo);
+    // si no hay bandeja, la X minimiza
     LaunchedEffect(Settings.closeAction) {
         val want = Settings.closeAction == Settings.CLOSE_TRAY
-        TrayState.active = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        TrayState.active = if (Platform.isWindows) want && java.awt.SystemTray.isSupported()
+        else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             tray.stop()
             if (want) tray.start() else null
         }
@@ -133,6 +137,21 @@ private fun app() = application {
         if (!want) windowVisible = true
     }
     val trayAvailable = TrayState.active == true
+    if (Platform.isWindows && trayAvailable) {
+        Tray(
+            icon = painterResource("icon.png"),
+            tooltip = "KevMusic Desktop",
+            onAction = { windowVisible = true; raiseRequest++ },
+            menu = {
+                Item("Mostrar", onClick = { windowVisible = true; raiseRequest++ })
+                Item("Reproducir / Pausa", onClick = client::toggle)
+                Item("Siguiente", onClick = client::next)
+                Item("Anterior", onClick = client::previous)
+                Separator()
+                Item("Salir", onClick = ::quit)
+            }
+        )
+    }
 
     var minimizeRequest by remember { mutableStateOf(0) }
     Window(

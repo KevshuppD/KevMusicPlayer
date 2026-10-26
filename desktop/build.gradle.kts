@@ -74,7 +74,7 @@ compose.desktop {
         // Para fijar WM_CLASS (ver setWmClass() en Main.kt) y que Cinnamon asocie la ventana con su lanzador
         jvmArgs += listOf("--add-opens", "java.desktop/sun.awt.X11=ALL-UNNAMED")
         nativeDistributions {
-            targetFormats(TargetFormat.Deb, TargetFormat.AppImage)
+            targetFormats(TargetFormat.Deb, TargetFormat.AppImage, TargetFormat.Msi)
             packageName = "kevmusic-desktop"
             packageVersion = project.version.toString()
             description = "Control remoto de escritorio para KevMusicPlayer"
@@ -86,6 +86,16 @@ compose.desktop {
                 appCategory = "Audio"
                 shortcut = true
                 debMaintainer = "kevshupp@users.noreply.github.com"
+            }
+            // Se compila en un runner de Windows (desktop-release.yml): jpackage solo genera paquetes de su sistema
+            windows {
+                iconFile.set(project.file("src/main/resources/icon.ico"))
+                menuGroup = "KevMusic"
+                shortcut = true
+                dirChooser = false
+                perUserInstall = false
+                // Fijo para siempre: es lo que hace que un .msi nuevo reemplace al instalado en vez de duplicarlo
+                upgradeUuid = "5b0c7a1e-3f42-4d6a-9c1b-8e2f6a7d4b93"
             }
         }
     }

@@ -335,7 +335,7 @@ class RemoteClient(private val scope: CoroutineScope) {
     /** Carátula guardada en ~/.cache/kevmusic-desktop/art para MPRIS (que pide una ruta file://). */
     suspend fun artFile(id: Long): java.io.File? {
         val d = device ?: return null
-        val dir = java.io.File(System.getProperty("user.home"), ".cache/kevmusic-desktop/art").apply { mkdirs() }
+        val dir = java.io.File(Platform.cacheDir, "art").apply { mkdirs() }
         val file = java.io.File(dir, "$id.jpg")
         if (file.length() > 0) return file
         return withContext(Dispatchers.IO) {
@@ -577,7 +577,7 @@ class RemoteClient(private val scope: CoroutineScope) {
     fun clearArtCache() {
         synchronized(artCache) { artCache.clear() }
         synchronized(urlImages) { urlImages.clear() }
-        java.io.File(System.getProperty("user.home"), ".cache/kevmusic-desktop/art").deleteRecursively()
+        java.io.File(Platform.cacheDir, "art").deleteRecursively()
     }
 
     fun cachedArt(id: Long, small: Boolean): ImageBitmap? = synchronized(artCache) { artCache["$id/$small"] }
