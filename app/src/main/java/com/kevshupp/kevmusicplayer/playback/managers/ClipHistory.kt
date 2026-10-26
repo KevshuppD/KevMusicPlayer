@@ -31,7 +31,8 @@ data class ClipSettings(
     val translation: Boolean,
     val dedication: String,
     val fps: Int = 30,
-    val pixelArtMode: PixelArtMode = PixelArtMode.PALETTE
+    val pixelArtMode: PixelArtMode = PixelArtMode.PALETTE,
+    val pixelScene: PixelScene = PixelScene.STARS
 )
 
 data class ClipEntry(
@@ -283,7 +284,7 @@ object ClipHistory {
         .put("bg", st.background.name).put("wave", st.waveform)
         .put("palette", st.pixelPalette).put("trans", st.translation)
         .put("dedication", st.dedication).put("fps", st.fps)
-        .put("pixelArt", st.pixelArtMode.name)
+        .put("pixelArt", st.pixelArtMode.name).put("scene", st.pixelScene.name)
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E) =
         runCatching { enumValueOf<E>(name ?: "") }.getOrDefault(default)
@@ -301,7 +302,8 @@ object ClipHistory {
         s.optBoolean("trans"),
         s.optString("dedication"),
         s.optInt("fps", 30),
-        enumOr(s.optString("pixelArt"), PixelArtMode.PALETTE)
+        enumOr(s.optString("pixelArt"), PixelArtMode.PALETTE),
+        enumOr(s.optString("scene"), PixelScene.STARS)
     )
 
     private fun parse(j: JSONObject): ClipEntry? = runCatching {

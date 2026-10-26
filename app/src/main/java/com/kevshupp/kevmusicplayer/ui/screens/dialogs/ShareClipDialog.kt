@@ -51,6 +51,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.kevshupp.kevmusicplayer.data.LyricsRepository
 import com.kevshupp.kevmusicplayer.playback.managers.ClipBackground
 import com.kevshupp.kevmusicplayer.playback.managers.PixelArtMode
+import com.kevshupp.kevmusicplayer.playback.managers.PixelScene
 import com.kevshupp.kevmusicplayer.playback.managers.ClipDraft
 import com.kevshupp.kevmusicplayer.playback.managers.ClipEntry
 import com.kevshupp.kevmusicplayer.playback.managers.ClipHistory
@@ -84,6 +85,7 @@ private const val PREF_WAVE = "clip_waveform"
 private const val PREF_PALETTE = "clip_pixel_palette"
 private const val PREF_FPS = "clip_fps"
 private const val PREF_PIXEL_ART = "clip_pixel_art"
+private const val PREF_PIXEL_SCENE = "clip_pixel_scene"
 
 private inline fun <reified E : Enum<E>> enumPref(prefs: android.content.SharedPreferences, key: String, default: E): E =
     runCatching { enumValueOf<E>(prefs.getString(key, default.name) ?: default.name) }.getOrDefault(default)
@@ -163,17 +165,19 @@ fun ShareClipDialog(
     var pixelPaletteKey by remember { mutableStateOf(saved?.pixelPalette ?: prefs.getString(PREF_PALETTE, "pixel") ?: "pixel") }
     var fps by remember { mutableIntStateOf(saved?.fps ?: prefs.getInt(PREF_FPS, 30)) }
     var pixelArtMode by remember { mutableStateOf(saved?.pixelArtMode ?: enumPref(prefs, PREF_PIXEL_ART, PixelArtMode.PALETTE)) }
+    var pixelScene by remember { mutableStateOf(saved?.pixelScene ?: enumPref(prefs, PREF_PIXEL_SCENE, PixelScene.STARS)) }
     var showTranslation by remember { mutableStateOf(if (saved != null) saved.translation else hasTranslation) }
     var dedicationText by remember { mutableStateOf(saved?.dedication ?: "") }
     var showDedicationDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(templateStyle, format, quality, font, uppercase, textScale, background, showWaveform, pixelPaletteKey, fps, pixelArtMode) {
+    LaunchedEffect(templateStyle, format, quality, font, uppercase, textScale, background, showWaveform, pixelPaletteKey, fps, pixelArtMode, pixelScene) {
         prefs.edit()
             .putString(PREF_TEMPLATE, templateStyle.name).putString(PREF_FORMAT, format.name)
             .putString(PREF_QUALITY, quality.name).putString(PREF_FONT, font.name)
             .putBoolean(PREF_UPPER, uppercase).putFloat(PREF_SIZE, textScale)
             .putString(PREF_BG, background.name).putBoolean(PREF_WAVE, showWaveform)
-            .putString(PREF_PALETTE, pixelPaletteKey).putInt(PREF_FPS, fps).putString(PREF_PIXEL_ART, pixelArtMode.name).apply()
+            .putString(PREF_PALETTE, pixelPaletteKey).putInt(PREF_FPS, fps).putString(PREF_PIXEL_ART, pixelArtMode.name)
+            .putString(PREF_PIXEL_SCENE, pixelScene.name).apply()
     }
 
     // El video se crea en ClipHistory (fuera del diálogo): cerrar el creador o salir de la app no lo corta
@@ -274,7 +278,7 @@ fun ShareClipDialog(
 
     fun currentSettings() = ClipSettings(
         templateStyle, format, quality, font, uppercase, textScale, background,
-        showWaveform, pixelPaletteKey, showTranslation && hasTranslation, dedicationText, fps, pixelArtMode
+        showWaveform, pixelPaletteKey, showTranslation && hasTranslation, dedicationText, fps, pixelArtMode, pixelScene
     )
     fun currentDraft() = ClipDraft(
         sessionDraftId, songId, songTitle, artistName, startMs, endMs, System.currentTimeMillis(), currentSettings()
@@ -299,7 +303,7 @@ fun ShareClipDialog(
 
     val config = remember(
         templateStyle, format, quality, font, uppercase, textScale, background, showWaveform, pixelPaletteKey,
-        showTranslation, dedicationText, previewStart, previewEnd, fps, pixelArtMode
+        showTranslation, dedicationText, previewStart, previewEnd, fps, pixelArtMode, pixelScene
     ) {
         val palette = PixelPalettes.firstOrNull { it.key == pixelPaletteKey } ?: PixelPalettes.first()
         ShareClipConfig(
@@ -324,6 +328,7 @@ fun ShareClipDialog(
             showWaveform = showWaveform,
             fps = fps,
             pixelArtMode = pixelArtMode,
+            pixelScene = pixelScene,
             primaryColor = primaryColor.toArgb(),
             accentColor = secondaryColor.toArgb(),
             pixelColors = palette.scheme.let {
@@ -752,6 +757,22 @@ fun ShareClipDialog(
                                         else if (font == ClipFont.PIXEL) font = ClipFont.SANS
                                     }
                                 }
+                            }
+                        }
+
+                        if (templateStyle == ClipTemplateStyle.PIXEL_ART) {
+                            OptionSection("Escena") {
+                                ChipRow(PixelScene.entries.toList(), pixelScene, {
+                                    when (it) {
+                                        PixelScene.STARS -> "Estrellas"
+                                        PixelScene.FOREST -> "Bosque"
+                                        PixelScene.ROAD -> "Carretera"
+                                        PixelScene.CYBER_CITY -> "Ciudad futurista"
+                                        PixelScene.DISCO -> "Disco robot"
+                                        PixelScene.CITY -> "Ciudad"
+                                        PixelScene.JAPAN -> "Japón"
+                                    }
+                                }, primaryColor) { pixelScene = it }
                             }
                         }
 

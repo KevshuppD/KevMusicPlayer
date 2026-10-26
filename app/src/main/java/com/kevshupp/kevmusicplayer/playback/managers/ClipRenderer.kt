@@ -36,6 +36,9 @@ enum class ClipBackground { AMBIENT, BLURRED_ART, AMOLED }
 /** Carátula en Pixel art: con los colores de la paleta, pixelada con sus colores o tal cual (nítida). */
 enum class PixelArtMode { PALETTE, PIXELATED, ORIGINAL }
 
+/** Fondo animado de la plantilla Pixel art; todos usan los colores de la paleta elegida. */
+enum class PixelScene { STARS, FOREST, ROAD, CYBER_CITY, DISCO, CITY, JAPAN }
+
 data class ShareClipConfig(
     val songTitle: String,
     val artistName: String,
@@ -63,6 +66,7 @@ data class ShareClipConfig(
     val accentColor: Int = 0xFFB388FF.toInt(),
     /** Plantilla Pixel art: fondo, superficie, principal, secundario y texto (paletas del tema Pixel Retro). */
     val pixelArtMode: PixelArtMode = PixelArtMode.PALETTE,
+    val pixelScene: PixelScene = PixelScene.STARS,
     val pixelColors: IntArray = intArrayOf(0xFF130E26.toInt(), 0xFF1D2B53.toInt(), 0xFFFF77A8.toInt(), 0xFF29ADFF.toInt(), 0xFFFFF1E8.toInt())
 ) {
     val isVertical get() = format == ClipFormat.STORY
@@ -536,19 +540,7 @@ class ClipRenderer(context: Context, val config: ShareClipConfig) {
         c.drawColor(bg)
         val px = Paint().apply { isAntiAlias = false }
 
-        // Estrellas que titilan (posiciones fijas pseudoaleatorias)
-        for (i in 0 until 40) {
-            val x = ((i * 73 + 17) % sw.toInt()).toFloat()
-            val y = ((i * 131 + 29) % sh.toInt()).toFloat()
-            if ((i + (frame / 8).toInt()) % 5 == 0) continue
-            px.color = if (i % 3 == 0) secondary else surface
-            c.drawRect(x, y, x + 1, y + 1, px)
-        }
-        // Suelo a rayas
-        px.color = surface
-        var stripeY = sh * 0.86f
-        var gap = 2f
-        while (stripeY < sh) { c.drawRect(0f, stripeY, sw, stripeY + 1, px); stripeY += gap; gap += 1f }
+        drawPixelBackdrop(c, sw, sh, frame, bg, surface, primary, secondary, ink, px)
 
         val artSize = pixelArtSize()
         val artRect = if (config.isLandscape) {
@@ -654,6 +646,331 @@ class ClipRenderer(context: Context, val config: ShareClipConfig) {
             px.color = primary
             c.drawRect((sw - w) / 2f, 6f, (sw + w) / 2f, 20f, px)
             c.drawText(truncate(text, p, w - 6), sw / 2f, 16f, p.apply { color = bg })
+        }
+    }
+
+    // ---------- Escenas de fondo del Pixel art ----------
+
+    /** Número pseudoaleatorio estable (mismo resultado en cada cuadro) para posiciones y alturas. */
+    private fun rnd(i: Int, m: Int): Int = (((i * 73856093) xor (i * 19349663 ushr 3) xor 0x5bd1e995) and 0x7fffffff) % m.coerceAtLeast(1)
+
+    private fun drawPixelBackdrop(
+        c: Canvas, sw: Float, sh: Float, t: Float, bg: Int, surface: Int, primary: Int, secondary: Int, ink: Int, px: Paint
+    ) {
+        fun box(x: Float, y: Float, w: Float, h: Float, color: Int) { px.color = color; c.drawRect(x, y, x + w, y + h, px) }
+        fun dim(color: Int, amount: Float) = lerpColor(bg, color, amount)
+        fun disc(cx: Float, cy: Float, r: Float, color: Int, topHalfOnly: Boolean = false) {
+            val ri = r.toInt()
+            for (dy in -ri..(if (topHalfOnly) 0 else ri)) {
+                val half = kotlin.math.sqrt((r * r - dy * dy).coerceAtLeast(0f)).toInt().toFloat()
+                box(cx - half, cy + dy, half * 2 + 1, 1f, color)
+            }
+        }
+        fun line(x0: Float, y0: Float, x1: Float, y1: Float, color: Int) {
+            px.color = color; px.strokeWidth = 1f
+            c.drawLine(x0.toInt().toFloat(), y0.toInt().toFloat(), x1.toInt().toFloat(), y1.toInt().toFloat(), px)
+        }
+        fun stars(count: Int, maxY: Float, color: Int) {
+            for (i in 0 until count) {
+                if ((i + (t / 8).toInt()) % 5 == 0) continue
+                box(rnd(i * 3 + 1, sw.toInt()).toFloat(), rnd(i * 7 + 2, maxY.toInt()).toFloat(), 1f, 1f, color)
+            }
+        }
+        val horizon = (sh * if (config.isVertical) 0.80f else 0.74f).toInt().toFloat()
+
+        when (config.pixelScene) {
+            PixelScene.STARS -> {
+                // Estrellas que titilan y suelo a rayas
+                for (i in 0 until 40) {
+                    val x = ((i * 73 + 17) % sw.toInt()).toFloat()
+                    val y = ((i * 131 + 29) % sh.toInt()).toFloat()
+                    if ((i + (t / 8).toInt()) % 5 == 0) continue
+                    box(x, y, 1f, 1f, if (i % 3 == 0) secondary else surface)
+                }
+                var stripeY = sh * 0.86f
+                var gap = 2f
+                while (stripeY < sh) { box(0f, stripeY, sw, 1f, surface); stripeY += gap; gap += 1f }
+            }
+
+            PixelScene.FOREST -> {
+                stars(18, horizon * 0.6f, dim(ink, 0.5f))
+                // Luna creciente
+                disc(sw * 0.82f, sh * 0.07f, 9f, dim(ink, 0.85f))
+                disc(sw * 0.82f + 4, sh * 0.07f - 2, 8f, bg)
+                // Pinos en dos capas que se desplazan a distinta velocidad
+                fun pines(baseY: Float, height: Float, spacing: Float, scroll: Float, color: Int, seed: Int) {
+                    val first = kotlin.math.floor(scroll / spacing).toInt()
+                    for (j in -1..(sw / spacing).toInt() + 1) {
+                        val idx = first + j
+                        val x = idx * spacing - scroll
+                        val h = height * (0.65f + rnd(idx * 13 + seed, 35) / 100f)
+                        box(x - 1, baseY - 4, 3f, 4f, color)
+                        var row = 0
+                        while (row < h) {
+                            // Copa escalonada: se ensancha y cada tercio vuelve a estrecharse un poco
+                            val w = 1 + (row * spacing * 0.42f / h).toInt() - (if ((row / 4) % 2 == 1) 1 else 0)
+                            box(x - w, baseY - 4 - h + row, w * 2 + 1f, 1f, color)
+                            row++
+                        }
+                    }
+                }
+                pines(horizon, 42f, 13f, t * 0.15f, dim(surface, 0.55f), 1)
+                box(0f, horizon, sw, sh - horizon, dim(surface, 0.4f))
+                pines(sh + 2, 72f, 21f, t * 0.45f, surface, 2)
+                // Luciérnagas
+                for (i in 0 until 16) {
+                    if (((t / 6).toInt() + i) % 4 == 0) continue
+                    val x = (rnd(i * 5 + 3, sw.toInt()) + sin(t * 0.05 + i) * 6).toFloat()
+                    val y = (horizon - 8 - rnd(i * 11 + 4, 70) + kotlin.math.cos(t * 0.07 + i) * 4).toFloat()
+                    box(x, y, 1f, 1f, secondary)
+                }
+            }
+
+            PixelScene.ROAD -> {
+                stars(24, horizon * 0.7f, dim(ink, 0.45f))
+                // Sol synthwave con franjas que se abren hacia abajo
+                val sunR = minOf(sw * 0.22f, horizon * 0.38f)
+                val sunY = horizon - 1
+                for (dy in -sunR.toInt()..0) {
+                    val fromTop = (dy + sunR) / sunR
+                    val gapRow = -dy < sunR * 0.55f && (-dy % 7) < (1 + (sunR * 0.55f + dy) / 7).toInt().coerceAtMost(4)
+                    if (gapRow) continue
+                    val half = kotlin.math.sqrt((sunR * sunR - dy * dy).coerceAtLeast(0f)).toInt().toFloat()
+                    box(sw / 2 - half, sunY + dy, half * 2 + 1, 1f, lerpColor(secondary, primary, fromTop))
+                }
+                // Montañas
+                for (x in 0 until sw.toInt()) {
+                    val a = 20 - kotlin.math.abs(((x + 7) % 46) - 23)
+                    val b = 12 - kotlin.math.abs(((x + 30) % 28) - 14)
+                    val h = (maxOf(a * 0.9f, b * 0.8f) + rnd(x / 3, 3)).coerceAtLeast(1f)
+                    box(x.toFloat(), horizon - h, 1f, h, dim(surface, 0.9f))
+                }
+                box(0f, horizon, sw, 1f, primary)
+                // Cuadrícula que avanza
+                val ground = sh - horizon
+                val phase = (t * 0.04f) % 1f
+                for (k in 1..12) {
+                    val p = (k - phase) / 12f
+                    box(0f, horizon + ground * p * p, sw, 1f, dim(primary, 0.55f))
+                }
+                for (i in -9..9) line(sw / 2 + i * 5, horizon, sw / 2 + i * sw / 5, sh, dim(primary, 0.55f))
+                // Carretera: bordes y líneas centrales que vienen hacia ti
+                line(sw / 2 - 4, horizon, sw / 2 - sw * 0.34f, sh, ink)
+                line(sw / 2 + 4, horizon, sw / 2 + sw * 0.34f, sh, ink)
+                val dashPhase = (t * 0.09f) % 2f
+                for (k in 0..9) {
+                    if ((k + dashPhase.toInt()) % 2 == 1) continue
+                    val p0 = ((k + dashPhase % 1f) / 10f).coerceIn(0f, 1f)
+                    val p1 = ((k + 0.6f + dashPhase % 1f) / 10f).coerceIn(0f, 1f)
+                    val y0 = horizon + ground * p0 * p0
+                    val y1 = horizon + ground * p1 * p1
+                    val w = 1 + p1 * 3
+                    box(sw / 2 - w / 2, y0, w, (y1 - y0).coerceAtLeast(1f), secondary)
+                }
+            }
+
+            PixelScene.CYBER_CITY -> {
+                // Cielo en bandas hacia el color principal
+                for (b in 0 until 8) {
+                    val y = sh * 0.25f + b * sh * 0.07f
+                    box(0f, y, sw, sh * 0.07f + 1, lerpColor(bg, primary, b * 0.035f))
+                }
+                fun towers(seed: Int, minH: Float, maxH: Float, body: Int, window: Int, neon: Boolean, scroll: Float) {
+                    var x = -scroll % 60f - 60f
+                    var idx = seed * 100 + kotlin.math.floor(scroll / 60f).toInt() * 7
+                    while (x < sw) {
+                        val w = 12f + rnd(idx * 3, 16)
+                        val h = minH + rnd(idx * 5, (maxH - minH).toInt())
+                        val top = sh - h
+                        box(x, top, w, h, body)
+                        // Ventanas: algunas encendidas, alguna parpadea
+                        var wy = top + 3
+                        while (wy < sh - 2) {
+                            var wx = x + 2
+                            while (wx < x + w - 2) {
+                                val k = idx * 131 + (wy.toInt() * 7) + wx.toInt()
+                                val on = rnd(k, 6) == 0 || (rnd(k, 40) == 1 && (t / 12).toInt() % 2 == 0)
+                                if (on) box(wx, wy, 1f, 1f, window)
+                                wx += 3
+                            }
+                            wy += 4
+                        }
+                        if (neon) {
+                            box(x, top, w, 1f, if (idx % 2 == 0) primary else secondary)
+                            if (rnd(idx, 3) == 0) {
+                                box(x + w / 2, top - 6, 1f, 6f, body)
+                                if ((t / 10).toInt() % 2 == 0) box(x + w / 2, top - 7, 1f, 1f, primary)
+                            }
+                        }
+                        x += w + 2 + rnd(idx * 11, 5)
+                        idx++
+                    }
+                }
+                towers(1, sh * 0.30f, sh * 0.55f, dim(surface, 0.5f), dim(secondary, 0.5f), false, t * 0.1f)
+                towers(2, sh * 0.16f, sh * 0.34f, surface, secondary, true, t * 0.3f)
+                // Coches voladores
+                for (lane in 0 until 4) {
+                    val speed = 1.2f + lane * 0.5f
+                    val dir = if (lane % 2 == 0) 1 else -1
+                    val raw = (t * speed + lane * 70) % (sw + 30)
+                    val x = if (dir == 1) raw - 15 else sw - raw + 15
+                    val y = sh * (0.38f + lane * 0.08f)
+                    box(x, y, 4f, 1f, ink)
+                    box(x - dir * 4f, y, 3f, 1f, dim(primary, 0.6f))
+                }
+                // Lluvia
+                for (i in 0 until 34) {
+                    val x = (rnd(i * 17 + 5, sw.toInt()) + t * 1.2f) % sw
+                    val y = (rnd(i * 23 + 9, sh.toInt()) + t * 5f) % sh
+                    box(x, y, 1f, 3f, dim(secondary, 0.4f))
+                }
+            }
+
+            PixelScene.DISCO -> {
+                // Pared de LEDs con ondas que salen del centro
+                val cx = sw / 2
+                val cy = sh * 0.32f
+                var y = 2f
+                while (y < horizon - 2) {
+                    var x = 2f
+                    while (x < sw) {
+                        val d = kotlin.math.hypot(x - cx, (y - cy) * 1.3f)
+                        val ring = ((d - t * 1.1f) % 18f + 18f) % 18f
+                        val color = when {
+                            ring < 2.5f -> lerpColor(primary, secondary, (d / sw).coerceIn(0f, 1f))
+                            ring < 4f -> dim(primary, 0.4f)
+                            else -> dim(surface, 0.35f)
+                        }
+                        box(x, y, 2f, 2f, color)
+                        x += 4
+                    }
+                    y += 4
+                }
+                // Pirámide de luz con una línea que la recorre
+                val pyramid = minOf(sw * 0.5f, horizon * 0.75f)
+                val apexY = horizon - pyramid
+                val leftX = cx - pyramid * 0.84f
+                val rightX = cx + pyramid * 0.84f
+                line(cx, apexY, leftX, horizon, primary)
+                line(cx, apexY, rightX, horizon, primary)
+                val scan = ((t * 0.02f) % 1f)
+                val sy = horizon - (horizon - apexY) * scan
+                val half = (rightX - cx) * (sy - apexY) / (horizon - apexY)
+                box(cx - half, sy, half * 2, 1f, secondary)
+                // Pista de baile: baldosas que cambian al ritmo
+                val colors = intArrayOf(primary, secondary, ink, surface)
+                var top = horizon
+                var row = 0
+                var rowH = 3f
+                while (top < sh) {
+                    val cols = 8
+                    val tileW = sw / cols
+                    for (col in 0 until cols) {
+                        val k = (row + col * 3 + (t / 8).toInt()) % 7
+                        val color = if (k < 4) dim(colors[k], 0.5f) else dim(surface, 0.35f)
+                        box(col * tileW + 1, top + 1, tileW - 1, rowH - 1, color)
+                    }
+                    top += rowH
+                    rowH += 2f
+                    row++
+                }
+            }
+
+            PixelScene.CITY -> {
+                stars(22, horizon * 0.5f, dim(ink, 0.45f))
+                disc(sw * 0.18f, sh * 0.08f, 8f, dim(ink, 0.8f))
+                val street = sh - 26f
+                fun skyline(seed: Int, minH: Float, maxH: Float, body: Int, window: Int, base: Float) {
+                    var x = -4f
+                    var idx = seed * 50
+                    while (x < sw) {
+                        val w = 14f + rnd(idx * 7, 14)
+                        val h = minH + rnd(idx * 9, (maxH - minH).toInt())
+                        box(x, base - h, w, h, body)
+                        var wy = base - h + 3
+                        while (wy < base - 3) {
+                            var wx = x + 2
+                            while (wx < x + w - 3) {
+                                val k = idx * 97 + wy.toInt() * 5 + wx.toInt()
+                                // Se encienden y apagan muy de vez en cuando
+                                if (rnd(k + (t / 90).toInt() * (rnd(k, 30) / 29), 4) == 0) box(wx, wy, 2f, 2f, window)
+                                wx += 4
+                            }
+                            wy += 5
+                        }
+                        x += w + 1
+                        idx++
+                    }
+                }
+                skyline(1, sh * 0.18f, sh * 0.36f, dim(surface, 0.5f), dim(ink, 0.35f), street)
+                skyline(2, sh * 0.08f, sh * 0.22f, surface, dim(secondary, 0.85f), street)
+                // Calle con farolas y coches
+                box(0f, street, sw, 10f, dim(surface, 0.6f))
+                val dash = (t * 0.8f) % 12f
+                var dx = -dash
+                while (dx < sw) { box(dx, street + 5, 5f, 1f, dim(ink, 0.6f)); dx += 12f }
+                var lamp = 10f
+                while (lamp < sw) {
+                    box(lamp, street - 14, 1f, 14f, dim(ink, 0.4f))
+                    box(lamp - 1, street - 15, 3f, 1f, primary)
+                    lamp += 44f
+                }
+                for (car in 0 until 3) {
+                    val dir = if (car == 1) -1 else 1
+                    val raw = (t * (1.4f + car * 0.5f) + car * 90) % (sw + 20)
+                    val x = if (dir == 1) raw - 10 else sw - raw + 10
+                    val y = street + if (dir == 1) 6 else 1
+                    box(x, y, 8f, 3f, if (car == 0) primary else secondary)
+                    box(if (dir == 1) x + 8 else x - 1, y + 1, 1f, 1f, ink)
+                    box(if (dir == 1) x - 1 else x + 8, y + 1, 1f, 1f, primary)
+                }
+            }
+
+            PixelScene.JAPAN -> {
+                stars(14, horizon * 0.5f, dim(ink, 0.4f))
+                // Sol rojo asomando tras la cima del Fuji
+                val peakY = horizon - 62
+                disc(sw / 2, peakY + 2, 22f, primary)
+                // Monte Fuji con nieve (en horizontal no se ensancha con todo el ancho)
+                val fujiBase = minOf(sw, sh * 0.56f)
+                for (yy in peakY.toInt()..horizon.toInt()) {
+                    val f = (yy - peakY) / (horizon - peakY)
+                    val half = 5 + f * fujiBase * 0.42f
+                    val snowLine = 16 + (if (((sw / 2 - half).toInt() / 3) % 2 == 0) 2 else 0)
+                    box(sw / 2 - half, yy.toFloat(), half * 2, 1f, dim(surface, 0.95f))
+                    if (yy - peakY < snowLine) {
+                        // Borde dentado de la nieve
+                        val teeth = if (yy - peakY > snowLine - 4) 0.6f else 1f
+                        box(sw / 2 - half * teeth, yy.toFloat(), half * 2 * teeth, 1f, ink)
+                    }
+                }
+                // Torii a la izquierda
+                val tx = sw * 0.1f
+                val tw = sw * 0.16f
+                box(tx, horizon - 34, 2f, 34f, primary)
+                box(tx + tw, horizon - 34, 2f, 34f, primary)
+                box(tx - 4, horizon - 38, tw + 10, 2f, primary)
+                box(tx - 2, horizon - 40, tw + 6, 1f, primary)
+                box(tx - 1, horizon - 30, tw + 4, 1f, primary)
+                // Agua con reflejos
+                box(0f, horizon, sw, sh - horizon, dim(surface, 0.35f))
+                var ry = horizon + 2
+                var row = 0
+                while (ry < sh) {
+                    val shift = sin(t * 0.08 + row).toFloat() * 3
+                    val len = (26f - row * 1.5f).coerceAtLeast(4f)
+                    box(sw / 2 - len / 2 + shift, ry, len, 1f, dim(primary, 0.55f))
+                    box(sw * 0.2f + shift * 2, ry, 6f, 1f, dim(ink, 0.25f))
+                    box(sw * 0.75f - shift * 2, ry, 8f, 1f, dim(ink, 0.25f))
+                    ry += 3; row++
+                }
+                // Pétalos de sakura que caen
+                for (i in 0 until 26) {
+                    val x = ((rnd(i * 29 + 1, sw.toInt()) + t * 0.6f + sin(t * 0.08 + i).toFloat() * 5) % sw + sw) % sw
+                    val y = (rnd(i * 31 + 7, sh.toInt()) + t * 0.9f) % sh
+                    box(x, y, if ((t / 6 + i).toInt() % 2 == 0) 2f else 1f, 1f, secondary)
+                }
+            }
         }
     }
 
