@@ -218,6 +218,43 @@ object OnDemandTracks {
         return id.takeIf { File(path).exists() }
     }
 
+    /** La canción está en la caché temporal (no en la biblioteca). */
+    fun isCached(context: Context, deezerId: Long): Boolean =
+        prefs(context).getString("path_$deezerId", null)?.let { File(it) }
+            ?.takeIf { it.parentFile == cacheDir(context) && it.exists() && it.length() > 0 } != null
+
+    /**
+     * Guarda la canción en la biblioteca. Si ya está en la caché temporal se copia desde ahí (sin volver a
+     * pedirla al bot) y se borra de la caché; si no, entra en la cola normal de descargas de Telegram.
+     */
+    fun saveToLibrary(context: Context, track: DeezerTrack) {
+        val app = context.applicationContext
+        if (localIdFor(app, track.id) != null) return
+        val cached = prefs(app).getString("path_${track.id}", null)?.let { File(it) }
+            ?.takeIf { it.parentFile == cacheDir(app) && it.exists() && it.length() > 0 }
+        if (cached == null) {
+            TelegramDownloadQueue.enqueue(app, track)
+            return
+        }
+        register(app, track)
+        _statuses.update { it + (track.id to DownloadStatus.Downloading(1f)) }
+        scope.launch {
+            try {
+                val file = TelegramDownloadQueue.saveToMusicFolder(app, cached, track)
+                prefs(app).edit().putString("path_${track.id}", file.absolutePath).apply()
+                cached.delete()
+                val localId = TelegramDownloadQueue.scanFile(app, file)?.lastPathSegment?.toLongOrNull()
+                if (localId != null) adoptLocalSong(app, track, file, localId)
+                _statuses.update { it + (track.id to DownloadStatus.Done(file.absolutePath)) }
+                TelemetryLogger.logInfo(app, "OnDemand", "Guardada en la biblioteca ${track.artist} - ${track.title}")
+                withContext(Dispatchers.Main) { TelegramDownloadQueue.onSongSaved?.invoke() }
+            } catch (e: Exception) {
+                _statuses.update { it + (track.id to DownloadStatus.Failed(e.message ?: "Error")) }
+                TelemetryLogger.logError(app, "OnDemand", "No se pudo guardar ${track.id} en la biblioteca", e)
+            }
+        }
+    }
+
     /** Borra las canciones de la caché usadas hace más tiempo hasta quedar por debajo del límite. */
     private fun trimCache(context: Context, keep: File) {
         val limit = settings(context).getInt(KEY_CACHE_MB, DEFAULT_CACHE_MB).toLong() * 1024 * 1024

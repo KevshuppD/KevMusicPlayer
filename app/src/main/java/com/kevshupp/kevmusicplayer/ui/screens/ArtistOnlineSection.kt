@@ -13,6 +13,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,40 +40,50 @@ import com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 
 /** Perfil "en línea" de un artista en modo bajo demanda: sus populares y su discografía de Deezer. */
-class ArtistOnlineState(
-    val topTracks: List<DeezerTrack>,
-    val albums: List<DeezerAlbum>,
-    val loading: Boolean,
-    val matcher: LibraryMatcher
-) {
+class ArtistOnlineState(matcher: LibraryMatcher) {
+    var topTracks by mutableStateOf<List<DeezerTrack>>(emptyList())
+    var albums by mutableStateOf<List<DeezerAlbum>>(emptyList())
+    var loading by mutableStateOf(false)
+    /** Se actualiza al cambiar la biblioteca (descargas, borrados) sin cerrar el álbum abierto. */
+    var matcher by mutableStateOf(matcher)
     var openAlbum by mutableStateOf<DeezerAlbum?>(null)
+}
+
+/**
+ * Matcher de la biblioteca que se rehace cuando la lista cambia. `localAudioFiles` es una
+ * `SnapshotStateList` que se modifica en su sitio: con `remember(lista)` el matcher nunca se rehacía y una
+ * canción recién descargada seguía saliendo como "en línea".
+ */
+@Composable
+fun rememberLibraryMatcher(librarySongs: List<AudioFile>): LibraryMatcher {
+    val matcher by remember(librarySongs) { derivedStateOf { LibraryMatcher(librarySongs.toList()) } }
+    return matcher
 }
 
 /** Null si no hay artista o el modo bajo demanda no está listo. Las respuestas de Deezer quedan en caché 7 días. */
 @Composable
 fun rememberArtistOnline(artistName: String?, librarySongs: List<AudioFile>): ArtistOnlineState? {
     val ready = rememberOnDemandReady(artistName)
-    val matcher = remember(librarySongs) { LibraryMatcher(librarySongs) }
-    var top by remember(artistName) { mutableStateOf<List<DeezerTrack>>(emptyList()) }
-    var albums by remember(artistName) { mutableStateOf<List<DeezerAlbum>>(emptyList()) }
-    var loading by remember(artistName) { mutableStateOf(false) }
+    val matcher = rememberLibraryMatcher(librarySongs)
+    val state = remember(artistName) { ArtistOnlineState(matcher) }
+    SideEffect { state.matcher = matcher }
     LaunchedEffect(artistName, ready) {
         if (!ready || artistName.isNullOrBlank()) return@LaunchedEffect
-        loading = true
+        state.loading = true
         try {
             val artist = DeezerTrackSearch.findArtist(artistName)
             if (artist != null) {
-                top = DeezerTrackSearch.artistTopTracks(artist.id, 10, cached = true)
-                albums = DeezerTrackSearch.artistAlbums(artist.id, artist.name, cached = true)
+                state.topTracks = DeezerTrackSearch.artistTopTracks(artist.id, 10, cached = true)
+                state.albums = DeezerTrackSearch.artistAlbums(artist.id, artist.name, cached = true)
                     .distinctBy { LibraryMatcher.normalizeTitle(it.title) + "|" + it.recordType }
             }
         } catch (e: Exception) {
             // Sin red y sin caché: solo se ve lo local
         }
-        loading = false
+        state.loading = false
     }
     if (!ready || artistName.isNullOrBlank()) return null
-    return remember(top, albums, loading, matcher) { ArtistOnlineState(top, albums, loading, matcher) }
+    return state
 }
 
 /** Secciones "Populares" y "Discografía" debajo de la cabecera del artista. */
@@ -201,19 +214,65 @@ fun ArtistOnlineAlbumDialog(
                         Text(getLocalized("No se pudo cargar el álbum", "Couldn't load the album"), color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
                     }
                 } else {
-                    FilledTonalButton(
-                        onClick = {
-                            list.forEach { t ->
-                                val local = state.matcher.findTrack(t)
-                                if (local != null) viewModel?.addToQueue(local) else viewModel?.queueOnDemand(t, false)
-                            }
-                            android.widget.Toast.makeText(context, getLocalized("Álbum añadido a la cola", "Album added to queue"), android.widget.Toast.LENGTH_SHORT).show()
-                        },
-                        shape = RoundedCornerShape(50)
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(getLocalized("Añadir todo a la cola", "Queue all"), fontWeight = FontWeight.Bold)
+                    val missing = remember(list, state.matcher) { list.filter { state.matcher.findTrack(it) == null } }
+                    val downloadStatuses by com.kevshupp.kevmusicplayer.data.telegram.TelegramDownloadQueue.statuses.collectAsState()
+                    val onDemandStatuses by OnDemandTracks.statuses.collectAsState()
+                    val toDownload = remember(missing, downloadStatuses, onDemandStatuses) {
+                        missing.filter { t ->
+                            val dl = downloadStatuses[t.id]
+                            OnDemandTracks.localIdFor(context, t.id) == null && (dl == null || dl is com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Failed)
+                        }
+                    }
+                    val have = list.size - missing.count { t ->
+                        OnDemandTracks.localIdFor(context, t.id) == null &&
+                            downloadStatuses[t.id] !is com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Done
+                    }
+                    Text(
+                        getLocalized("Descargadas $have de ${list.size}", "Downloaded $have of ${list.size}"),
+                        fontSize = 12.sp,
+                        color = if (have == list.size) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(
+                            onClick = {
+                                list.forEach { t ->
+                                    val local = state.matcher.findTrack(t)
+                                    if (local != null) viewModel?.addToQueue(local) else viewModel?.queueOnDemand(t, false)
+                                }
+                                android.widget.Toast.makeText(context, getLocalized("Álbum añadido a la cola", "Album added to queue"), android.widget.Toast.LENGTH_SHORT).show()
+                            },
+                            shape = RoundedCornerShape(50)
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(getLocalized("A la cola", "Queue all"), fontWeight = FontWeight.Bold)
+                        }
+                        Button(
+                            onClick = {
+                                toDownload.forEach { OnDemandTracks.saveToLibrary(context, it) }
+                                android.widget.Toast.makeText(
+                                    context,
+                                    getLocalized("Descargando ${toDownload.size} canciones", "Downloading ${toDownload.size} songs"),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            },
+                            enabled = toDownload.isNotEmpty(),
+                            shape = RoundedCornerShape(50)
+                        ) {
+                            Icon(if (have == list.size) Icons.Rounded.DownloadDone else Icons.Rounded.Download, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                when {
+                                    have == list.size -> getLocalized("Descargado", "Downloaded")
+                                    toDownload.isEmpty() -> getLocalized("Descargando…", "Downloading…")
+                                    toDownload.all { downloadStatuses[it.id] is com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Failed } ->
+                                        getLocalized("Reintentar (${toDownload.size})", "Retry (${toDownload.size})")
+                                    else -> getLocalized("Descargar (${toDownload.size})", "Download (${toDownload.size})")
+                                },
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     LazyColumn(Modifier.weight(1f)) {
@@ -308,4 +367,177 @@ private fun recordTypeLabel(type: String, getLocalized: (String, String) -> Stri
     "ep" -> "EP"
     "compile" -> getLocalized("Recopilatorio", "Compilation")
     else -> null
+}
+
+/** Álbumes de Deezer para una búsqueda en la pestaña Álbumes (modo bajo demanda). */
+class OnDemandAlbumSearchState(val albums: List<DeezerAlbum>, val loading: Boolean, val dialogState: ArtistOnlineState)
+
+@Composable
+fun rememberOnDemandAlbumSearch(query: String, librarySongs: List<AudioFile>): OnDemandAlbumSearchState {
+    val ready = rememberOnDemandReady(query.isBlank())
+    val matcher = rememberLibraryMatcher(librarySongs)
+    // Reutiliza el diálogo de álbum del perfil de artista, que solo necesita el matcher y el álbum abierto
+    val dialogState = remember { ArtistOnlineState(matcher) }
+    SideEffect { dialogState.matcher = matcher }
+    var albums by remember { mutableStateOf<List<DeezerAlbum>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    LaunchedEffect(query, ready) {
+        albums = emptyList()
+        loading = false
+        if (!ready || query.isBlank()) return@LaunchedEffect
+        kotlinx.coroutines.delay(600)
+        loading = true
+        albums = try { DeezerTrackSearch.searchAlbums(query.trim(), 20) } catch (e: Exception) { emptyList() }
+        loading = false
+    }
+    return OnDemandAlbumSearchState(albums, loading, dialogState)
+}
+
+/** Sección "En línea · bajo demanda" al final de la cuadrícula de álbumes. */
+fun androidx.compose.foundation.lazy.grid.LazyGridScope.onDemandAlbumSection(
+    state: OnDemandAlbumSearchState,
+    getLocalized: (String, String) -> String
+) {
+    if (state.albums.isEmpty() && !state.loading) return
+    item(key = "ondemand_albums_header", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+            Icon(Icons.Rounded.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                getLocalized("En línea · bajo demanda", "Online · on demand"),
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
+    }
+    if (state.loading) {
+        item(key = "ondemand_albums_loading", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+            Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
+        }
+    }
+    items(state.albums.size, key = { "ondemand_album_${state.albums[it].id}" }) { i ->
+        val album = state.albums[i]
+        val owned = remember(album, state.dialogState.matcher) { state.dialogState.matcher.albumSongCount(album) }
+        Column(Modifier.clip(RoundedCornerShape(20.dp)).clickable { state.dialogState.openAlbum = album }) {
+            Box {
+                SubcomposeAsyncImage(
+                    model = album.cover,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+                Icon(
+                    if (owned > 0) Icons.Rounded.DownloadDone else Icons.Rounded.Cloud,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(26.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(4.dp)
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(album.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.padding(horizontal = 4.dp))
+            Text(
+                listOfNotNull(
+                    album.artist,
+                    if (owned > 0) getLocalized("Tienes $owned", "You have $owned") else null
+                ).joinToString(" · "),
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = if (owned > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            )
+        }
+    }
+}
+
+/** Artistas de Deezer para una búsqueda en la pestaña Artistas que no están ya en la biblioteca. */
+class OnDemandArtistSearchState(val artists: List<com.kevshupp.kevmusicplayer.data.telegram.DeezerArtist>, val loading: Boolean)
+
+@Composable
+fun rememberOnDemandArtistSearch(query: String, libraryArtists: Set<String>): OnDemandArtistSearchState {
+    val ready = rememberOnDemandReady(query.isBlank())
+    val known = remember(libraryArtists) { libraryArtists.map { LibraryMatcher.normalize(it) }.toSet() }
+    var artists by remember { mutableStateOf<List<com.kevshupp.kevmusicplayer.data.telegram.DeezerArtist>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    LaunchedEffect(query, ready, known) {
+        artists = emptyList()
+        loading = false
+        if (!ready || query.isBlank()) return@LaunchedEffect
+        kotlinx.coroutines.delay(600)
+        loading = true
+        artists = try {
+            DeezerTrackSearch.searchArtists(query.trim(), 15).filterNot { LibraryMatcher.normalize(it.name) in known }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        loading = false
+    }
+    return OnDemandArtistSearchState(artists, loading)
+}
+
+/**
+ * Sección "En línea · bajo demanda" al final de la lista de artistas. Tocar uno abre su perfil: sin canciones
+ * locales, solo se ven sus populares y su discografía de Deezer ([artistOnlineSection]).
+ */
+fun LazyListScope.onDemandArtistSection(
+    state: OnDemandArtistSearchState,
+    getLocalized: (String, String) -> String,
+    onOpen: (String) -> Unit
+) {
+    if (state.artists.isEmpty() && !state.loading) return
+    item(key = "ondemand_artists_header") { SearchHeader(getLocalized("En línea · bajo demanda", "Online · on demand")) }
+    if (state.loading) {
+        item(key = "ondemand_artists_loading") {
+            Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
+        }
+    }
+    items(state.artists, key = { "ondemand_artist_${it.id}" }) { artist ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
+                .clickable { onOpen(artist.name) }
+                .padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SubcomposeAsyncImage(
+                model = artist.picture,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant)
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(artist.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        listOfNotNull(
+                            if (artist.albumCount > 0) getLocalized("${artist.albumCount} álbumes", "${artist.albumCount} albums") else null,
+                            if (artist.fans > 0) getLocalized("${artist.fans} fans", "${artist.fans} fans") else null
+                        ).joinToString(" · ").ifBlank { getLocalized("En línea", "Online") },
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                    )
+                }
+            }
+        }
+    }
 }

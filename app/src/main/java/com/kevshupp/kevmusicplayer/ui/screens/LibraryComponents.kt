@@ -338,7 +338,8 @@ fun AlbumGridView(
     onAddAlbumToPlaylist: (String, List<AudioFile>) -> Unit,
     onEditAlbum: (String, List<AudioFile>) -> Unit,
     onShowAlbumInfo: (String, List<AudioFile>) -> Unit,
-    bottomPadding: androidx.compose.ui.unit.Dp = 160.dp
+    bottomPadding: androidx.compose.ui.unit.Dp = 160.dp,
+    footerContent: (androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit)? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val systemLang = remember { context.resources.configuration.locales[0].language }
@@ -464,6 +465,7 @@ fun AlbumGridView(
                 }
             }
         }
+        footerContent?.invoke(this)
     }
 }
 
@@ -473,7 +475,8 @@ fun ArtistListView(
     onArtistClick: (String) -> Unit,
     listState: LazyListState = rememberLazyListState(),
     bottomPadding: androidx.compose.ui.unit.Dp = 160.dp,
-    query: String = ""
+    query: String = "",
+    footerContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
 ) {
     // Al buscar, primero los artistas cuyo nombre coincide: la búsqueda filtra canciones y con las colaboraciones
     // separadas también aparecen quienes colaboraron (buscar "Bad Bunny" mostraba antes a Abra o Arcángel)
@@ -544,6 +547,7 @@ fun ArtistListView(
                     )
                 }
             }
+            footerContent?.invoke(this)
         }
 
         FastScrollSidebar(

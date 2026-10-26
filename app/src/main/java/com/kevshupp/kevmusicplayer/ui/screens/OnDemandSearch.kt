@@ -9,7 +9,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.OfflinePin
 import androidx.compose.material.icons.rounded.QueuePlayNext
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +34,7 @@ import com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus
 import com.kevshupp.kevmusicplayer.data.telegram.LibraryMatcher
 import com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks
 import com.kevshupp.kevmusicplayer.data.telegram.TelegramAuthState
+import com.kevshupp.kevmusicplayer.data.telegram.TelegramDownloadQueue
 import com.kevshupp.kevmusicplayer.data.telegram.TelegramMusicClient
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 
@@ -44,8 +50,8 @@ fun rememberOnDemandSearch(query: String, librarySongs: List<AudioFile>): OnDema
     // Se vuelve a leer al cambiar la búsqueda, para notar el interruptor de Ajustes sin reiniciar
     val ready = rememberOnDemandReady(query.isBlank())
     val statuses by OnDemandTracks.statuses.collectAsState()
-    val matcher = remember(librarySongs) { LibraryMatcher(librarySongs) }
-    val affinity = remember(librarySongs) { com.kevshupp.kevmusicplayer.data.telegram.ArtistAffinity(librarySongs) }
+    val matcher = rememberLibraryMatcher(librarySongs)
+    val affinity = remember(matcher) { com.kevshupp.kevmusicplayer.data.telegram.ArtistAffinity(librarySongs.toList()) }
     var tracks by remember { mutableStateOf<List<DeezerTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     LaunchedEffect(query, ready, matcher) {
@@ -111,7 +117,30 @@ fun LazyListScope.onDemandSection(
     }
 }
 
-/** Fila de una canción de Deezer en modo bajo demanda: tocar la reproduce; los botones la ponen en cola. */
+/** Dónde está una canción bajo demanda en el teléfono: biblioteca, caché temporal o descargándose. */
+internal class OnDemandOffline(val inLibrary: Boolean, val cached: Boolean, val libraryDownload: DownloadStatus?)
+
+@Composable
+internal fun rememberOnDemandOffline(track: DeezerTrack): OnDemandOffline {
+    val context = LocalContext.current
+    val onDemand by OnDemandTracks.statuses.collectAsState()
+    val downloads by TelegramDownloadQueue.statuses.collectAsState()
+    val od = onDemand[track.id]
+    val dl = downloads[track.id]
+    return remember(track.id, od, dl) {
+        OnDemandOffline(
+            inLibrary = OnDemandTracks.localIdFor(context, track.id) != null || dl is DownloadStatus.Done,
+            cached = OnDemandTracks.isCached(context, track.id),
+            libraryDownload = dl
+        )
+    }
+}
+
+/**
+ * Fila de una canción de Deezer en modo bajo demanda: tocar la reproduce; el botón la pone a continuación y
+ * el menú de tres puntos la añade a la cola o la descarga a la biblioteca. El icono indica si ya está
+ * en la biblioteca (descargada), en la caché temporal o solo en línea.
+ */
 @Composable
 internal fun OnDemandSearchResultItem(
     track: DeezerTrack,
@@ -120,13 +149,27 @@ internal fun OnDemandSearchResultItem(
     onPlay: () -> Unit,
     onQueue: (next: Boolean) -> Unit
 ) {
-    val subtitle = when (status) {
-        DownloadStatus.Queued, DownloadStatus.Requesting -> getLocalized("Pidiendo al bot…", "Asking the bot…")
-        is DownloadStatus.Downloading -> getLocalized("Descargando", "Downloading") + " ${(status.progress * 100).toInt()} %"
-        is DownloadStatus.Done -> getLocalized("Lista · ", "Ready · ") + track.artist
-        is DownloadStatus.Failed -> status.reason
-        null -> "${track.artist} · ${track.album}"
+    val context = LocalContext.current
+    val offline = rememberOnDemandOffline(track)
+    val dl = offline.libraryDownload
+    val subtitle = when {
+        dl == DownloadStatus.Queued || dl == DownloadStatus.Requesting -> getLocalized("Descarga en espera…", "Download queued…")
+        dl is DownloadStatus.Downloading -> getLocalized("Descargando", "Downloading") + " ${(dl.progress * 100).toInt()} %"
+        offline.inLibrary -> getLocalized("En tu biblioteca · ", "In your library · ") + track.artist
+        status == DownloadStatus.Queued || status == DownloadStatus.Requesting -> getLocalized("Pidiendo al bot…", "Asking the bot…")
+        status is DownloadStatus.Downloading -> getLocalized("Cargando", "Loading") + " ${(status.progress * 100).toInt()} %"
+        offline.cached -> getLocalized("En caché · ", "Cached · ") + track.artist
+        dl is DownloadStatus.Failed -> dl.reason
+        status is DownloadStatus.Failed -> status.reason
+        else -> "${track.artist} · ${track.album}"
     }
+    val failed = (dl is DownloadStatus.Failed || status is DownloadStatus.Failed) && !offline.inLibrary && !offline.cached
+    val stateIcon = when {
+        offline.inLibrary -> Icons.Rounded.DownloadDone
+        offline.cached -> Icons.Rounded.OfflinePin
+        else -> Icons.Rounded.Cloud
+    }
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -161,15 +204,26 @@ internal fun OnDemandSearchResultItem(
                 color = MaterialTheme.colorScheme.onBackground
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
+                Icon(stateIcon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
                 Spacer(Modifier.width(4.dp))
                 Text(
                     subtitle,
                     fontSize = 12.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    color = if (status is DownloadStatus.Failed) MaterialTheme.colorScheme.error
+                    color = if (failed) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                )
+            }
+        }
+        // Descarga fallida: el reintento queda a la vista, sin tener que abrir el menú
+        if (dl is DownloadStatus.Failed && !offline.inLibrary) {
+            IconButton(onClick = { OnDemandTracks.saveToLibrary(context, track) }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Rounded.Refresh,
+                    contentDescription = getLocalized("Reintentar descarga", "Retry download"),
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(22.dp)
                 )
             }
         }
@@ -182,13 +236,58 @@ internal fun OnDemandSearchResultItem(
                 modifier = Modifier.size(22.dp)
             )
         }
-        IconButton(onClick = { onQueue(false) }, modifier = Modifier.size(40.dp)) {
-            Icon(
-                Icons.AutoMirrored.Rounded.PlaylistAdd,
-                contentDescription = getLocalized("Añadir a la cola", "Add to queue"),
-                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
-                modifier = Modifier.size(24.dp)
-            )
+        Box {
+            IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Rounded.MoreVert,
+                    contentDescription = getLocalized("Más opciones", "More options"),
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(getLocalized("Añadir a la cola", "Add to queue")) },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        onQueue(false)
+                    }
+                )
+                val downloading = dl != null && dl !is DownloadStatus.Done && dl !is DownloadStatus.Failed
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            when {
+                                offline.inLibrary -> getLocalized("Ya está en tu biblioteca", "Already in your library")
+                                downloading -> getLocalized("Descargando…", "Downloading…")
+                                dl is DownloadStatus.Failed -> getLocalized("Reintentar descarga", "Retry download")
+                                else -> getLocalized("Descargar a la biblioteca", "Download to library")
+                            }
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            when {
+                                offline.inLibrary -> Icons.Rounded.DownloadDone
+                                dl is DownloadStatus.Failed -> Icons.Rounded.Refresh
+                                else -> Icons.Rounded.Download
+                            },
+                            contentDescription = null
+                        )
+                    },
+                    enabled = !offline.inLibrary && !downloading,
+                    onClick = {
+                        menuOpen = false
+                        OnDemandTracks.saveToLibrary(context, track)
+                        android.widget.Toast.makeText(
+                            context,
+                            getLocalized("Descargando a la biblioteca", "Downloading to library"),
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                )
+            }
         }
     }
 }

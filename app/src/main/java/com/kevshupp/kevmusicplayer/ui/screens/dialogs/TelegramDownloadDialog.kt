@@ -82,10 +82,12 @@ fun TelegramDownloadDialog(
                     is TelegramAuthState.WaitCode -> AuthStep(
                         step = 2,
                         title = "Código",
-                        intro = "Te llegó un código en la app de Telegram (chat \"Telegram\") para ${s.phone}.",
+                        intro = if (s.sentVia == "la app de Telegram") "Te llegó un código en la app de Telegram (chat \"Telegram\") para ${s.phone}."
+                        else "Te enviamos el código por ${s.sentVia} a ${s.phone}.",
                         label = "Código",
                         keyboardType = KeyboardType.NumberPassword,
-                        onSubmit = TelegramMusicClient::submitCode
+                        onSubmit = TelegramMusicClient::submitCode,
+                        extra = { ResendCodeButton(s) }
                     )
                     is TelegramAuthState.WaitPassword -> AuthStep(
                         step = 3,
@@ -176,7 +178,8 @@ private fun AuthStep(
     label: String,
     keyboardType: KeyboardType,
     isPassword: Boolean = false,
-    onSubmit: (String) -> Unit
+    onSubmit: (String) -> Unit,
+    extra: @Composable () -> Unit = {}
 ) {
     val busy by TelegramMusicClient.busy.collectAsState()
     var value by remember(label) { mutableStateOf("") }
@@ -200,6 +203,29 @@ private fun AuthStep(
         )
         Spacer(Modifier.height(16.dp))
         SubmitButton("Continuar", value.isNotBlank(), busy, submit)
+        extra()
+    }
+}
+
+/** "Enviar por SMS" (o llamada): solo si Telegram ofrece otro método, tras la cuenta atrás que exige. */
+@Composable
+private fun ResendCodeButton(state: TelegramAuthState.WaitCode) {
+    val next = state.nextVia ?: return
+    val busy by TelegramMusicClient.busy.collectAsState()
+    var remaining by remember(state) { mutableIntStateOf(state.timeoutSec) }
+    LaunchedEffect(state) {
+        while (remaining > 0) {
+            kotlinx.coroutines.delay(1000)
+            remaining--
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    TextButton(
+        onClick = { TelegramMusicClient.resendCode() },
+        enabled = remaining == 0 && !busy,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(if (remaining > 0) "Enviar por $next en ${remaining} s" else "Enviar el código por $next")
     }
 }
 

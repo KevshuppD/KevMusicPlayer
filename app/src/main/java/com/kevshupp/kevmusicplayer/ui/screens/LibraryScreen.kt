@@ -237,7 +237,9 @@ fun LibraryScreen(
         derivedStateOf { com.kevshupp.kevmusicplayer.data.ArtistSplitter(audioFiles.map { it.artist }.distinct()) }
     }
 
-    if (viewModel != null) {
+    // Solo la Biblioteca visible consume la petición: si la consumía una instancia que salía de pantalla, la
+    // nueva restauraba su vista guardada (p. ej. el último álbum abierto) en lugar del artista pedido
+    if (viewModel != null && isActive) {
         // Se aplica durante la composición, no en un LaunchedEffect: el efecto corre después de dibujar el primer
         // cuadro y al abrir Favoritos, Nuevas o Historial desde Inicio se veía la lista de la biblioteca un instante
         run {
@@ -875,7 +877,11 @@ fun LibraryScreen(
                                     )
                                 }
                                 "Albums" -> {
+                                    val onlineAlbums = rememberOnDemandAlbumSearch(searchQuery, audioFiles)
                                     AlbumGridView(
+                                        footerContent = if (searchQuery.isBlank()) null else {
+                                            { onDemandAlbumSection(onlineAlbums, getLocalized) }
+                                        },
                                         albums = albums,
                                         bottomPadding = bottomBarPadding,
                                         onAlbumClick = { navigateToSubView(SubView.AlbumDetail(it)) },
@@ -884,9 +890,14 @@ fun LibraryScreen(
                                         onEditAlbum = { name, songs -> albumToEdit = Pair(name, songs) },
                                         onShowAlbumInfo = { name, songs -> albumToShowInfo = Pair(name, songs) }
                                     )
+                                    ArtistOnlineAlbumDialog(onlineAlbums.dialogState, viewModel, { onFileClick(it, listOf(it)) }, getLocalized)
                                 }
                                 "Artists" -> {
+                                    val onlineArtists = rememberOnDemandArtistSearch(searchQuery, artists.keys)
                                     ArtistListView(
+                                        footerContent = if (searchQuery.isBlank()) null else {
+                                            { onDemandArtistSection(onlineArtists, getLocalized) { navigateToSubView(SubView.ArtistDetail(it)) } }
+                                        },
                                         artists = artists,
                                         query = searchQuery,
                                         bottomPadding = bottomBarPadding,

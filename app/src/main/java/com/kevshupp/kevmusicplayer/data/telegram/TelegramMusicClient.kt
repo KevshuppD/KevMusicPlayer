@@ -28,7 +28,8 @@ sealed interface TelegramAuthState {
     data object NotConfigured : TelegramAuthState
     data object Loading : TelegramAuthState
     data object WaitPhone : TelegramAuthState
-    data class WaitCode(val phone: String) : TelegramAuthState
+    /** [sentVia] = por dónde llegó el código; [nextVia] = por dónde se puede reenviar (null si Telegram no ofrece otro). */
+    data class WaitCode(val phone: String, val sentVia: String, val nextVia: String?, val timeoutSec: Int) : TelegramAuthState
     data class WaitPassword(val hint: String) : TelegramAuthState
     data object Ready : TelegramAuthState
     data class Unsupported(val what: String) : TelegramAuthState
@@ -182,7 +183,12 @@ object TelegramMusicClient {
                 TelegramAuthState.Loading
             }
             is AuthorizationStateWaitPhoneNumber -> TelegramAuthState.WaitPhone
-            is AuthorizationStateWaitCode -> TelegramAuthState.WaitCode(state.codeInfo.phoneNumber)
+            is AuthorizationStateWaitCode -> TelegramAuthState.WaitCode(
+                state.codeInfo.phoneNumber,
+                codeTypeLabel(state.codeInfo.type) ?: "la app de Telegram",
+                state.codeInfo.nextType?.let { codeTypeLabel(it) },
+                state.codeInfo.timeout
+            )
             is AuthorizationStateWaitPassword -> TelegramAuthState.WaitPassword(state.passwordHint)
             is AuthorizationStateReady -> TelegramAuthState.Ready
             is AuthorizationStateClosed -> {
@@ -199,6 +205,22 @@ object TelegramMusicClient {
 
     fun submitPhone(phone: String) = authCall { it.setAuthenticationPhoneNumber(phoneNumber = phone.filter { ch -> ch.isDigit() || ch == '+' }) }
     fun submitCode(code: String) = authCall { it.checkAuthenticationCode(code = code.trim()) }
+    /** Pide el código por el siguiente método que ofrece Telegram (SMS, llamada…). */
+    fun resendCode() = authCall { it.resendAuthenticationCode(reason = dev.g000sha256.tdl.dto.ResendCodeReasonUserRequest()) }
+
+    private fun codeTypeLabel(type: dev.g000sha256.tdl.dto.AuthenticationCodeType): String? = when (type) {
+        is dev.g000sha256.tdl.dto.AuthenticationCodeTypeTelegramMessage -> "la app de Telegram"
+        is dev.g000sha256.tdl.dto.AuthenticationCodeTypeSms,
+        is dev.g000sha256.tdl.dto.AuthenticationCodeTypeSmsWord,
+        is dev.g000sha256.tdl.dto.AuthenticationCodeTypeSmsPhrase,
+        is dev.g000sha256.tdl.dto.AuthenticationCodeTypeFirebaseAndroid -> "SMS"
+        is dev.g000sha256.tdl.dto.AuthenticationCodeTypeCall -> "llamada"
+        is dev.g000sha256.tdl.dto.AuthenticationCodeTypeFlashCall,
+        is dev.g000sha256.tdl.dto.AuthenticationCodeTypeMissedCall -> "llamada perdida"
+        is dev.g000sha256.tdl.dto.AuthenticationCodeTypeFragment -> "Fragment"
+        else -> null
+    }
+
     fun submitPassword(password: String) = authCall { it.checkAuthenticationPassword(password = password) }
     fun logOut() = authCall { it.logOut() }
 

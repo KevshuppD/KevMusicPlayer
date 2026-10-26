@@ -72,9 +72,13 @@ object TelegramDownloadQueue {
 
     private var started = false
 
+    /** Canciones que ya se reintentaron solas tras no responder el bot (una vez cada una). */
+    private val autoRetried = java.util.Collections.synchronizedSet(HashSet<Long>())
+
     fun enqueue(context: Context, track: DeezerTrack) {
         val current = _statuses.value[track.id]
         if (current != null && current !is DownloadStatus.Failed) return
+        if (current is DownloadStatus.Failed) autoRetried.remove(track.id)
         _downloads.update { list -> if (list.any { it.id == track.id }) list else list + track }
         submit(context, Request(track, null, null))
     }
@@ -144,7 +148,15 @@ object TelegramDownloadQueue {
             setFor(request, DownloadStatus.Done(saved.absolutePath))
             kotlinx.coroutines.withContext(Dispatchers.Main) { onSongSaved?.invoke() }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            setFor(request, DownloadStatus.Failed("El bot no respondió"))
+            // El bot a veces no contesta un enlace y sí lo hace al repetirlo: un reintento al final de la cola
+            if (track != null && request.replace == null && autoRetried.add(track.id)) {
+                TelemetryLogger.logInfo(context, "Telegram", "Sin respuesta para ${track.artist} - ${track.title}, se reintenta")
+                setFor(request, DownloadStatus.Queued)
+                pending.trySend(request)
+            } else {
+                TelemetryLogger.logInfo(context, "Telegram", "El bot no respondió: ${track?.link ?: request.textQuery}")
+                setFor(request, DownloadStatus.Failed("El bot no respondió"))
+            }
         } catch (e: Exception) {
             TelemetryLogger.logError(context, "Telegram", "Fallo al descargar ${track?.link ?: request.textQuery}", e)
             setFor(request, DownloadStatus.Failed(e.message ?: "Error"))
