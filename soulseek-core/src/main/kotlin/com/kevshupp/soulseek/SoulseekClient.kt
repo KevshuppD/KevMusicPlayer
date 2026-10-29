@@ -86,8 +86,9 @@ interface PhoneTarget {
 
 /** Conexión con otro usuario: 'P' mensajes, 'F' transferencia de un archivo, 'D' red distribuida. */
 class PeerConn(val socket: Socket, @Volatile var username: String, @Volatile var type: Char) {
-    val input = DataInputStream(BufferedInputStream(socket.getInputStream(), 64 * 1024))
-    val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
+    // Búferes pequeños: en una búsqueda hay cientos de conexiones abiertas a la vez
+    val input = DataInputStream(BufferedInputStream(socket.getInputStream(), 16 * 1024))
+    val output = BufferedOutputStream(socket.getOutputStream(), 16 * 1024)
 
     fun send(bytes: ByteArray) = synchronized(this) { output.write(bytes); output.flush() }
     fun close() { runCatching { socket.close() } }
@@ -116,6 +117,9 @@ class SoulseekClient(
         private const val CLIENT_VERSION = 160
         private const val MINOR_VERSION = 1
         private const val MAX_RESULTS = 600
+        /** Archivos que se guardan por usuario en una búsqueda (algunos responden con miles). */
+        private const val MAX_FILES_PER_RESULT = 200
+        private const val MAX_OPEN_PEERS = 64
         private const val MAX_QUEUED_PER_USER = 200
     }
 
@@ -176,6 +180,11 @@ class SoulseekClient(
 
     @Volatile private var searchToken = -1L
     private val pendingResults = ConcurrentLinkedQueue<SlskResult>()
+    /** Respuestas que se descomprimen a la vez: cada una puede ocupar varios MB (en el teléfono, OutOfMemoryError). */
+    private val responseSlots = java.util.concurrent.Semaphore(3)
+    /** Conexiones de mensajes abiertas, cada una con su hilo. En una búsqueda responden cientos de usuarios
+     *  y sin tope el teléfono no puede crear más hilos (OutOfMemoryError: pthread_create). */
+    private val openPeers = java.util.concurrent.atomic.AtomicInteger()
     @Volatile private var completedUploads = 0
     @Volatile private var avgSpeed = 0L
 
@@ -344,7 +353,9 @@ class SoulseekClient(
             }
             ServerCode.CONNECT_TO_PEER -> {
                 val user = r.str(); val type = r.str().firstOrNull() ?: 'P'; val ip = r.ip(); val port = r.u32().toInt(); val token = r.u32()
-                pool.execute { pierce(user, type, ip, port, token) }
+                if (type == 'P' && openPeers.get() >= MAX_OPEN_PEERS && !hasTransferWith(user)) {
+                    pool.execute { runCatching { sendServer(MsgWriter().u32(token).str(user).frame(ServerCode.CANT_CONNECT_TO_PEER)) } }
+                } else pool.execute { pierce(user, type, ip, port, token) }
             }
             ServerCode.MESSAGE_USER -> sendServer(MsgWriter().u32(r.u32()).frame(ServerCode.MESSAGE_ACKED))
             ServerCode.FILE_SEARCH -> { val user = r.str(); val token = r.u32(); onSearchRequest(user, token, r.str()) }
@@ -403,14 +414,20 @@ class SoulseekClient(
         peers[user]?.takeIf { it.isOpen }?.let { return it }
         synchronized(userLocks.computeIfAbsent(user) { Any() }) {
             peers[user]?.takeIf { it.isOpen }?.let { return it }
-            return connectPeer(user, 'P').also { registerPeer(it) }
+            return connectPeer(user, 'P').also { registerPeer(it, ours = true) }
         }
     }
 
-    private fun registerPeer(c: PeerConn) {
-        peers[c.username] = c
-        pool.execute { readPeer(c) }
+    /** [ours] = la abrimos nosotros para algo concreto (descarga, carpeta): nunca se rechaza. */
+    private fun registerPeer(c: PeerConn, ours: Boolean = false) {
+        if (!ours && openPeers.get() >= MAX_OPEN_PEERS && !hasTransferWith(c.username)) return c.close()
+        peers.put(c.username, c)?.takeIf { it !== c }?.close()
+        openPeers.incrementAndGet()
+        pool.execute { try { readPeer(c) } finally { openPeers.decrementAndGet() } }
     }
+
+    private fun hasTransferWith(user: String) =
+        dl.values.any { it.username == user } || ul.values.any { it.username == user }
 
     private fun handleIncoming(s: Socket) {
         try {
@@ -459,7 +476,7 @@ class SoulseekClient(
         try {
             c.socket.soTimeout = 300_000
             while (c.isOpen) {
-                val r = MsgReader(c.input.readFrame())
+                val r = MsgReader(c.input.readFrame(max = 16 * 1024 * 1024))
                 val code = r.i32()
                 try { handlePeer(c, code, r) } catch (e: IOException) { throw e } catch (_: Exception) {}
             }
@@ -492,7 +509,11 @@ class SoulseekClient(
                 repeat(d.u32().toInt()) { val dir = d.str(); files += readFiles(d, dir) }
                 folderWaiters.remove(token)?.complete(files)
             }
-            PeerCode.FILE_SEARCH_RESPONSE -> onSearchResponse(r)
+            PeerCode.FILE_SEARCH_RESPONSE -> {
+                onSearchResponse(r)
+                // Solo venía a darnos resultados: si luego hace falta, getPeer() vuelve a conectar
+                if (!hasTransferWith(c.username)) c.close()
+            }
             PeerCode.TRANSFER_REQUEST -> {
                 val direction = r.u32(); val token = r.u32(); val path = r.str()
                 if (direction == 1L) {
@@ -588,10 +609,17 @@ class SoulseekClient(
     }
 
     private fun onSearchResponse(r: MsgReader) {
-        val d = MsgReader(inflate(r.rest()))
+        if (_results.value.size + pendingResults.size >= MAX_RESULTS) return
+        responseSlots.acquire()
+        try { parseSearchResponse(r) } finally { responseSlots.release() }
+    }
+
+    private fun parseSearchResponse(r: MsgReader) {
+        if (_results.value.size + pendingResults.size >= MAX_RESULTS) return
+        val d = MsgReader(inflate(r.rest(), limit = 16 * 1024 * 1024))
         val user = d.str(); val token = d.u32()
         if (token != searchToken) return
-        val files = readFiles(d, null).filter { it.extension in AUDIO_EXTENSIONS }
+        val files = readFiles(d, null).filter { it.extension in AUDIO_EXTENSIONS }.take(MAX_FILES_PER_RESULT)
         if (files.isEmpty()) return
         val free = runCatching { d.bool() }.getOrDefault(false)
         val speed = runCatching { d.u32() }.getOrDefault(0)
@@ -637,7 +665,7 @@ class SoulseekClient(
         try {
             c.socket.soTimeout = 300_000
             while (c.isOpen) {
-                val r = MsgReader(c.input.readFrame())
+                val r = MsgReader(c.input.readFrame(max = 16 * 1024 * 1024))
                 runCatching { handleDistrib(r.u8(), r) }
             }
         } catch (_: Exception) {
@@ -786,7 +814,7 @@ class SoulseekClient(
             id = downloadTokens.remove(token) ?: return c.close()
             val t = dl[id] ?: return c.close()
             val part = partFile(t)
-            part.parentFile.mkdirs()
+            part.parentFile?.mkdirs()
             val offset = if (part.isFile && part.length() < t.size) part.length() else { part.delete(); 0L }
             c.send(MsgWriter().u64(offset).toByteArray())
             updateDl(id) { it.copy(state = TransferState.Transferring, done = offset, detail = "") }
@@ -814,7 +842,7 @@ class SoulseekClient(
             c.close()
             if (done < t.size) throw IOException("Se cortó a mitad (se reanuda al reintentar)")
             val target = finalFile(t)
-            target.parentFile.mkdirs()
+            target.parentFile?.mkdirs()
             if (!part.renameTo(target)) { part.copyTo(target); part.delete() }
             onDownloaded(id, target)
         } catch (e: Exception) {

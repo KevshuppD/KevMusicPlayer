@@ -2130,7 +2130,7 @@ fun LibrarySettingsSection(
                         modifier = Modifier.fillMaxWidth().height(44.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.DriveFileMove,
+                            imageVector = Icons.AutoMirrored.Rounded.DriveFileMove,
                             contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )

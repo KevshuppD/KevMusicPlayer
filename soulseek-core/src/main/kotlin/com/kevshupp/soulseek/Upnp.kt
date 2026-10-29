@@ -76,7 +76,7 @@ object Upnp {
             // IP local con la que se llega al router
             val localIp = Socket().use { s ->
                 s.connect(InetSocketAddress(uri.host, if (uri.port > 0) uri.port else 80), 2000)
-                s.localAddress.hostAddress
+                s.localAddress.hostAddress ?: return null
             }
             return Gateway(url, type, localIp)
         }

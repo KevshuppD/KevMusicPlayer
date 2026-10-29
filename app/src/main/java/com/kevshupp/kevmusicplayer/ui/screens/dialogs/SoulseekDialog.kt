@@ -12,6 +12,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.CallSplit
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -331,7 +332,7 @@ private fun AlbumSourcesPage(
                     if (plan != null) {
                         val users = plan.flatten().map { it.first }.distinct().size
                         FilledTonalButton(onClick = { client.downloadSplit(best.title, plan) }, enabled = queued == 0, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Rounded.CallSplit, null); Spacer(Modifier.width(6.dp))
+                            Icon(Icons.AutoMirrored.Rounded.CallSplit, null); Spacer(Modifier.width(6.dp))
                             Text("Descargar repartido ($users fuentes)")
                         }
                         Text(
