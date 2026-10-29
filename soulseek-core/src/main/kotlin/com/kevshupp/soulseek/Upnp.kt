@@ -1,4 +1,4 @@
-package com.kevshupp.kevmusic.desktop.soulseek
+package com.kevshupp.soulseek
 
 import java.net.DatagramPacket
 import java.net.DatagramSocket

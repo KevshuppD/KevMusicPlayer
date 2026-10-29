@@ -76,6 +76,7 @@ fun HomeScreen(
 
     var showInsights by remember { mutableStateOf(false) }
     var showDownloader by remember { mutableStateOf(false) }
+    var showSoulseek by remember { mutableStateOf(false) }
     var showProfileDialog by remember { mutableStateOf(false) }
     val cloudUser by (viewModel?.cloudUser ?: kotlinx.coroutines.flow.MutableStateFlow(null)).collectAsState()
     val coroutineScope = rememberCoroutineScope()
@@ -237,6 +238,21 @@ fun HomeScreen(
                         )
                     }
 
+                    val soulseekEnabled by com.kevshupp.kevmusicplayer.data.soulseek.SoulseekManager.enabled.collectAsState()
+                    if (soulseekEnabled) IconButton(
+                        onClick = { showSoulseek = true },
+                        colors = IconButtonDefaults.iconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Hub,
+                            contentDescription = "Soulseek",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+
                     IconButton(
                         onClick = { showInsights = true },
                         colors = IconButtonDefaults.iconButtonColors(
@@ -265,6 +281,13 @@ fun HomeScreen(
                         )
                     }
                 }
+            }
+
+            if (showSoulseek) {
+                com.kevshupp.kevmusicplayer.ui.screens.dialogs.SoulseekDialog(
+                    librarySongs = audioFiles,
+                    onDismiss = { showSoulseek = false }
+                )
             }
 
             if (showDownloader) {

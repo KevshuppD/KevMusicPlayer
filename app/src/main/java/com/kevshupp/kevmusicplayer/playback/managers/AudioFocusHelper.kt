@@ -5,6 +5,8 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.media3.exoplayer.ExoPlayer
 import com.kevshupp.kevmusicplayer.data.PreferenceConstants
 import com.kevshupp.kevmusicplayer.data.TelemetryLogger
@@ -27,6 +29,19 @@ class AudioFocusHelper(
     // multiplies its target volume by this, otherwise it would bring the volume straight back up.
     var duckFactor: Float = 1f
         private set
+
+    // TikTok, Reels, etc. take the focus for each video and release it when swiping to the next one: resuming
+    // right away made the music play for a second between videos and pause again (~60 times in 4 minutes).
+    // Resume only if the focus stays with us for RESUME_DELAY_MS.
+    private val handler = Handler(Looper.getMainLooper())
+    private var pendingResume: Runnable? = null
+
+    private fun cancelPendingResume(): Boolean {
+        val pending = pendingResume ?: return false
+        handler.removeCallbacks(pending)
+        pendingResume = null
+        return true
+    }
 
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         val player = playerProvider() ?: return@OnAudioFocusChangeListener
@@ -53,8 +68,16 @@ class AudioFocusHelper(
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
                 if (playOnFocusGain) {
-                    player.play()
-                    playOnFocusGain = false
+                    cancelPendingResume()
+                    val resume = Runnable {
+                        pendingResume = null
+                        if (playOnFocusGain) {
+                            playerProvider()?.play()
+                            playOnFocusGain = false
+                        }
+                    }
+                    pendingResume = resume
+                    handler.postDelayed(resume, RESUME_DELAY_MS)
                 }
                 duckFactor = 1f
                 if (!isFadingIn()) {
@@ -62,15 +85,18 @@ class AudioFocusHelper(
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS -> {
+                cancelPendingResume()
                 duckFactor = 1f
                 player.pause()
                 playOnFocusGain = false
                 abandonAudioFocus()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                // Lost again while waiting to resume: stay paused and wait for the next gain
+                val wasWaiting = cancelPendingResume()
                 // If call is active, always pause for phone call privacy
                 if (isCallActive) {
-                    if (player.isPlaying) {
+                    if (wasWaiting || player.isPlaying) {
                         playOnFocusGain = true
                         player.pause()
                     }
@@ -85,7 +111,7 @@ class AudioFocusHelper(
                     player.volume = duckFactor * currentReplayGainFactor
                     playOnFocusGain = true
                 } else {
-                    if (player.isPlaying) {
+                    if (wasWaiting || player.isPlaying) {
                         playOnFocusGain = true
                         player.pause()
                     }
@@ -99,6 +125,8 @@ class AudioFocusHelper(
     }
 
     fun requestAudioFocus(): Boolean {
+        // The user pressed play: forget any automatic resume still waiting
+        cancelPendingResume()
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val playbackAttributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -127,5 +155,9 @@ class AudioFocusHelper(
             @Suppress("DEPRECATION")
             audioManager.abandonAudioFocus(audioFocusChangeListener)
         }
+    }
+
+    companion object {
+        private const val RESUME_DELAY_MS = 1500L
     }
 }

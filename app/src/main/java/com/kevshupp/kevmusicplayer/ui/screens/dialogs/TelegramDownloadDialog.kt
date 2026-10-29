@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
+import com.kevshupp.kevmusicplayer.ui.screens.rememberLibraryMatcher
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -290,9 +291,11 @@ private fun SearchContent(librarySongs: List<AudioFile>) {
     var showQueue by rememberSaveable { mutableStateOf(false) }
 
     // Qué resultados ya están en la biblioteca (comparación tolerante a nombres distintos)
-    val matcher = remember(librarySongs) { LibraryMatcher(librarySongs) }
+    // Se rehace al cambiar la lista: si es la SnapshotStateList de la biblioteca, cambia en su sitio y con
+    // remember(lista) un álbum descargado con el diálogo abierto seguía contando solo las canciones de antes
+    val matcher = rememberLibraryMatcher(librarySongs)
     // Primero los artistas que ya escuchas, luego los que tienes y al final el resto
-    val affinity = remember(librarySongs) { ArtistAffinity(librarySongs) }
+    val affinity by remember(librarySongs) { derivedStateOf { ArtistAffinity(librarySongs.toList()) } }
 
     fun runSearch() {
         val q = query.trim()

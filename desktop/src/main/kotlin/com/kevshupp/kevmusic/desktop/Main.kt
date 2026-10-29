@@ -15,10 +15,10 @@ import com.kevshupp.kevmusic.desktop.ui.ConnectScreen
 import com.kevshupp.kevmusic.desktop.ui.KevTheme
 import com.kevshupp.kevmusic.desktop.ui.LocalClient
 import com.kevshupp.kevmusic.desktop.ui.LocalSoulseek
-import com.kevshupp.kevmusic.desktop.soulseek.PhoneTarget
-import com.kevshupp.kevmusic.desktop.soulseek.SoulseekClient
+import com.kevshupp.soulseek.PhoneTarget
+import com.kevshupp.soulseek.SoulseekClient
 import com.kevshupp.kevmusic.desktop.soulseek.SoulseekConfig
-import com.kevshupp.kevmusic.desktop.soulseek.SlskStatus
+import com.kevshupp.soulseek.SlskStatus
 import com.kevshupp.kevmusic.desktop.ui.MainScreen
 import com.kevshupp.kevmusic.desktop.ui.Section
 import com.kevshupp.kevmusic.desktop.ui.UpdateDialog
@@ -57,7 +57,7 @@ private fun app() = application {
     val client = remember { RemoteClient(scope) }
     val discovery = remember { Discovery() }
     val soulseek = remember {
-        SoulseekClient(scope).apply {
+        SoulseekClient(scope, SoulseekConfig, Config.dir).apply {
             phone = object : PhoneTarget {
                 override val blocker get() = client.uploadBlocker()
                 override fun upload(file: java.io.File, artistHint: String, albumHint: String, onProgress: (Long) -> Unit) =

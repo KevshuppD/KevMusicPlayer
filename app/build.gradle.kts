@@ -10,6 +10,9 @@ plugins {
 
 android {
     namespace = "com.kevshupp.kevmusicplayer"
+
+    // Cliente de Soulseek compartido con KevMusic Desktop (protocolo, descargas y compartidos)
+    sourceSets.getByName("main").kotlin.srcDir("../soulseek-core/src/main/kotlin")
     compileSdk = 37
 
     defaultConfig {

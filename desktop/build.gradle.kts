@@ -24,7 +24,11 @@ val generateBuildInfo by tasks.registering {
         )
     }
 }
-sourceSets.main { kotlin.srcDir(generateBuildInfo) }
+sourceSets.main {
+    kotlin.srcDir(generateBuildInfo)
+    // Cliente de Soulseek compartido con la app de Android
+    kotlin.srcDir("../soulseek-core/src/main/kotlin")
+}
 
 kotlin {
     jvmToolchain(21)

@@ -33,6 +33,7 @@ import com.kevshupp.kevmusic.desktop.DzAlbum
 import com.kevshupp.kevmusic.desktop.formatTime
 import kotlinx.coroutines.launch
 import com.kevshupp.kevmusic.desktop.soulseek.*
+import com.kevshupp.soulseek.*
 import java.io.File
 import javax.swing.JFileChooser
 
@@ -43,15 +44,6 @@ private enum class SlskTab(val label: String) { Search("Buscar"), Downloads("Des
 /** Una carpeta de un usuario dentro de los resultados (normalmente un álbum). */
 /** Orden de las carpetas que no son álbumes reconocidos (los álbumes ordenan sus fuentes con [rankSources]). */
 private enum class ResultSort(val label: String) { Best("Mejor fuente"), Fastest("Más rápidos"), Quality("Mayor calidad"), Tracks("Más pistas") }
-
-private data class FolderGroup(val user: String, val folder: String, val files: List<SlskFile>, val free: Boolean, val speed: Long, val queue: Long) {
-    val key get() = "$user|$folder"
-    val title get() = folder.substringAfterLast('\\').ifBlank { folder }
-    val formats get() = files.map { it.extension.uppercase() }.distinct().joinToString("/")
-    val bitrate get() = files.mapNotNull { it.bitrate }.maxOrNull()
-    val depth get() = files.mapNotNull { it.bitDepth }.maxOrNull()
-    val rate get() = files.mapNotNull { it.sampleRate }.maxOrNull()
-}
 
 @Composable
 fun SoulseekScreen() {
@@ -156,8 +148,6 @@ private fun LoginCard(status: SlskStatus) {
 
 // ---------- Buscar ----------
 
-private val LOSSLESS = setOf("flac", "wav", "aiff", "aif", "alac", "ape")
-
 private enum class FormatFilter(val label: String, val extensions: Set<String>?) {
     All("Todos", null),
     Mp3("MP3", setOf("mp3")),
@@ -167,16 +157,6 @@ private enum class FormatFilter(val label: String, val extensions: Set<String>?)
     Ogg("OGG/Opus", setOf("ogg", "opus"));
 
     fun matches(f: SlskFile) = extensions == null || f.extension in extensions
-}
-
-/**
- * Sin pérdida, o con pérdida a 256 kbps o más. Muchos no envían el bitrate: se estima con tamaño y duración,
- * y sin ninguno de los dos el archivo no cuenta.
- */
-private fun isHighQuality(f: SlskFile): Boolean {
-    if (f.extension in LOSSLESS) return true
-    val kbps = f.bitrate ?: f.durationSec?.takeIf { it > 0 }?.let { (f.size * 8 / 1000 / it).toInt() } ?: return false
-    return kbps >= 256
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -193,25 +173,17 @@ private fun SearchTab(downloads: List<Transfer>) {
     var error by remember { mutableStateOf<String?>(null) }
 
     val groups = remember(results, format, hq, onlyFree, sort) {
-        results.asSequence()
-            .filter { !onlyFree || it.freeSlot }
-            .flatMap { r ->
-                r.files.filter { format.matches(it) && (!hq || isHighQuality(it)) }
-                    .groupBy { it.folder }
-                    .map { (folder, files) -> FolderGroup(r.username, folder, files.sortedBy { it.path }, r.freeSlot, r.speed, r.queue) }
-            }
-            .distinctBy { it.key }
+        folderGroups(results.filter { !onlyFree || it.freeSlot }) { format.matches(it) && (!hq || isHighQuality(it)) }
             .sortedWith(
                 when (sort) {
                     // Primero quien está disponible ahora (hueco de subida libre), después los más rápidos
                     ResultSort.Best -> compareByDescending<FolderGroup> { it.free }.thenByDescending { it.speed }.thenBy { it.queue }
                     ResultSort.Fastest -> compareByDescending<FolderGroup> { it.speed }.thenByDescending { it.free }
-                    ResultSort.Quality -> compareByDescending<FolderGroup> { g -> g.files.any { it.extension in LOSSLESS_EXT } }
+                    ResultSort.Quality -> compareByDescending<FolderGroup> { g -> g.files.any { it.extension in LOSSLESS } }
                         .thenByDescending { it.bitrate ?: 0 }.thenByDescending { it.free }.thenByDescending { it.speed }
                     ResultSort.Tracks -> compareByDescending<FolderGroup> { it.files.size }.thenByDescending { it.free }.thenByDescending { it.speed }
                 }
             )
-            .toList()
     }
     val state = remember(downloads) { downloads.associateBy { it.username + "|" + it.path } }
     var expanded by remember(results.isEmpty()) { mutableStateOf(setOf<String>()) }
@@ -220,26 +192,26 @@ private fun SearchTab(downloads: List<Transfer>) {
     var openAlbum by remember { mutableStateOf<DzAlbum?>(null) }
     // Lo que ya está en el teléfono, para avisar "Ya lo tienes" en los álbumes reconocidos
     val library by LocalClient.current.library.collectAsState()
-    val localIndex = remember(library) { AlbumMatcher.LocalIndex(library?.songs.orEmpty()) }
-    val owned = remember(albums, localIndex) { albums.associate { it.id to AlbumMatcher.ownedCount(it, localIndex) } }
+    val localIndex = remember(library) { AlbumMatcher.LocalIndex(library?.songs.orEmpty().map { AlbumMatcher.LocalSong(it.album, it.artist, it.id) }) }
+    val owned = remember(albums, localIndex) { albums.associate { it.id to AlbumMatcher.ownedCount(it.title, it.artist, localIndex) } }
 
     // Carpetas reconocidas como un álbum de Deezer (en el orden de Deezer) y el resto
     val (byAlbum, others) = remember(groups, albums) {
-        val prepared = AlbumMatcher.prepare(albums)
+        val prepared = AlbumMatcher.prepare(albums.map { AlbumMatcher.Album(it, it.title, it.artist, it.tracks) })
         val matched = LinkedHashMap<Long, MutableList<FolderGroup>>()
         val rest = ArrayList<FolderGroup>()
         groups.forEach { g ->
             val a = AlbumMatcher.match(prepared, g.folder, g.files.map { it.name }, g.files.size)
             if (a != null) matched.getOrPut(a.id) { ArrayList() }.add(g) else rest += g
         }
-        albums.mapNotNull { a -> matched[a.id]?.let { a to rankSources(a, it) } } to rest
+        albums.mapNotNull { a -> matched[a.id]?.let { a to rankSources(a.tracks, it) } } to rest
     }
 
     fun search() {
         error = null; expanded = emptySet(); openAlbum = null; albums = emptyList()
         slsk.search(query)
         val q = query.trim()
-        scope.launch { albums = AlbumMatcher.searchAlbums(q) }
+        scope.launch { albums = DeezerAlbums.searchAlbums(q) }
     }
 
     openAlbum?.let { album ->
@@ -313,18 +285,6 @@ private fun SearchTab(downloads: List<Transfer>) {
     }
 }
 
-private val LOSSLESS_EXT = setOf("flac", "wav", "aiff", "aif", "alac", "ape")
-
-/** Mejores fuentes primero: completas, disponibles ahora, sin pérdida, mayor bitrate, más rápidas. */
-private fun rankSources(album: DzAlbum, sources: List<FolderGroup>): List<FolderGroup> = sources.sortedWith(
-    compareByDescending<FolderGroup> { album.tracks > 0 && it.files.size >= album.tracks }
-        .thenByDescending { it.free }
-        .thenByDescending { g -> g.files.any { it.extension in LOSSLESS_EXT } }
-        .thenByDescending { it.bitrate ?: 0 }
-        .thenByDescending { it.speed }
-        .thenBy { it.queue }
-)
-
 @Composable
 private fun ListHeader(text: String) {
     Text(text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp))
@@ -383,29 +343,6 @@ private fun OwnedBadge(album: DzAlbum, owned: Int) {
 
 private fun albumTypeLabel(type: String) = when (type) { "single" -> "Sencillo"; "ep" -> "EP"; "compile" -> "Recopilatorio"; "album" -> "Álbum"; else -> "" }
 
-/** Nombre de la canción sin número de pista, artista ni extensión, para emparejarla entre carpetas de distintos usuarios. */
-private fun songKey(fileName: String, artist: Set<String>): String =
-    AlbumMatcher.tokens(fileName.substringBeforeLast('.')).filterNot { it.all(Char::isDigit) || it in artist }.sorted().joinToString(" ")
-
-/**
- * Reparto para "Descargar repartido": fuentes completas, de usuarios distintos y con los mismos formatos que la
- * mejor (para no mezclar FLAC con MP3); por cada canción de la mejor, las fuentes que tienen la misma canción.
- * Null si no hay al menos dos fuentes que compartan la mayoría de las canciones.
- */
-private fun splitPlan(album: DzAlbum, sources: List<FolderGroup>): List<List<Pair<String, SlskFile>>>? {
-    val complete = sources.filter { album.tracks <= 0 || it.files.size >= album.tracks }
-    val base = complete.firstOrNull() ?: return null
-    val compatible = complete.filter { it.formats == base.formats }.distinctBy { it.user }
-    if (compatible.size < 2) return null
-    val artist = AlbumMatcher.tokens(album.artist)
-    val byKey = compatible.map { g -> g.user to g.files.associateBy { songKey(it.name, artist) } }
-    val plan = base.files.map { f ->
-        val key = songKey(f.name, artist)
-        byKey.mapNotNull { (user, files) -> files[key]?.let { user to it } }.ifEmpty { listOf(base.user to f) }
-    }
-    return plan.takeIf { p -> p.count { it.size >= 2 } * 2 >= p.size }
-}
-
 /** Un álbum reconocido con todas las carpetas que lo tienen, de mejor a peor. */
 @Composable
 private fun AlbumSourcesPage(album: DzAlbum, sources: List<FolderGroup>, state: Map<String, Transfer>, owned: Int, onBack: () -> Unit, onError: (String) -> Unit) {
@@ -427,7 +364,7 @@ private fun AlbumSourcesPage(album: DzAlbum, sources: List<FolderGroup>, state: 
                 Spacer(Modifier.height(10.dp))
                 if (best != null) {
                     val queued = best.files.count { state[best.user + "|" + it.path] != null }
-                    val plan = remember(album, sources) { splitPlan(album, sources) }
+                    val plan = remember(album, sources) { splitPlan(album.tracks, album.artist, sources) }
                     Row {
                         Button(onClick = { slsk.downloadFolder(best.user, best.folder, best.files, onError) }, enabled = queued == 0, shape = RoundedCornerShape(14.dp)) {
                             Icon(Icons.Rounded.Download, null); Spacer(Modifier.width(6.dp))
@@ -748,23 +685,10 @@ private fun chooseFolder(): String? {
     return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile?.let { File(it.path).absolutePath } else null
 }
 
-private fun quality(bitrate: Int?, depth: Int?, rate: Int?): String? = when {
-    depth != null && rate != null -> "$depth bit / ${"%.1f".format(rate / 1000.0)} kHz"
-    bitrate != null && bitrate > 0 -> "$bitrate kbps"
-    else -> null
-}
-
 fun formatSize(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%.1f MB".format(bytes / (1L shl 20).toDouble())
     else -> "${bytes / 1024} KB"
-}
-
-/** "1:05", "12 s" o "1 h 3 min". */
-private fun formatEta(seconds: Long): String = when {
-    seconds < 60 -> "${seconds.coerceAtLeast(1)} s"
-    seconds < 3600 -> "%d:%02d".format(seconds / 60, seconds % 60)
-    else -> "${seconds / 3600} h ${(seconds % 3600) / 60} min"
 }
 
 /**
@@ -788,6 +712,3 @@ private fun SpeedBadge(speed: Long, bytes: Long) {
         if (speed > 0 && bytes > 0) Text("≈ ${formatEta(bytes / speed)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
     }
 }
-
-private fun formatSpeed(bytesPerSec: Long) =
-    if (bytesPerSec >= 1L shl 20) "%.1f MB/s".format(bytesPerSec / (1L shl 20).toDouble()) else "${bytesPerSec / 1024} KB/s"

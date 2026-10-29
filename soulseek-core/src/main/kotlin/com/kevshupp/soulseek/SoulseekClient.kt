@@ -1,6 +1,5 @@
-package com.kevshupp.kevmusic.desktop.soulseek
+package com.kevshupp.soulseek
 
-import com.kevshupp.kevmusic.desktop.Config
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,11 +74,13 @@ private object DistribCode {
     const val EMBEDDED = 93
 }
 
-/** El teléfono, para enviarle lo descargado (lo implementa RemoteClient). */
+/**
+ * Destino de lo descargado: en el PC, el teléfono (lo implementa RemoteClient); en el teléfono, su biblioteca.
+ */
 interface PhoneTarget {
-    /** Por qué no se puede enviar ahora (sin conexión, app antigua), o null si se puede. */
+    /** Por qué no se puede entregar ahora (sin conexión, app antigua), o null si se puede. */
     val blocker: String?
-    /** Devuelve la ruta donde quedó la canción en el teléfono. */
+    /** Devuelve la ruta donde quedó la canción. */
     fun upload(file: File, artistHint: String, albumHint: String, onProgress: (Long) -> Unit): String
 }
 
@@ -100,7 +101,13 @@ class PeerConn(val socket: Socket, @Volatile var username: String, @Volatile var
  *
  * Todo el trabajo de red va en hilos propios (sockets bloqueantes); la interfaz solo lee los StateFlow.
  */
-class SoulseekClient(private val scope: CoroutineScope) {
+class SoulseekClient(
+    private val scope: CoroutineScope,
+    private val config: SlskSettings,
+    /** Carpeta donde se guarda la cola pendiente (soulseek_queue.json). */
+    stateDir: File,
+    private val labels: SlskLabels = SlskLabels()
+) {
     companion object {
         /** En una descarga repartida, tiempo máximo en la cola de un usuario antes de pedir la canción a otro. */
         private const val SPLIT_WAIT_MS = 90_000L
@@ -172,7 +179,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
     @Volatile private var completedUploads = 0
     @Volatile private var avgSpeed = 0L
 
-    private val queueFile = File(Config.dir, "soulseek_queue.json")
+    private val queueFile = File(stateDir, "soulseek_queue.json")
 
     init {
         loadQueue()
@@ -182,7 +189,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
     // ---------- Conexión ----------
 
     fun start() {
-        if (running || !SoulseekConfig.hasAccount) return
+        if (running || !config.hasAccount) return
         running = true
         _status.value = SlskStatus.Connecting
         thread(isDaemon = true, name = "soulseek-server") { runLoop() }
@@ -238,8 +245,8 @@ class SoulseekClient(private val scope: CoroutineScope) {
         socket.keepAlive = true
         serverSocket = socket
         val input = DataInputStream(BufferedInputStream(socket.getInputStream()))
-        val user = SoulseekConfig.username.trim()
-        val pass = SoulseekConfig.password
+        val user = config.username.trim()
+        val pass = config.password
         val hash = MessageDigest.getInstance("MD5").digest((user + pass).toByteArray()).joinToString("") { "%02x".format(it) }
         sendServer(MsgWriter().str(user).str(pass).u32(CLIENT_VERSION).str(hash).u32(MINOR_VERSION).frame(ServerCode.LOGIN))
 
@@ -296,7 +303,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
 
     private fun openListener() {
         if (listener != null) return
-        val base = SoulseekConfig.port
+        val base = config.port
         for (p in base..base + 10) {
             val ss = runCatching { ServerSocket(p) }.getOrNull() ?: continue
             listener = ss
@@ -308,7 +315,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
                     pool.execute { handleIncoming(s) }
                 }
             }
-            if (SoulseekConfig.useUpnp) pool.execute {
+            if (config.useUpnp) pool.execute {
                 val ip = runCatching { Upnp.open(p) }.getOrNull()
                 _portInfo.value = when {
                     ip == null -> "Puerto $p sin abrir: el router no respondió a UPnP. Ábrelo a mano para más velocidad."
@@ -343,7 +350,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
             ServerCode.FILE_SEARCH -> { val user = r.str(); val token = r.u32(); onSearchRequest(user, token, r.str()) }
             ServerCode.EMBEDDED_MESSAGE -> handleDistrib(r.u8(), r)
             ServerCode.POSSIBLE_PARENTS -> {
-                if (parent != null) return
+                if (parent != null || !config.joinDistributed) return
                 val list = (0 until r.u32()).map { Triple(r.str(), r.ip(), r.u32().toInt()) }
                 pool.execute { connectParent(list) }
             }
@@ -468,7 +475,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
         when (code) {
             PeerCode.SHARED_FILE_LIST_REQUEST -> c.send(shares.sharedListMessage())
             PeerCode.USER_INFO_REQUEST -> c.send(
-                MsgWriter().str("KevMusic Desktop").bool(false).u32(SoulseekConfig.uploadSlots).u32(queuedUploads())
+                MsgWriter().str(labels.clientName).bool(false).u32(config.uploadSlots).u32(queuedUploads())
                     .bool(freeSlot()).u32(1).frame(PeerCode.USER_INFO_RESPONSE)
             )
             PeerCode.FOLDER_CONTENTS_REQUEST -> {
@@ -740,7 +747,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
     fun retry(id: Long) {
         val t = dl[id] ?: return
         if (t.localPath.isNotEmpty() && File(t.localPath).isFile) {
-            updateDl(id) { it.copy(state = TransferState.Sending, detail = "Esperando al teléfono") }
+            updateDl(id) { it.copy(state = TransferState.Sending, detail = labels.waiting, deliveryFailed = false) }
             toPhone.add(id)
         } else {
             updateDl(id) { it.copy(state = TransferState.Queued, detail = "Pendiente", done = 0) }
@@ -817,10 +824,10 @@ class SoulseekClient(private val scope: CoroutineScope) {
     }
 
     private fun onDownloaded(id: Long, file: File) {
-        updateDl(id) { it.copy(state = TransferState.Done, done = it.size, speed = 0, detail = "En el PC", localPath = file.path) }
+        updateDl(id) { it.copy(state = TransferState.Done, done = it.size, speed = 0, detail = labels.downloaded, localPath = file.path) }
         scheduleRescan()
-        if (SoulseekConfig.sendToPhone) {
-            updateDl(id) { it.copy(state = TransferState.Sending, detail = "Esperando al teléfono", done = 0) }
+        if (config.sendToPhone) {
+            updateDl(id) { it.copy(state = TransferState.Sending, detail = labels.waiting, done = 0) }
             toPhone.add(id)
         }
     }
@@ -831,15 +838,15 @@ class SoulseekClient(private val scope: CoroutineScope) {
             val id = toPhone.take()
             val t = dl[id] ?: continue
             val file = File(t.localPath)
-            if (!file.isFile) { failDl(id, "El archivo ya no está en el PC"); continue }
+            if (!file.isFile) { failDl(id, labels.localMissing); continue }
             // Sin teléfono o con una app que no recibe canciones, espera (no falla) y lo muestra
             while (true) {
-                val blocker = phone?.blocker ?: if (phone == null) "Esperando al teléfono" else break
+                val blocker = phone?.blocker ?: if (phone == null) labels.waiting else break
                 if (dl[id]?.detail != blocker) updateDl(id) { it.copy(detail = blocker) }
                 Thread.sleep(3000)
             }
             try {
-                updateDl(id) { it.copy(detail = "Enviando al teléfono", done = 0, size = file.length()) }
+                updateDl(id) { it.copy(detail = labels.sending, done = 0, size = file.length()) }
                 val parts = t.path.split('\\').dropLast(1)
                 val album = parts.lastOrNull().orEmpty()
                 val artist = parts.dropLast(1).lastOrNull().orEmpty()
@@ -848,20 +855,21 @@ class SoulseekClient(private val scope: CoroutineScope) {
                     val now = System.currentTimeMillis()
                     if (now - last > 300) { last = now; updateDl(id) { it.copy(done = sent) } }
                 }
-                if (!SoulseekConfig.keepOnPc) { file.delete(); scheduleRescan() }
-                updateDl(id) { it.copy(state = TransferState.Done, done = it.size, detail = "En el teléfono: ${path.substringAfterLast("/Music/").ifBlank { path }}") }
+                if (!config.keepOnPc) { file.delete(); scheduleRescan() }
+                updateDl(id) { it.copy(state = TransferState.Done, done = it.size, detail = "${labels.delivered}: ${path.substringAfterLast("/Music/").ifBlank { path }}") }
             } catch (e: Exception) {
-                failDl(id, "No se pudo enviar al teléfono: ${e.message ?: e.javaClass.simpleName}")
+                updateDl(id) { it.copy(state = TransferState.Failed, speed = 0, deliveryFailed = true,
+                    detail = "${labels.deliveryFailed}: ${e.message ?: e.javaClass.simpleName}") }
             }
         }
     }
 
-    private fun partFile(t: Transfer) = File(File(SoulseekConfig.downloadDir, ".incompleto"), "${t.username.hashCode().toUInt()}_${safe(t.name)}.part")
+    private fun partFile(t: Transfer) = File(File(config.downloadDir, ".incompleto"), "${t.username.hashCode().toUInt()}_${safe(t.name)}.part")
 
     /** `<carpeta de descargas>/<carpeta remota>/<archivo>`; nunca sobrescribe. */
     private fun finalFile(t: Transfer): File {
         val folder = safe(t.folder.ifBlank { t.path.split('\\').dropLast(1).lastOrNull().orEmpty().ifBlank { t.username } })
-        val dir = File(SoulseekConfig.downloadDir, folder)
+        val dir = File(config.downloadDir, folder)
         val name = safe(t.name)
         var f = File(dir, name)
         var n = 2
@@ -891,7 +899,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
 
     // ---------- Subidas ----------
 
-    private fun freeSlot() = ul.values.count { it.state == TransferState.Connecting || it.state == TransferState.Transferring } < SoulseekConfig.uploadSlots
+    private fun freeSlot() = ul.values.count { it.state == TransferState.Connecting || it.state == TransferState.Transferring } < config.uploadSlots
     private fun queuedUploads() = ul.values.count { it.state == TransferState.Queued }
 
     private fun queueUpload(c: PeerConn, path: String) {
@@ -916,7 +924,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
     @Synchronized
     private fun scheduleUploads() {
         var active = ul.values.count { it.state == TransferState.Connecting || it.state == TransferState.Transferring }
-        while (active < SoulseekConfig.uploadSlots) {
+        while (active < config.uploadSlots) {
             val busy = ul.values.filter { it.state == TransferState.Connecting || it.state == TransferState.Transferring }.map { it.username }.toSet()
             val queued = ul.values.filter { it.state == TransferState.Queued }.sortedBy { it.id }
             // Turnos: primero quien no está recibiendo nada
@@ -992,7 +1000,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
 
     /** Límite de subida repartido entre las subidas activas. */
     private fun throttle(started: Long, bytes: Long) {
-        val limit = SoulseekConfig.uploadLimit
+        val limit = config.uploadLimit
         if (limit <= 0) return
         val active = ul.values.count { it.state == TransferState.Transferring }.coerceAtLeast(1)
         val perUpload = limit * 1024L / active
@@ -1015,8 +1023,11 @@ class SoulseekClient(private val scope: CoroutineScope) {
     @Volatile private var rescanPending = false
 
     fun rescanShares() {
-        shares.rescan(SoulseekConfig.sharedFolders)
+        shares.rescan(config.sharedFolders)
         _shareStats.value = shares.folderCount to shares.fileCount
+        // Dejó de compartir: sale de la red distribuida (el servidor le ofrecerá padres de nuevo si vuelve)
+        if (!config.joinDistributed) parent?.let { p -> parent = null; p.close() }
+        else if (parent == null && _status.value is SlskStatus.Online) runCatching { sendServer(MsgWriter().bool(true).frame(ServerCode.HAVE_NO_PARENT)) }
         if (_status.value is SlskStatus.Online) sendShareCounts()
     }
 
@@ -1053,7 +1064,7 @@ class SoulseekClient(private val scope: CoroutineScope) {
                 val local = o.optString("local")
                 val t = if (local.isNotEmpty() && File(local).isFile) {
                     Transfer(ids.getAndIncrement(), o.getString("user"), o.getString("path"), o.optLong("size"),
-                        state = TransferState.Sending, detail = "Esperando al teléfono", localPath = local).also { toPhone.add(it.id) }
+                        state = TransferState.Sending, detail = labels.waiting, localPath = local).also { toPhone.add(it.id) }
                 } else {
                     Transfer(ids.getAndIncrement(), o.getString("user"), o.getString("path"), o.optLong("size"), detail = "Pendiente", folder = o.optString("folder"))
                 }

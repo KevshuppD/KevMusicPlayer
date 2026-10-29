@@ -4,87 +4,40 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.kevshupp.kevmusic.desktop.Config
+import com.kevshupp.kevmusic.desktop.DzAlbum
+import com.kevshupp.soulseek.SlskSettings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.TimeUnit
 
-val AUDIO_EXTENSIONS = setOf("mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "wma", "alac", "ape")
-
-/** Un archivo de un resultado de búsqueda o de una carpeta remota. Las rutas usan `\` como en Windows. */
-data class SlskFile(
-    val path: String,
-    val size: Long,
-    val bitrate: Int?,
-    val durationSec: Int?,
-    val sampleRate: Int? = null,
-    val bitDepth: Int? = null
-) {
-    val name get() = path.substringAfterLast('\\')
-    val folder get() = path.substringBeforeLast('\\', "")
-    val extension get() = name.substringAfterLast('.', "").lowercase()
-}
-
-/** Respuesta de un usuario a una búsqueda. */
-data class SlskResult(
-    val username: String,
-    val files: List<SlskFile>,
-    val freeSlot: Boolean,
-    val speed: Long,
-    val queue: Long
-)
-
-enum class TransferState { Queued, Waiting, Connecting, Transferring, Sending, Done, Failed }
-
-/** Descarga (de otro usuario a este PC) o subida (de este PC a otro usuario). */
-data class Transfer(
-    val id: Long,
-    val username: String,
-    val path: String,
-    val size: Long,
-    val state: TransferState = TransferState.Queued,
-    val done: Long = 0,
-    val speed: Long = 0,
-    val detail: String = "",
-    val localPath: String = "",
-    /** Carpeta de destino fija (descarga repartida: todas las canciones del álbum juntas aunque vengan de varios usuarios). */
-    val folder: String = ""
-) {
-    val name get() = path.substringAfterLast('\\')
-    val progress get() = if (size > 0) (done.toFloat() / size).coerceIn(0f, 1f) else 0f
-    val finished get() = state == TransferState.Done || state == TransferState.Failed
-    /** Descargada en el PC pero todavía no enviada al teléfono (esperando o con el envío fallido). */
-    val awaitingPhone get() = localPath.isNotEmpty() && (state == TransferState.Sending || (state == TransferState.Failed && detail.contains("teléfono")))
-}
-
-sealed interface SlskStatus {
-    data object Off : SlskStatus
-    data object Connecting : SlskStatus
-    data class Online(val username: String) : SlskStatus
-    data class Failed(val message: String) : SlskStatus
-}
+// El protocolo y el cliente están en soulseek-core (com.kevshupp.soulseek), compartido con la app de Android
 
 /**
  * Ajustes y cuenta de Soulseek en ~/.config/kevmusic-desktop/soulseek.json (solo legible por el usuario,
  * contiene la contraseña).
  */
-object SoulseekConfig {
+object SoulseekConfig : SlskSettings {
     private val file = File(Config.dir, "soulseek.json")
 
-    var username by mutableStateOf("")
-    var password by mutableStateOf("")
+    override var username by mutableStateOf("")
+    override var password by mutableStateOf("")
     var autoConnect by mutableStateOf(true)
-    var sharedFolders by mutableStateOf<List<String>>(emptyList())
-    var downloadDir by mutableStateOf("")
-    var port by mutableStateOf(2234)
-    var useUpnp by mutableStateOf(true)
-    var uploadSlots by mutableStateOf(3)
+    override var sharedFolders by mutableStateOf<List<String>>(emptyList())
+    override var downloadDir by mutableStateOf("")
+    override var port by mutableStateOf(2234)
+    override var useUpnp by mutableStateOf(true)
+    override var uploadSlots by mutableStateOf(3)
     /** KB/s; 0 sin límite. */
-    var uploadLimit by mutableStateOf(0)
-    var sendToPhone by mutableStateOf(true)
+    override var uploadLimit by mutableStateOf(0)
+    override var sendToPhone by mutableStateOf(true)
     /** Conservar la copia del PC tras enviarla al teléfono (y seguir compartiéndola). */
-    var keepOnPc by mutableStateOf(true)
-
-    val hasAccount get() = username.isNotBlank() && password.isNotBlank()
+    override var keepOnPc by mutableStateOf(true)
 
     fun load() {
         val music = xdgMusicDir()
@@ -130,4 +83,34 @@ object SoulseekConfig {
         val value = line?.substringAfter('=')?.trim('"')?.replace("\$HOME", home)
         return value?.let { File(it) }?.takeIf { it.path != home } ?: File(home, "Music")
     }
+}
+
+/** Álbumes de Deezer para reconocerlos en los resultados (la API es pública: va directo desde el PC). */
+object DeezerAlbums {
+    private val http = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).build()
+
+    /** Álbumes de Deezer para la búsqueda, en su orden de relevancia. */
+    suspend fun searchAlbums(query: String): List<DzAlbum> = withContext(Dispatchers.IO) {
+        runCatching {
+            val url = "https://api.deezer.com/search/album".toHttpUrl().newBuilder()
+                .addQueryParameter("q", query).addQueryParameter("limit", "25").build()
+            http.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+                if (!resp.isSuccessful) return@use emptyList()
+                val data = JSONObject(resp.body!!.string()).optJSONArray("data") ?: return@use emptyList()
+                (0 until data.length()).map { data.getJSONObject(it) }.map { o ->
+                    DzAlbum(
+                        id = o.optLong("id"),
+                        title = o.optString("title"),
+                        artist = o.optJSONObject("artist")?.optString("name").orEmpty(),
+                        cover = o.optString("cover_big").ifBlank { o.optString("cover_medium") },
+                        tracks = o.optInt("nb_tracks"),
+                        type = o.optString("record_type"),
+                        year = "",
+                        owned = 0
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
 }

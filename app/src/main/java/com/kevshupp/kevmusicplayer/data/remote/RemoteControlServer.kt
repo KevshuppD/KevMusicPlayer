@@ -3,7 +3,6 @@ package com.kevshupp.kevmusicplayer.data.remote
 import com.kevshupp.kevmusicplayer.BuildConfig
 import android.content.Context
 import android.media.AudioManager
-import android.media.MediaMetadataRetriever
 import android.net.ConnectivityManager
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
@@ -14,11 +13,11 @@ import android.os.Looper
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import com.kevshupp.kevmusicplayer.data.LibraryImport
 import com.kevshupp.kevmusicplayer.data.AppDatabase
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.data.PreferenceConstants
 import com.kevshupp.kevmusicplayer.data.TelemetryLogger
-import com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack
 import com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks
 import com.kevshupp.kevmusicplayer.data.telegram.TelegramDownloadQueue
 import com.kevshupp.kevmusicplayer.ui.screens.loadAlbumArtBitmap
@@ -565,40 +564,12 @@ class RemoteControlServer(
                 if (expected != null && expected != actual) return text(Response.Status.BAD_REQUEST, "El archivo llegó dañado")
 
                 val hint = { key: String -> session.parameters[key]?.firstOrNull().orEmpty() }
-                val tags = readTags(temp)
-                val track = DeezerTrack(
-                    id = 0,
-                    title = tags[0].ifBlank { name.substringBeforeLast('.') },
-                    artist = tags[1].ifBlank { hint("artist") },
-                    album = tags[2].ifBlank { hint("album") },
-                    durationSec = 0, coverSmall = "", coverXl = "", link = ""
-                )
-                val saved = TelegramDownloadQueue.saveToMusicFolder(context, temp, track)
-                runBlocking { TelegramDownloadQueue.scanFile(context, saved) }
-                // El escaneo de la biblioteca lo hace el ViewModel (con la app cerrada, entra en el siguiente)
-                Handler(Looper.getMainLooper()).post { TelegramDownloadQueue.onSongSaved?.invoke() }
+                val track = LibraryImport.import(context, temp, name.substringBeforeLast('.'), hint("artist"), hint("album"))
+                val saved = track.file
                 TelemetryLogger.logInfo(context, "Remote", "Recibida desde el PC: ${saved.absolutePath}")
                 return json(JSONObject().put("ok", true).put("path", saved.absolutePath).put("title", track.title).put("artist", track.artist).toString())
             } finally {
                 temp.delete()
-            }
-        }
-
-        /** Título, artista (o el del álbum) y álbum de las etiquetas. */
-        private fun readTags(file: File): List<String> {
-            val r = MediaMetadataRetriever()
-            return try {
-                r.setDataSource(file.absolutePath)
-                listOf(
-                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE).orEmpty().trim(),
-                    (r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
-                        ?: r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)).orEmpty().trim(),
-                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM).orEmpty().trim()
-                )
-            } catch (e: Exception) {
-                listOf("", "", "")
-            } finally {
-                r.release()
             }
         }
 

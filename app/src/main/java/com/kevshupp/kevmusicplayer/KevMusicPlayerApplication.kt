@@ -18,6 +18,7 @@ class KevMusicPlayerApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         com.kevshupp.kevmusicplayer.data.telegram.DeezerTrackSearch.cacheDir = cacheDir
         instance = this
+        com.kevshupp.kevmusicplayer.data.soulseek.SoulseekManager.init(this)
         
         // Setup global uncaught exception handler to log any app crashes to telemetry
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()

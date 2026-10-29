@@ -152,6 +152,16 @@ fun LibrarySettingsSection(
     OnDemandSettingsCard(context, getLocalized)
     Spacer(modifier = Modifier.height(12.dp))
 
+    var showSoulseek by remember { mutableStateOf(false) }
+    SoulseekSettingsCard(context, getLocalized) { showSoulseek = true }
+    if (showSoulseek) {
+        com.kevshupp.kevmusicplayer.ui.screens.dialogs.SoulseekDialog(
+            librarySongs = viewModel.localAudioFiles,
+            onDismiss = { showSoulseek = false }
+        )
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+
     // Single unified card for Statistics and Maintenance Sections
     Card(
         shape = RoundedCornerShape(24.dp),
