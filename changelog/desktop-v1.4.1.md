@@ -1,0 +1,3 @@
+- **Soulseek más estable**
+  - Las búsquedas con muchos resultados ya no llenan la memoria ni dejan cientos de conexiones abiertas.
+  - El cliente de Soulseek ahora es el mismo que usa la app del teléfono.
