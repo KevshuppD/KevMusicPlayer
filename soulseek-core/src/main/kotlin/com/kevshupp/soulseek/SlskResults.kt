@@ -33,6 +33,17 @@ fun isHighQuality(f: SlskFile): Boolean {
     return kbps >= 256
 }
 
+/**
+ * MP3 a 320 kbps. Con el bitrate que envía el usuario basta 316 o más; estimado con tamaño y duración, 300
+ * (la carátula y las etiquetas lo inflan un poco y un V0 queda en ~245–260).
+ */
+fun isMp3_320(f: SlskFile): Boolean {
+    if (f.extension != "mp3") return false
+    f.bitrate?.let { return it >= 316 }
+    val sec = f.durationSec?.takeIf { it > 0 } ?: return false
+    return f.size * 8 / 1000 / sec >= 300
+}
+
 /** Mejores fuentes primero: completas, disponibles ahora, sin pérdida, mayor bitrate, más rápidas. */
 fun rankSources(albumTracks: Int, sources: List<FolderGroup>): List<FolderGroup> = sources.sortedWith(
     compareByDescending<FolderGroup> { albumTracks > 0 && it.files.size >= albumTracks }

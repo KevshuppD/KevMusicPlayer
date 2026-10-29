@@ -2,6 +2,8 @@ package com.kevshupp.kevmusicplayer.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -47,6 +49,9 @@ class ArtistOnlineState(matcher: LibraryMatcher) {
     /** Se actualiza al cambiar la biblioteca (descargas, borrados) sin cerrar el álbum abierto. */
     var matcher by mutableStateOf(matcher)
     var openAlbum by mutableStateOf<DeezerAlbum?>(null)
+    var showAllTop by mutableStateOf(false)
+    /** Tipo elegido en la pestaña Discografía (`album`, `ep`, `single`, `compile`), null = todos. */
+    var discoFilter by mutableStateOf<String?>(null)
 }
 
 /**
@@ -86,82 +91,198 @@ fun rememberArtistOnline(artistName: String?, librarySongs: List<AudioFile>): Ar
     return state
 }
 
-/** Secciones "Populares" y "Discografía" debajo de la cabecera del artista. */
-fun LazyListScope.artistOnlineSection(
-    state: ArtistOnlineState?,
-    viewModel: MediaBrowserViewModel?,
-    onPlayLocal: (AudioFile) -> Unit,
+/** Pestañas del perfil de artista en modo bajo demanda (como en Spotify). */
+enum class ArtistTab { OVERVIEW, LOCAL, DISCOGRAPHY }
+
+/** Cuántas populares se ven en Resumen antes de "Ver más". */
+private const val TOP_PREVIEW = 5
+
+/**
+ * Fila de pestañas bajo la cabecera del artista. Antes todo iba en una sola lista (populares, discografía y
+ * todas las canciones locales) y las populares que ya tienes salían dos veces.
+ */
+fun LazyListScope.artistTabsRow(
+    selected: ArtistTab,
+    localCount: Int,
+    onSelect: (ArtistTab) -> Unit,
     getLocalized: (String, String) -> String
 ) {
-    if (state == null || (state.topTracks.isEmpty() && state.albums.isEmpty() && !state.loading)) return
-    if (state.loading && state.topTracks.isEmpty()) {
+    item(key = "artist_tabs") {
+        val tabs = listOf(
+            ArtistTab.OVERVIEW to getLocalized("Resumen", "Overview"),
+            ArtistTab.LOCAL to getLocalized("En tu biblioteca", "In your library") + " ($localCount)",
+            ArtistTab.DISCOGRAPHY to getLocalized("Discografía", "Discography")
+        )
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 8.dp).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            tabs.forEach { (tab, label) ->
+                FilterChip(
+                    selected = selected == tab,
+                    onClick = { onSelect(tab) },
+                    label = { Text(label, fontWeight = if (selected == tab) FontWeight.Bold else FontWeight.Normal) },
+                    shape = RoundedCornerShape(50)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Contenido en línea de la pestaña elegida: Resumen = populares (5, "Ver más" hasta 10) y una fila de la
+ * discografía; Discografía = todos los lanzamientos en cuadrícula con filtro por tipo. En "En tu biblioteca"
+ * no se dibuja nada aquí (son las canciones locales de la lista).
+ */
+fun LazyListScope.artistOnlineSection(
+    state: ArtistOnlineState?,
+    tab: ArtistTab,
+    viewModel: MediaBrowserViewModel?,
+    onPlayLocal: (AudioFile) -> Unit,
+    onSelectTab: (ArtistTab) -> Unit,
+    getLocalized: (String, String) -> String
+) {
+    if (state == null || tab == ArtistTab.LOCAL) return
+    if (state.loading && state.topTracks.isEmpty() && state.albums.isEmpty()) {
         item(key = "artist_online_loading") {
             Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
             }
         }
+        return
     }
-    if (state.topTracks.isNotEmpty()) {
-        item(key = "artist_online_top_header") { OnlineSectionTitle(getLocalized("Populares", "Popular")) }
-        itemsIndexed(state.topTracks, key = { _, t -> "artist_online_top_${t.id}" }) { index, track ->
-            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "${index + 1}",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-                    modifier = Modifier.width(22.dp)
-                )
-                Box(Modifier.weight(1f)) { OnlineTrackRow(track, state.matcher, viewModel, onPlayLocal, getLocalized) }
-            }
+    if (!state.loading && state.topTracks.isEmpty() && state.albums.isEmpty()) {
+        item(key = "artist_online_empty") {
+            Text(
+                getLocalized("No se encontró este artista en línea.", "This artist wasn't found online."),
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
+            )
         }
+        return
     }
-    if (state.albums.isNotEmpty()) {
-        item(key = "artist_online_albums") {
-            OnlineSectionTitle(getLocalized("Discografía", "Discography"))
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
-            ) {
-                items(state.albums, key = { it.id }) { album ->
-                    val owned = remember(album, state.matcher) { state.matcher.albumSongCount(album) }
-                    Column(Modifier.width(120.dp).clickable { state.openAlbum = album }) {
-                        SubcomposeAsyncImage(
-                            model = album.cover,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(120.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            album.title,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Text(
-                            listOfNotNull(
-                                album.year.ifBlank { null },
-                                recordTypeLabel(album.recordType, getLocalized),
-                                if (owned > 0) getLocalized("Tienes $owned", "You have $owned") else null
-                            ).joinToString(" · "),
-                            fontSize = 10.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = if (owned > 0) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                        )
+    if (tab == ArtistTab.OVERVIEW) {
+        if (state.topTracks.isNotEmpty()) {
+            item(key = "artist_online_top_header") { OnlineSectionTitle(getLocalized("Populares", "Popular")) }
+            val shown = if (state.showAllTop) state.topTracks else state.topTracks.take(TOP_PREVIEW)
+            itemsIndexed(shown, key = { _, t -> "artist_online_top_${t.id}" }) { index, track ->
+                Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${index + 1}",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                        modifier = Modifier.width(22.dp)
+                    )
+                    Box(Modifier.weight(1f)) { OnlineTrackRow(track, state.matcher, viewModel, onPlayLocal, getLocalized) }
+                }
+            }
+            if (state.topTracks.size > TOP_PREVIEW) {
+                item(key = "artist_online_top_more") {
+                    TextButton(onClick = { state.showAllTop = !state.showAllTop }, modifier = Modifier.padding(start = 24.dp)) {
+                        Text(if (state.showAllTop) getLocalized("Ver menos", "Show less") else getLocalized("Ver más", "Show more"))
                     }
                 }
             }
         }
+        if (state.albums.isNotEmpty()) {
+            item(key = "artist_online_albums") {
+                Row(Modifier.fillMaxWidth().padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { OnlineSectionTitle(getLocalized("Discografía", "Discography")) }
+                    TextButton(onClick = { onSelectTab(ArtistTab.DISCOGRAPHY) }) { Text(getLocalized("Ver todo", "See all")) }
+                }
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                ) {
+                    items(state.albums.take(10), key = { it.id }) { album ->
+                        OnlineAlbumCard(album, state, Modifier.width(120.dp), getLocalized)
+                    }
+                }
+            }
+        }
+        return
     }
+    // Discografía completa
+    val types = state.albums.map { it.recordType }.distinct()
+    item(key = "artist_disco_filters") {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = state.discoFilter == null,
+                onClick = { state.discoFilter = null },
+                label = { Text(getLocalized("Todo", "All")) }
+            )
+            listOf("album", "ep", "single", "compile").filter { it in types }.forEach { type ->
+                FilterChip(
+                    selected = state.discoFilter == type,
+                    onClick = { state.discoFilter = if (state.discoFilter == type) null else type },
+                    label = { Text(recordTypePlural(type, getLocalized)) }
+                )
+            }
+        }
+    }
+    val filtered = state.albums.filter { state.discoFilter == null || it.recordType == state.discoFilter }
+    items(filtered.chunked(2), key = { row -> "artist_disco_" + row.joinToString("_") { it.id.toString() } }) { row ->
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            row.forEach { album -> OnlineAlbumCard(album, state, Modifier.weight(1f), getLocalized) }
+            if (row.size == 1) Spacer(Modifier.weight(1f))
+        }
+    }
+}
+
+/** Portada cuadrada, título y "año · tipo · Tienes N"; abre [ArtistOnlineAlbumDialog]. */
+@Composable
+private fun OnlineAlbumCard(album: DeezerAlbum, state: ArtistOnlineState, modifier: Modifier, getLocalized: (String, String) -> String) {
+    val owned = remember(album, state.matcher) { state.matcher.albumSongCount(album) }
+    Column(modifier.clickable { state.openAlbum = album }) {
+        SubcomposeAsyncImage(
+            model = album.cover,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            album.title,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        Text(
+            listOfNotNull(
+                album.year.ifBlank { null },
+                recordTypeLabel(album.recordType, getLocalized),
+                if (owned > 0) getLocalized("Tienes $owned", "You have $owned") else null
+            ).joinToString(" · "),
+            fontSize = 10.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = if (owned > 0) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+        )
+    }
+}
+
+private fun recordTypePlural(type: String, getLocalized: (String, String) -> String): String = when (type) {
+    "album" -> getLocalized("Álbumes", "Albums")
+    "single" -> "Singles"
+    "ep" -> "EPs"
+    "compile" -> getLocalized("Recopilatorios", "Compilations")
+    else -> type
 }
 
 /** Pistas de un álbum de Deezer: las que tienes suenan desde la biblioteca, el resto bajo demanda. */

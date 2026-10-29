@@ -143,16 +143,23 @@ private fun SearchTab(librarySongs: List<AudioFile>, downloads: List<Transfer>) 
     val keyboard = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
-    var lossless by remember { mutableStateOf(false) }
-    var hq by remember { mutableStateOf(false) }
+    // Formato: "all", "flac" (sin pérdida) o "mp3_320"; se recuerda entre búsquedas
+    val prefs = LocalContext.current.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE)
+    var format by remember { mutableStateOf(prefs.getString("soulseek_format", "all") ?: "all") }
     var onlyFree by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var albums by remember { mutableStateOf<List<DeezerAlbum>>(emptyList()) }
     var openAlbum by remember { mutableStateOf<DeezerAlbum?>(null) }
     var expanded by remember(results.isEmpty()) { mutableStateOf(setOf<String>()) }
 
-    val groups = remember(results, lossless, hq, onlyFree) {
-        folderGroups(results.filter { !onlyFree || it.freeSlot }) { (!lossless || it.extension in LOSSLESS) && (!hq || isHighQuality(it)) }
+    val groups = remember(results, format, onlyFree) {
+        folderGroups(results.filter { !onlyFree || it.freeSlot }) {
+            when (format) {
+                "flac" -> it.extension in LOSSLESS
+                "mp3_320" -> isMp3_320(it)
+                else -> true
+            }
+        }
             .sortedWith(compareByDescending<FolderGroup> { it.free }.thenByDescending { it.speed }.thenBy { it.queue })
     }
     val state = remember(downloads) { downloads.associateBy { it.username + "|" + it.path } }
@@ -201,8 +208,12 @@ private fun SearchTab(librarySongs: List<AudioFile>, downloads: List<Transfer>) 
         )
         Spacer(Modifier.height(8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilterChip(lossless, { lossless = !lossless }, label = { Text("Sin pérdida") })
-            FilterChip(hq, { hq = !hq }, label = { Text("Alta calidad") })
+            listOf("all" to "Todos", "flac" to "FLAC", "mp3_320" to "MP3 320").forEach { (key, label) ->
+                FilterChip(format == key, {
+                    format = key
+                    prefs.edit().putString("soulseek_format", key).apply()
+                }, label = { Text(label) })
+            }
             FilterChip(onlyFree, { onlyFree = !onlyFree }, label = { Text("Disponible ahora") })
         }
         if (results.isNotEmpty() || searching) {

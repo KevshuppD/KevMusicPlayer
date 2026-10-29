@@ -971,6 +971,9 @@ fun LibraryScreen(
                 }
                  // Modo bajo demanda: populares y discografía de Deezer del artista (en caché 7 días)
                  val artistOnline = rememberArtistOnline((subView as? SubView.ArtistDetail)?.artistName, audioFiles)
+                 // Con el perfil en línea, el artista se divide en pestañas: Resumen, En tu biblioteca y Discografía
+                 val artistTabbed = subView is SubView.ArtistDetail && artistOnline != null
+                 var artistTab by remember(subView) { mutableStateOf(ArtistTab.OVERVIEW) }
                  // Play stats live outside the song list, so only the history view needs to follow them
                  val historyStatsVersion = if (subView is SubView.HistoryDetail) viewModel?.statsVersion?.intValue ?: 0 else 0
                  val subSongs = remember(filteredFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy, historyStatsVersion) {
@@ -1223,7 +1226,7 @@ fun LibraryScreen(
                     // Songs listing under the sub-view
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         SongListView(
-                            songs = subSongs,
+                            songs = if (artistTabbed && artistTab != ArtistTab.LOCAL) emptyList() else subSongs,
                             showTrackNumbers = subView is SubView.AlbumDetail,
                             listState = subViewSongsListState,
                             isCompact = isCompact,
@@ -1563,14 +1566,17 @@ fun LibraryScreen(
                                     }
                                 }
                                 
-                                if (subView is SubView.ArtistDetail) {
+                                if (artistTabbed) {
+                                    artistTabsRow(artistTab, subSongs.size, { artistTab = it }, getLocalized)
+                                }
+                                if (subView is SubView.ArtistDetail && (!artistTabbed || artistTab != ArtistTab.DISCOGRAPHY)) {
                                     item {
                                         val artistAlbums = remember(subSongs) {
                                             subSongs.groupBy { it.album }.filterKeys { it.isNotBlank() }
                                         }
                                         if (artistAlbums.isNotEmpty()) {
                                             Text(
-                                                text = getLocalized("Álbumes", "Albums"),
+                                                text = if (artistTabbed) getLocalized("Tus álbumes", "Your albums") else getLocalized("Álbumes", "Albums"),
                                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                                 color = MaterialTheme.colorScheme.onBackground,
                                                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
@@ -1641,7 +1647,7 @@ fun LibraryScreen(
                                     }
                                 }
                                 if (subView is SubView.ArtistDetail) {
-                                    artistOnlineSection(artistOnline, viewModel, { onFileClick(it, subSongs) }, getLocalized)
+                                    artistOnlineSection(artistOnline, artistTab, viewModel, { onFileClick(it, subSongs) }, { artistTab = it }, getLocalized)
                                 }
                             }
                         )
