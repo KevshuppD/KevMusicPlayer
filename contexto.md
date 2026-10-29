@@ -230,7 +230,12 @@ sequenceDiagram
 - **Variantes de compilación:**
   - **Release:** `com.kevshupp.kevmusicplayer` (distribución final).
   - **Debug:** `com.kevshupp.kevmusicplayer.debug` (icono con tuerca ⚙️ para permitir co-instalación simultánea en el mismo teléfono).
-- **Huella digital SHA-1 común (`shared.keystore`):**
+- **Firma de la release (llave privada, desde el 29/10/2026):** `~/.android-keys/kevshupp-release.jks` (PKCS12, RSA 4096, alias `kevshupp`, `CN=Kevin Castro, O=KevshuppDev`), fuera del repo y pensada para todos los proyectos Android. GitHub Actions la recibe en `RELEASE_KEYSTORE_BASE64`, `RELEASE_KEY_ALIAS`, `RELEASE_KEYSTORE_PASSWORD` y `RELEASE_KEY_PASSWORD`; en el PC se usa si `local.properties` tiene `RELEASE_KEYSTORE_PASSWORD`; si no, la release cae en `shared.keystore`. La debug firma siempre con `shared.keystore` (`signingConfigs.shared`), para no cambiar su SHA-1 en Firebase. Antes faltaban la contraseña y el alias y todas las releases hasta la v1.11.x se firmaron con `shared.keystore`, que es público: pasar a la nueva obliga a desinstalar la release una vez.
+  ```text
+  SHA-1:   AC:EB:16:A7:FF:F1:B0:C7:03:F3:0F:1A:45:4D:33:9D:08:F2:A6:7B
+  SHA-256: 37:C4:5A:83:1A:C2:5E:D9:FF:10:43:2E:69:FC:25:EB:F2:B7:FD:81:98:03:96:45:D1:8C:70:90:3F:97:86:8A
+  ```
+- **Huella SHA-1 de `shared.keystore` (debug y releases antiguas; contraseña pública en el repo):**
   ```text
   89:65:60:13:60:21:43:9E:12:A0:49:6E:73:F1:04:24:EE:2B:CC:AC
   ```

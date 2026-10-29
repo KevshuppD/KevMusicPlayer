@@ -46,15 +46,30 @@ android {
     }
 
     signingConfigs {
+        // Debug: siempre shared.keystore (su SHA-1 está registrado en la app debug de Firebase)
+        create("shared") {
+            storeFile = file("shared.keystore")
+            storePassword = "password"
+            keyAlias = "devkey"
+            keyPassword = "password"
+        }
+        // Release: llave privada desde GitHub Actions (variables RELEASE_*) o, en el PC,
+        // ~/.android-keys/kevshupp-release.jks con RELEASE_KEYSTORE_PASSWORD en local.properties
         create("release") {
+            val localProps = Properties().apply {
+                val f = rootProject.file("local.properties")
+                if (f.exists()) f.inputStream().use { load(it) }
+            }
+            val localKeystore = file("${System.getProperty("user.home")}/.android-keys/kevshupp-release.jks")
             val keystoreFilePath = System.getenv("RELEASE_KEYSTORE_FILE")
-            val alias = System.getenv("RELEASE_KEY_ALIAS")
-            val pass = System.getenv("RELEASE_KEYSTORE_PASSWORD")
-            if (!keystoreFilePath.isNullOrEmpty() && file(keystoreFilePath).exists() && !alias.isNullOrBlank() && !pass.isNullOrBlank()) {
+                ?.takeIf { it.isNotEmpty() } ?: localKeystore.takeIf { it.exists() }?.path
+            val alias = System.getenv("RELEASE_KEY_ALIAS") ?: localProps.getProperty("RELEASE_KEY_ALIAS") ?: "kevshupp"
+            val pass = System.getenv("RELEASE_KEYSTORE_PASSWORD") ?: localProps.getProperty("RELEASE_KEYSTORE_PASSWORD")
+            if (!keystoreFilePath.isNullOrEmpty() && file(keystoreFilePath).exists() && alias.isNotBlank() && !pass.isNullOrBlank()) {
                 storeFile = file(keystoreFilePath)
                 storePassword = pass
                 keyAlias = alias
-                keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: pass
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: localProps.getProperty("RELEASE_KEY_PASSWORD") ?: pass
             } else {
                 storeFile = file("shared.keystore")
                 storePassword = "password"
@@ -68,7 +83,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-DEBUG"
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName("shared")
         }
         release {
             isMinifyEnabled = true
