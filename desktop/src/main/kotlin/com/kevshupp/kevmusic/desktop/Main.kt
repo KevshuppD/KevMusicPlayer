@@ -48,6 +48,7 @@ private fun setWmClass() {
 fun main() {
     setWmClass()
     Settings.load()
+    Settings.applyRenderer()
     SoulseekConfig.load()
     app()
 }

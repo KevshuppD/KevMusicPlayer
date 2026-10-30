@@ -23,6 +23,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
@@ -148,9 +149,31 @@ fun LibrarySettingsSection(
                 .apply()
         }
     }
+    // Pestañas de la página: antes eran ~16 tarjetas seguidas y el scroll era larguísimo
+    var libTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("library") }
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        listOf(
+            "library" to getLocalized("Biblioteca", "Library"),
+            "tools" to getLocalized("Herramientas", "Tools"),
+            "downloads" to getLocalized("Descargas", "Downloads"),
+            "backup" to getLocalized("Copias", "Backups"),
+            "design" to getLocalized("Diseño", "Layout")
+        ).forEach { (key, label) ->
+            FilterChip(
+                selected = libTab == key,
+                onClick = { libTab = key },
+                label = { Text(label, fontWeight = if (libTab == key) FontWeight.Bold else FontWeight.Normal) },
+                shape = RoundedCornerShape(50)
+            )
+        }
+    }
 
+    if (libTab == "downloads") {
     OnDemandSettingsCard(context, getLocalized)
-    Spacer(modifier = Modifier.height(12.dp))
+    Spacer(modifier = Modifier.height(4.dp))
 
     var showSoulseek by remember { mutableStateOf(false) }
     SoulseekSettingsCard(context, getLocalized) { showSoulseek = true }
@@ -160,9 +183,9 @@ fun LibrarySettingsSection(
             onDismiss = { showSoulseek = false }
         )
     }
-    Spacer(modifier = Modifier.height(12.dp))
-
-    // Single unified card for Statistics and Maintenance Sections
+    Spacer(modifier = Modifier.height(4.dp))
+    }
+    if (libTab == "library") {
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
@@ -345,34 +368,405 @@ fun LibrarySettingsSection(
                     )
                 }
             }
-
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 12.dp))
+            // Excluded Folders Section
             HorizontalDivider(
                 color = settingsDividerColor(),
                 modifier = Modifier.padding(vertical = 12.dp)
             )
 
-            // 3. Descargador de letras
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { setShowFolderList(!showFolderList) }
+                    .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = getLocalized("DESCARGADOR DE LETRAS", "LYRICS DOWNLOADER"),
+                    text = getLocalized("CARPETAS EXCLUIDAS", "EXCLUDED FOLDERS"),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
                     modifier = Modifier.weight(1f)
                 )
                 SettingsInfoButton(
-                    title = getLocalized("Descargador de Letras", "Lyrics Downloader"),
+                    title = getLocalized("Carpetas Excluidas", "Excluded Folders"),
                     infoText = getLocalized(
-                        "Descarga automáticamente letras sincronizadas de internet o elimina las almacenadas.",
-                        "Automatically download synced lyrics from the internet or clear stored ones."
+                        "Oculta carpetas de la biblioteca (ej: WhatsApp Audio, tonos de llamada).",
+                        "Hide folders from library (e.g. WhatsApp Audio, ringtones)."
                     )
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = if (showFolderList) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = null,
+                    tint = settingsTextColor()
                 )
             }
 
+            if (showFolderList) {
+                Spacer(modifier = Modifier.height(8.dp))
+                if (deviceFolders.isEmpty()) {
+                    Text(
+                        text = getLocalized("No se encontraron carpetas con música.", "No music folders found."),
+                        fontSize = 12.sp,
+                        color = settingsTextMutedColor()
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        deviceFolders.forEach { folderPath ->
+                            val isExcluded = excludedFolders.contains(folderPath)
+                            val folderName = folderPath.substringAfterLast("/")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(settingsDividerColor())
+                                    .clickable {
+                                        val newList = if (isExcluded) {
+                                            excludedFolders - folderPath
+                                        } else {
+                                            excludedFolders + folderPath
+                                        }
+                                        setExcludedFolders(newList)
+                                        viewModel.setExcludedFolders(newList)
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = isExcluded,
+                                    onCheckedChange = { checked ->
+                                        val newList = if (checked) {
+                                            excludedFolders + folderPath
+                                        } else {
+                                            excludedFolders - folderPath
+                                        }
+                                        setExcludedFolders(newList)
+                                        viewModel.setExcludedFolders(newList)
+                                    },
+                                    colors = CheckboxDefaults.colors(
+                                        checkedColor = MaterialTheme.colorScheme.primary,
+                                        uncheckedColor = settingsTextMutedColor()
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = folderName,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = settingsTextColor()
+                                    )
+                                    Text(
+                                        text = folderPath,
+                                        fontSize = 10.sp,
+                                        color = settingsTextMutedColor()
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val selectMusicFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            val path = getPhysicalPathFromTreeUri(context, uri)
+            if (path != null && selectedMusicFolder != null) {
+                // There is already a main folder: this one is added as an extra folder (scanned only)
+                if (com.kevshupp.kevmusicplayer.data.MusicFolders.add(settingsPrefs, path)) {
+                    refreshMusicFolders()
+                    android.widget.Toast.makeText(context, getLocalized("Carpeta añadida", "Folder added"), android.widget.Toast.LENGTH_SHORT).show()
+                    onRescan()
+                } else {
+                    android.widget.Toast.makeText(context, getLocalized("Esa carpeta ya está en la lista", "That folder is already listed"), android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } else if (path != null) {
+                settingsPrefs.edit().putString("music_folder_path", path).apply()
+                selectedMusicFolder = path
+
+                // Auto-detect existing backup in the selected music folder root
+                val backupFile = java.io.File(path, "kev_music_player_backup.json")
+                if (backupFile.exists()) {
+                    useSameFolderForBackup = true
+                    settingsPrefs.edit().putBoolean("use_same_folder_for_backup", true).apply()
+                    android.widget.Toast.makeText(context, getLocalized("Copia de seguridad existente vinculada automáticamente", "Existing backup linked automatically"), android.widget.Toast.LENGTH_LONG).show()
+                }
+
+                android.widget.Toast.makeText(context, getLocalized("Carpeta de música establecida", "Music folder set"), android.widget.Toast.LENGTH_SHORT).show()
+                onRescan()
+            } else {
+                android.widget.Toast.makeText(context, getLocalized("No se pudo obtener la ruta física de la carpeta", "Could not get physical path of the folder"), android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = getLocalized("CARPETAS DE MÚSICA", "MUSIC FOLDERS"),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 1.sp,
+                modifier = Modifier.weight(1f)
+            )
+            SettingsInfoButton(
+                title = getLocalized("Carpetas de Música", "Music Folders"),
+                infoText = getLocalized(
+                    "Elige las carpetas donde buscar música; solo se escanearán esas. La principal es la primera que eliges y es donde \"Organizar biblioteca\" coloca las canciones (también las de las demás carpetas). Sin ninguna carpeta se escanea todo el dispositivo.",
+                    "Choose the folders to search for music; only those are scanned. The main folder is the first one you pick and is where \"Organize library\" places songs (including those from the other folders). With no folder, the whole device is scanned."
+                )
+            )
+        }
+
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = settingsCardContainerColor()
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (selectedMusicFolder != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(settingsDividerColor())
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = selectedMusicFolder!!.substringAfterLast("/"),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = settingsTextColor()
+                            )
+                            Text(
+                                text = selectedMusicFolder!!,
+                                fontSize = 10.sp,
+                                color = settingsTextMutedColor()
+                            )
+                            Text(
+                                text = getLocalized("★ Principal · aquí se organizan las canciones", "★ Main · songs are organized here"),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                val hadExtras = extraMusicFolders.isNotEmpty()
+                                com.kevshupp.kevmusicplayer.data.MusicFolders.remove(settingsPrefs, selectedMusicFolder!!)
+                                refreshMusicFolders()
+                                if (useSameFolderForBackup) {
+                                    useSameFolderForBackup = false
+                                    settingsPrefs.edit().putBoolean("use_same_folder_for_backup", false).apply()
+                                }
+                                android.widget.Toast.makeText(
+                                    context,
+                                    if (hadExtras) getLocalized("Carpeta quitada; la siguiente pasa a ser la principal", "Folder removed; the next one is now the main folder")
+                                    else getLocalized("Escaneo predeterminado restaurado", "Default scan restored"),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                onRescan()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Clear,
+                                contentDescription = "Clear",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+
+                    extraMusicFolders.forEach { folder ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(settingsDividerColor())
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = folder.substringAfterLast("/"),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = settingsTextColor()
+                                )
+                                Text(
+                                    text = folder,
+                                    fontSize = 10.sp,
+                                    color = settingsTextMutedColor()
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    com.kevshupp.kevmusicplayer.data.MusicFolders.makeMain(settingsPrefs, folder)
+                                    refreshMusicFolders()
+                                    if (useSameFolderForBackup) {
+                                        useSameFolderForBackup = false
+                                        settingsPrefs.edit().putBoolean("use_same_folder_for_backup", false).apply()
+                                    }
+                                    android.widget.Toast.makeText(context, getLocalized("Carpeta principal cambiada", "Main folder changed"), android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.StarBorder,
+                                    contentDescription = getLocalized("Hacer principal", "Make main"),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    com.kevshupp.kevmusicplayer.data.MusicFolders.remove(settingsPrefs, folder)
+                                    refreshMusicFolders()
+                                    android.widget.Toast.makeText(context, getLocalized("Carpeta quitada", "Folder removed"), android.widget.Toast.LENGTH_SHORT).show()
+                                    onRescan()
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Clear,
+                                    contentDescription = "Clear",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = { selectMusicFolderLauncher.launch(null) },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.CreateNewFolder,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = getLocalized("Añadir otra carpeta", "Add another folder"),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = { showMigrateDialog = true },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.DriveFileMove,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = getLocalized("Migrar música a otra carpeta", "Move music to another folder"),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (showMigrateDialog) {
+                        com.kevshupp.kevmusicplayer.ui.screens.dialogs.MigrateFolderDialog(
+                            folders = listOfNotNull(selectedMusicFolder) + extraMusicFolders,
+                            running = migrating,
+                            progress = migrateProgress,
+                            onDismiss = { showMigrateDialog = false }
+                        ) { from, to, removeOrigin ->
+                            migrating = true
+                            viewModel.migrateMusicFolder(
+                                context, from, to,
+                                onProgress = { current, total, name -> migrateProgress = "$current/$total: $name" },
+                                onComplete = { success, failures ->
+                                    migrating = false
+                                    showMigrateDialog = false
+                                    // Con errores, el origen sigue en la lista: aún tiene canciones
+                                    if (removeOrigin && failures.isEmpty()) {
+                                        com.kevshupp.kevmusicplayer.data.MusicFolders.remove(settingsPrefs, from)
+                                        refreshMusicFolders()
+                                    }
+                                    fileOpResult = Triple(getLocalized("Migración finalizada", "Move complete"), success, failures)
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    Button(
+                        onClick = { selectMusicFolderLauncher.launch(null) },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                            contentColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth().height(46.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.FolderOpen,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = getLocalized("Seleccionar Carpeta", "Select Folder"),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    }
+    if (libTab == "tools") {
+        // Herramientas en filas de una línea: las de una sola acción abren su diálogo al tocarlas; Letras y
+        // Organizar se despliegan para mostrar sus botones
+        var openTool by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = settingsCardContainerColor()),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                ToolRow(
+                    Icons.Rounded.Lyrics, getLocalized("Letras de la biblioteca", "Library lyrics"),
+                    if (viewModel.isDownloadingAllLyrics.value) getLocalized("Descargando…", "Downloading…")
+                    else getLocalized("Descargar de LrcLib o eliminar todas", "Download from LrcLib or delete all"),
+                    expanded = openTool == "lyrics"
+                ) { openTool = if (openTool == "lyrics") "" else "lyrics" }
+                if (openTool == "lyrics") Column(Modifier.padding(bottom = 8.dp)) {
             Spacer(modifier = Modifier.height(8.dp))
 
             Button(
@@ -474,34 +868,15 @@ fun LibrarySettingsSection(
                     )
                 }
             }
-
-            // Organize Files Section
-            HorizontalDivider(
-                color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 12.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = getLocalized("ORGANIZADOR DE ARCHIVOS", "FILE ORGANIZER"),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                SettingsInfoButton(
-                    title = getLocalized("Organizador de Archivos", "File Organizer"),
-                    infoText = getLocalized(
-                        "Renombra archivos según metadatos, organízalos por carpetas de artistas o limpia archivos residuales.",
-                        "Rename files by tags, organize into artist folders, or delete leftover files."
-                    )
-                )
-            }
-
+                }
+                ToolDivider()
+                ToolRow(
+                    Icons.AutoMirrored.Rounded.DriveFileMove, getLocalized("Organizar y renombrar", "Organize & rename"),
+                    if (isRenaming) getLocalized("Trabajando…", "Working…")
+                    else getLocalized("Renombrar, mover por artista, limpiar portadas y .nomedia", "Rename, move by artist, clean covers and .nomedia"),
+                    expanded = openTool == "organize"
+                ) { openTool = if (openTool == "organize") "" else "organize" }
+                if (openTool == "organize") Column(Modifier.padding(bottom = 8.dp)) {
             Spacer(modifier = Modifier.height(8.dp))
 
             Button(
@@ -730,390 +1105,32 @@ fun LibrarySettingsSection(
                     )
                 }
             }
-
-            // Duplicate Finder Section
-            HorizontalDivider(
-                color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 12.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = getLocalized("BUSCADOR DE DUPLICADOS", "DUPLICATE FINDER"),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                SettingsInfoButton(
-                    title = getLocalized("Buscador de Duplicados", "Duplicate Finder"),
-                    infoText = getLocalized(
-                        "Busca y elimina canciones duplicadas en tu almacenamiento para liberar espacio.",
-                        "Search and delete duplicate songs on your storage to free up space."
-                    )
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Button(
-                onClick = onFindDuplicates,
-                enabled = !isScanning && !isRenaming,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.DeleteSweep,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = getLocalized("Buscar Canciones Duplicadas", "Search Duplicate Songs"),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            // Integrity Checker Section
-            HorizontalDivider(
-                color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 12.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = getLocalized("VERIFICADOR DE INTEGRIDAD", "INTEGRITY CHECKER"),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                SettingsInfoButton(
-                    title = getLocalized("Verificador de Integridad", "Integrity Checker"),
-                    infoText = getLocalized(
-                        "Busca archivos de audio dañados, corruptos o inaccesibles para mantener limpia tu biblioteca.",
-                        "Search for damaged, corrupted, or inaccessible audio files to keep your library clean."
-                    )
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Button(
-                onClick = onCheckIntegrity,
-                enabled = !isScanning && !isRenaming,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.OfflinePin,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = getLocalized("Verificar Integridad", "Verify Integrity"),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            // Short Songs Finder Section
-            HorizontalDivider(
-                color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 12.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = getLocalized("CANCIONES CORTAS / INCOMPLETAS", "SHORT / INCOMPLETE SONGS"),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                SettingsInfoButton(
-                    title = getLocalized("Canciones Cortas / Incompletas", "Short / Incomplete Songs"),
-                    infoText = getLocalized(
-                        "Busca canciones con duración inusualmente corta (descargas truncadas o cortadas) para listar nombres y artistas.",
-                        "Search for songs with unusually short duration (truncated or incomplete downloads)."
-                    )
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Button(
-                onClick = onFindShortSongs,
-                enabled = !isScanning && !isRenaming,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.HourglassBottom,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = getLocalized("Buscar Canciones Cortas", "Search Short Songs"),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            // Missing Covers Finder Section
-            HorizontalDivider(
-                color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 12.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = getLocalized("PORTADAS FALTANTES", "MISSING ALBUM ART"),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                SettingsInfoButton(
-                    title = getLocalized("Portadas Faltantes", "Missing Album Art"),
-                    infoText = getLocalized(
-                        "Descubre en lote qué álbumes o canciones no tienen carátula y busca portadas en línea o asígnalas con 1 toque.",
-                        "Discover in batch which albums or tracks lack artwork and fetch covers online or assign them in 1 tap."
-                    )
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Button(
-                onClick = onFindMissingCovers,
-                enabled = !isScanning && !isRenaming,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.AddPhotoAlternate,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = getLocalized("Buscar Portadas Faltantes", "Search Missing Covers"),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            // Normalize Library Section
-            HorizontalDivider(
-                color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 12.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = getLocalized("NORMALIZAR BIBLIOTECA", "NORMALIZE LIBRARY"),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                SettingsInfoButton(
-                    title = getLocalized("Normalizar Biblioteca", "Normalize Library"),
-                    infoText = getLocalized(
-                        "Busca cada canción en Deezer y corrige título, artista, álbum, año y número de pista, y completa el género que falta. Revisas los cambios antes de aplicarlos.",
-                        "Looks up every song on Deezer to fix title, artist, album, year and track number, and fill missing genres. You review the changes before applying them."
-                    )
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Button(
-                onClick = onNormalizeLibrary,
-                enabled = !isScanning && !isRenaming,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.AutoFixHigh,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = getLocalized("Normalizar con Deezer", "Normalize with Deezer"),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            // Excluded Folders Section
-            HorizontalDivider(
-                color = settingsDividerColor(),
-                modifier = Modifier.padding(vertical = 12.dp)
-            )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { setShowFolderList(!showFolderList) }
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = getLocalized("CARPETAS EXCLUIDAS", "EXCLUDED FOLDERS"),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f)
-                )
-                SettingsInfoButton(
-                    title = getLocalized("Carpetas Excluidas", "Excluded Folders"),
-                    infoText = getLocalized(
-                        "Oculta carpetas de la biblioteca (ej: WhatsApp Audio, tonos de llamada).",
-                        "Hide folders from library (e.g. WhatsApp Audio, ringtones)."
-                    )
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Icon(
-                    imageVector = if (showFolderList) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                    contentDescription = null,
-                    tint = settingsTextColor()
-                )
-            }
-
-            if (showFolderList) {
-                Spacer(modifier = Modifier.height(8.dp))
-                if (deviceFolders.isEmpty()) {
-                    Text(
-                        text = getLocalized("No se encontraron carpetas con música.", "No music folders found."),
-                        fontSize = 12.sp,
-                        color = settingsTextMutedColor()
-                    )
-                } else {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        deviceFolders.forEach { folderPath ->
-                            val isExcluded = excludedFolders.contains(folderPath)
-                            val folderName = folderPath.substringAfterLast("/")
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(settingsDividerColor())
-                                    .clickable {
-                                        val newList = if (isExcluded) {
-                                            excludedFolders - folderPath
-                                        } else {
-                                            excludedFolders + folderPath
-                                        }
-                                        setExcludedFolders(newList)
-                                        viewModel.setExcludedFolders(newList)
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Checkbox(
-                                    checked = isExcluded,
-                                    onCheckedChange = { checked ->
-                                        val newList = if (checked) {
-                                            excludedFolders + folderPath
-                                        } else {
-                                            excludedFolders - folderPath
-                                        }
-                                        setExcludedFolders(newList)
-                                        viewModel.setExcludedFolders(newList)
-                                    },
-                                    colors = CheckboxDefaults.colors(
-                                        checkedColor = MaterialTheme.colorScheme.primary,
-                                        uncheckedColor = settingsTextMutedColor()
-                                    )
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = folderName,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = settingsTextColor()
-                                    )
-                                    Text(
-                                        text = folderPath,
-                                        fontSize = 10.sp,
-                                        color = settingsTextMutedColor()
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
+                ToolDivider()
+                ToolRow(Icons.Rounded.ContentCopy, getLocalized("Buscar duplicados", "Find duplicates"),
+                    getLocalized("Mismo título y artista, conserva la mejor calidad", "Same title and artist, keeps the best quality"),
+                    enabled = !isScanning && !isRenaming, onClick = onFindDuplicates)
+                ToolDivider()
+                ToolRow(Icons.Rounded.VerifiedUser, getLocalized("Verificar integridad", "Verify integrity"),
+                    getLocalized("Archivos dañados, cortados o con audio perdido", "Damaged, truncated or missing-audio files"),
+                    enabled = !isScanning && !isRenaming, onClick = onCheckIntegrity)
+                ToolDivider()
+                ToolRow(Icons.Rounded.Timer, getLocalized("Canciones cortas", "Short songs"),
+                    getLocalized("Audios de WhatsApp, tonos e incompletas", "WhatsApp audio, ringtones and incomplete files"),
+                    enabled = !isScanning && !isRenaming, onClick = onFindShortSongs)
+                ToolDivider()
+                ToolRow(Icons.Rounded.ImageSearch, getLocalized("Portadas faltantes", "Missing covers"),
+                    getLocalized("Descarga carátulas en HD desde Deezer", "Download HD covers from Deezer"),
+                    enabled = !isScanning && !isRenaming, onClick = onFindMissingCovers)
+                ToolDivider()
+                ToolRow(Icons.Rounded.AutoFixHigh, getLocalized("Normalizar con Deezer", "Normalize with Deezer"),
+                    getLocalized("Corrige títulos, artistas, álbumes y años", "Fixes titles, artists, albums and years"),
+                    enabled = !isScanning && !isRenaming, onClick = onNormalizeLibrary)
             }
         }
     }
 
-    Spacer(modifier = Modifier.height(8.dp))
-
+    if (libTab == "backup") {
     // 3. Copias de Seguridad (Backup & Restore Section)
     val folderName = remember(backupDirUri, useSameFolderForBackup, selectedMusicFolder) {
         if (useSameFolderForBackup) {
@@ -1493,7 +1510,54 @@ fun LibrarySettingsSection(
             }
         }
     }
+    Spacer(modifier = Modifier.height(4.dp))
 
+    // Switch card for "Utilizar la misma carpeta"
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = settingsCardContainerColor()
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = getLocalized("Utilizar la misma carpeta", "Use same folder"),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = settingsTextColor()
+                )
+                Text(
+                    text = getLocalized(
+                        "Guarda y restaura la copia directamente en la raíz de tu música.",
+                        "Save and restore backup directly in root music folder."
+                    ),
+                    fontSize = 11.sp,
+                    color = settingsTextMutedColor()
+                )
+            }
+            Switch(
+                checked = useSameFolderForBackup,
+                onCheckedChange = { checked ->
+                    if (checked && selectedMusicFolder == null) {
+                        android.widget.Toast.makeText(context, getLocalized("Por favor, selecciona primero una carpeta de música específica abajo.", "Please select a specific music folder below first."), android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        useSameFolderForBackup = checked
+                        settingsPrefs.edit().putBoolean("use_same_folder_for_backup", checked).apply()
+                    }
+                }
+            )
+        }
+    }
+
+    Spacer(modifier = Modifier.height(4.dp))
+    }
     if (showDeleteCoversDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteCoversDialog = false },
@@ -1871,329 +1935,8 @@ fun LibrarySettingsSection(
         )
     }
 
-    Spacer(modifier = Modifier.height(14.dp))
-
-    // Switch card for "Utilizar la misma carpeta"
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = settingsCardContainerColor()
-        ),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = getLocalized("Utilizar la misma carpeta", "Use same folder"),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = settingsTextColor()
-                )
-                Text(
-                    text = getLocalized(
-                        "Guarda y restaura la copia directamente en la raíz de tu música.",
-                        "Save and restore backup directly in root music folder."
-                    ),
-                    fontSize = 11.sp,
-                    color = settingsTextMutedColor()
-                )
-            }
-            Switch(
-                checked = useSameFolderForBackup,
-                onCheckedChange = { checked ->
-                    if (checked && selectedMusicFolder == null) {
-                        android.widget.Toast.makeText(context, getLocalized("Por favor, selecciona primero una carpeta de música específica abajo.", "Please select a specific music folder below first."), android.widget.Toast.LENGTH_LONG).show()
-                    } else {
-                        useSameFolderForBackup = checked
-                        settingsPrefs.edit().putBoolean("use_same_folder_for_backup", checked).apply()
-                    }
-                }
-            )
-        }
-    }
-
-    Spacer(modifier = Modifier.height(14.dp))
-
-    val selectMusicFolderLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri != null) {
-            try {
-                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                context.contentResolver.takePersistableUriPermission(uri, takeFlags)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            val path = getPhysicalPathFromTreeUri(context, uri)
-            if (path != null && selectedMusicFolder != null) {
-                // There is already a main folder: this one is added as an extra folder (scanned only)
-                if (com.kevshupp.kevmusicplayer.data.MusicFolders.add(settingsPrefs, path)) {
-                    refreshMusicFolders()
-                    android.widget.Toast.makeText(context, getLocalized("Carpeta añadida", "Folder added"), android.widget.Toast.LENGTH_SHORT).show()
-                    onRescan()
-                } else {
-                    android.widget.Toast.makeText(context, getLocalized("Esa carpeta ya está en la lista", "That folder is already listed"), android.widget.Toast.LENGTH_SHORT).show()
-                }
-            } else if (path != null) {
-                settingsPrefs.edit().putString("music_folder_path", path).apply()
-                selectedMusicFolder = path
-
-                // Auto-detect existing backup in the selected music folder root
-                val backupFile = java.io.File(path, "kev_music_player_backup.json")
-                if (backupFile.exists()) {
-                    useSameFolderForBackup = true
-                    settingsPrefs.edit().putBoolean("use_same_folder_for_backup", true).apply()
-                    android.widget.Toast.makeText(context, getLocalized("Copia de seguridad existente vinculada automáticamente", "Existing backup linked automatically"), android.widget.Toast.LENGTH_LONG).show()
-                }
-
-                android.widget.Toast.makeText(context, getLocalized("Carpeta de música establecida", "Music folder set"), android.widget.Toast.LENGTH_SHORT).show()
-                onRescan()
-            } else {
-                android.widget.Toast.makeText(context, getLocalized("No se pudo obtener la ruta física de la carpeta", "Could not get physical path of the folder"), android.widget.Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    Column {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = getLocalized("CARPETAS DE MÚSICA", "MUSIC FOLDERS"),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                letterSpacing = 1.sp,
-                modifier = Modifier.weight(1f)
-            )
-            SettingsInfoButton(
-                title = getLocalized("Carpetas de Música", "Music Folders"),
-                infoText = getLocalized(
-                    "Elige las carpetas donde buscar música; solo se escanearán esas. La principal es la primera que eliges y es donde \"Organizar biblioteca\" coloca las canciones (también las de las demás carpetas). Sin ninguna carpeta se escanea todo el dispositivo.",
-                    "Choose the folders to search for music; only those are scanned. The main folder is the first one you pick and is where \"Organize library\" places songs (including those from the other folders). With no folder, the whole device is scanned."
-                )
-            )
-        }
-
-        Card(
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = settingsCardContainerColor()
-            ),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                if (selectedMusicFolder != null) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(settingsDividerColor())
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = selectedMusicFolder!!.substringAfterLast("/"),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = settingsTextColor()
-                            )
-                            Text(
-                                text = selectedMusicFolder!!,
-                                fontSize = 10.sp,
-                                color = settingsTextMutedColor()
-                            )
-                            Text(
-                                text = getLocalized("★ Principal · aquí se organizan las canciones", "★ Main · songs are organized here"),
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        IconButton(
-                            onClick = {
-                                val hadExtras = extraMusicFolders.isNotEmpty()
-                                com.kevshupp.kevmusicplayer.data.MusicFolders.remove(settingsPrefs, selectedMusicFolder!!)
-                                refreshMusicFolders()
-                                if (useSameFolderForBackup) {
-                                    useSameFolderForBackup = false
-                                    settingsPrefs.edit().putBoolean("use_same_folder_for_backup", false).apply()
-                                }
-                                android.widget.Toast.makeText(
-                                    context,
-                                    if (hadExtras) getLocalized("Carpeta quitada; la siguiente pasa a ser la principal", "Folder removed; the next one is now the main folder")
-                                    else getLocalized("Escaneo predeterminado restaurado", "Default scan restored"),
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                                onRescan()
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Clear,
-                                contentDescription = "Clear",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-
-                    extraMusicFolders.forEach { folder ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(settingsDividerColor())
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = folder.substringAfterLast("/"),
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = settingsTextColor()
-                                )
-                                Text(
-                                    text = folder,
-                                    fontSize = 10.sp,
-                                    color = settingsTextMutedColor()
-                                )
-                            }
-                            IconButton(
-                                onClick = {
-                                    com.kevshupp.kevmusicplayer.data.MusicFolders.makeMain(settingsPrefs, folder)
-                                    refreshMusicFolders()
-                                    if (useSameFolderForBackup) {
-                                        useSameFolderForBackup = false
-                                        settingsPrefs.edit().putBoolean("use_same_folder_for_backup", false).apply()
-                                    }
-                                    android.widget.Toast.makeText(context, getLocalized("Carpeta principal cambiada", "Main folder changed"), android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.StarBorder,
-                                    contentDescription = getLocalized("Hacer principal", "Make main"),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            IconButton(
-                                onClick = {
-                                    com.kevshupp.kevmusicplayer.data.MusicFolders.remove(settingsPrefs, folder)
-                                    refreshMusicFolders()
-                                    android.widget.Toast.makeText(context, getLocalized("Carpeta quitada", "Folder removed"), android.widget.Toast.LENGTH_SHORT).show()
-                                    onRescan()
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Clear,
-                                    contentDescription = "Clear",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = { selectMusicFolderLauncher.launch(null) },
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth().height(44.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.CreateNewFolder,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = getLocalized("Añadir otra carpeta", "Add another folder"),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = { showMigrateDialog = true },
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth().height(44.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.DriveFileMove,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = getLocalized("Migrar música a otra carpeta", "Move music to another folder"),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    if (showMigrateDialog) {
-                        com.kevshupp.kevmusicplayer.ui.screens.dialogs.MigrateFolderDialog(
-                            folders = listOfNotNull(selectedMusicFolder) + extraMusicFolders,
-                            running = migrating,
-                            progress = migrateProgress,
-                            onDismiss = { showMigrateDialog = false }
-                        ) { from, to, removeOrigin ->
-                            migrating = true
-                            viewModel.migrateMusicFolder(
-                                context, from, to,
-                                onProgress = { current, total, name -> migrateProgress = "$current/$total: $name" },
-                                onComplete = { success, failures ->
-                                    migrating = false
-                                    showMigrateDialog = false
-                                    // Con errores, el origen sigue en la lista: aún tiene canciones
-                                    if (removeOrigin && failures.isEmpty()) {
-                                        com.kevshupp.kevmusicplayer.data.MusicFolders.remove(settingsPrefs, from)
-                                        refreshMusicFolders()
-                                    }
-                                    fileOpResult = Triple(getLocalized("Migración finalizada", "Move complete"), success, failures)
-                                }
-                            )
-                        }
-                    }
-                } else {
-                    Button(
-                        onClick = { selectMusicFolderLauncher.launch(null) },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                            contentColor = MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier.fillMaxWidth().height(46.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.FolderOpen,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = getLocalized("Seleccionar Carpeta", "Select Folder"),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    Spacer(modifier = Modifier.height(14.dp))
+    if (libTab == "design") {
+    Spacer(modifier = Modifier.height(4.dp))
 
     // 0. Library Display Mode Section (Normal vs Compact)
     var libraryLayoutMode by remember {
@@ -2305,7 +2048,7 @@ fun LibrarySettingsSection(
         }
     }
 
-    Spacer(modifier = Modifier.height(14.dp))
+    Spacer(modifier = Modifier.height(4.dp))
 
     // 0.1 Library Song List Style Section (Modern vs Classic)
     var librarySongStyle by remember {
@@ -2417,7 +2160,7 @@ fun LibrarySettingsSection(
         }
     }
 
-    Spacer(modifier = Modifier.height(14.dp))
+    Spacer(modifier = Modifier.height(4.dp))
 
     // 1. Visible Navigation Categories Section (Drag-to-Reorder)
     Column {
@@ -2635,5 +2378,40 @@ fun LibrarySettingsSection(
             }
         }
     }
+    }
 }
 
+@Composable
+private fun ToolDivider() = HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+/** Fila de una herramienta: icono, título, descripción corta y flecha (o chevron si se despliega). */
+@Composable
+private fun ToolRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    enabled: Boolean = true,
+    expanded: Boolean? = null,
+    onClick: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick).padding(vertical = 8.dp)
+            .alpha(if (enabled) 1f else 0.45f)
+    ) {
+        Box(
+            Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), maxLines = 2)
+        }
+        Icon(
+            when (expanded) { true -> Icons.Rounded.ExpandLess; false -> Icons.Rounded.ExpandMore; null -> Icons.AutoMirrored.Rounded.KeyboardArrowRight },
+            contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+        )
+    }
+}

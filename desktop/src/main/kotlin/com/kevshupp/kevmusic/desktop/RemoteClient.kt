@@ -2,6 +2,7 @@ package com.kevshupp.kevmusic.desktop
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.graphics.asComposeImageBitmap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -87,6 +88,8 @@ class RemoteClient(private val scope: CoroutineScope) {
     /** Reconecta con el token guardado. */
     fun resume(saved: SavedDevice) {
         device = saved
+        loadCachedLibrary(saved)
+        trimArtDiskCache()
         open(saved.host, saved.port, JSONObject().put("type", "hello").put("token", saved.token))
     }
 
@@ -232,8 +235,12 @@ class RemoteClient(private val scope: CoroutineScope) {
                 // El teléfono contó una reproducción: Inicio se actualiza sin pedir otra vez la biblioteca
                 val id = msg.optLong("id")
                 val at = msg.optLong("at")
-                _library.value = _library.value?.let { lib ->
-                    lib.copy(songs = lib.songs.map { if (it.id == id) it.copy(plays = it.plays + 1, lastPlayed = at) else it })
+                _library.value?.let { lib ->
+                    scope.launch(Dispatchers.Default) {
+                        val next = lib.copy(songs = lib.songs.map { if (it.id == id) it.copy(plays = it.plays + 1, lastPlayed = at) else it })
+                        next.warm()
+                        _library.compareAndSet(lib, next)
+                    }
                 }
             }
             "libraryChanged" -> refreshLibrary()
@@ -465,7 +472,7 @@ class RemoteClient(private val scope: CoroutineScope) {
 
     private fun parseTrack(o: JSONObject) = DzTrack(
         o.getLong("id"), o.optString("title"), o.optString("artist"), o.optString("album"), o.optInt("duration"),
-        o.optString("cover"), o.optString("coverXl"), o.optString("link"), o.optBoolean("owned")
+        o.optString("cover"), o.optString("coverXl"), o.optString("link"), o.optBoolean("owned"), o.optLong("localId")
     )
 
     private suspend fun request(type: String, build: JSONObject.() -> Unit): DzResult {
@@ -485,6 +492,27 @@ class RemoteClient(private val scope: CoroutineScope) {
     }
 
     suspend fun tgArtist(artist: DzArtist) = request("tgArtist") { put("id", artist.id); put("name", artist.name) }
+
+    /** Populares y discografía de un artista por su nombre (panel de artista); el teléfono lo busca en Deezer. */
+    suspend fun tgArtistByName(name: String) = request("tgArtist") { put("id", 0); put("name", name) }
+
+    // ---------- Bajo demanda (protocolo 5) ----------
+
+    private fun odTrack(t: DzTrack) = JSONObject().put("id", t.id).put("title", t.title).put("artist", t.artist)
+        .put("album", t.album).put("duration", t.durationSec).put("cover", t.cover).put("coverXl", t.coverXl).put("link", t.link)
+
+    private fun odAvailable(): Boolean {
+        if (phoneProtocol >= 5) return true
+        _notice.value = Notice("Actualiza KevMusic en el teléfono para escuchar bajo demanda desde el PC", error = true)
+        return false
+    }
+
+    /** Suena ya en el teléfono, en modo bajo demanda (el bot la manda; se guarda en caché o en la biblioteca). */
+    fun playOnDemand(t: DzTrack) { if (odAvailable()) edit("odPlay", "Sonando bajo demanda: ${t.title}") { put("track", odTrack(t)) } }
+
+    fun queueOnDemand(t: DzTrack, next: Boolean) {
+        if (odAvailable()) edit("odQueue", if (next) "Sonará a continuación" else "Añadida a la cola") { put("track", odTrack(t)); put("next", next) }
+    }
 
     fun tgDownload(tracks: List<DzTrack>) {
         if (tracks.isEmpty()) return
@@ -540,12 +568,33 @@ class RemoteClient(private val scope: CoroutineScope) {
                     val req = Request.Builder().url("http://${d.host}:${d.port}/library?token=${d.token}").build()
                     http.newCall(req).execute().use { resp ->
                         if (!resp.isSuccessful) return@use null
-                        parseLibrary(JSONObject(resp.body!!.string()))
+                        val body = resp.body!!.string()
+                        parseLibrary(JSONObject(body)).also { libraryCacheFile(d).apply { parentFile.mkdirs(); writeText(body) } }
                     }
                 }.getOrNull()
             }
-            if (lib != null) _library.value = lib
+            // Igual que la que ya se ve (avisos repetidos, reconexión): no se toca, así nada se recalcula
+            if (lib != null && lib != _library.value) {
+                withContext(Dispatchers.Default) { lib.warm() }
+                _library.value = lib
+            }
             _libraryLoading.value = false
+        }
+    }
+
+    private fun libraryCacheFile(d: SavedDevice) =
+        java.io.File(Platform.cacheDir, "library/" + d.key.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".json")
+
+    /**
+     * La última biblioteca de ese teléfono, guardada en disco: al abrir la app se ve al instante mientras llega
+     * la real (que la sustituye en cuanto se conecta). Antes Inicio esperaba a conectar y descargarla.
+     */
+    private fun loadCachedLibrary(d: SavedDevice) {
+        if (_library.value != null) return
+        scope.launch(Dispatchers.IO) {
+            val lib = runCatching { parseLibrary(JSONObject(libraryCacheFile(d).readText())) }.getOrNull() ?: return@launch
+            lib.warm()
+            _library.compareAndSet(null, lib)
         }
     }
 
@@ -578,28 +627,90 @@ class RemoteClient(private val scope: CoroutineScope) {
         synchronized(artCache) { artCache.clear() }
         synchronized(urlImages) { urlImages.clear() }
         java.io.File(Platform.cacheDir, "art").deleteRecursively()
+        java.io.File(Platform.cacheDir, "art_cache").deleteRecursively()
     }
 
-    fun cachedArt(id: Long, small: Boolean): ImageBitmap? = synchronized(artCache) { artCache["$id/$small"] }
+    fun cachedArt(id: Long, small: Boolean, tiny: Boolean = false): ImageBitmap? =
+        synchronized(artCache) { artCache[artKey(id, small, tiny)] }
 
-    /** Carátula de una canción (null si no tiene). Se recuerda también la ausencia, para no repetir peticiones. */
-    suspend fun loadArt(id: Long, small: Boolean): ImageBitmap? {
-        val key = "$id/$small"
+    private fun artKey(id: Long, small: Boolean, tiny: Boolean) = "$id/" + if (tiny && small) "t" else "$small"
+
+    /**
+     * Carátulas en disco (~/.cache/kevmusic-desktop/art_cache): al volver a abrir la app no se piden otra vez al
+     * teléfono. El nombre lleva un resumen de artista y álbum, para que un id que MediaStore reasigne a otra
+     * canción no muestre la carátula vieja. "Vaciar caché" de Ajustes las borra.
+     */
+    private fun artDiskFile(id: Long, small: Boolean): java.io.File {
+        val tag = _library.value?.byId?.get(id)?.let { (it.artist + "|" + it.album).hashCode().toUInt().toString(16) } ?: "x"
+        return java.io.File(Platform.cacheDir, "art_cache/${id}_${tag}_${if (small) "s" else "b"}.jpg")
+    }
+
+    /** Lado en píxeles de la versión reducida para filas de lista (40–44 dp; el doble para pantallas HiDPI). */
+    private val TINY_PX = 96
+
+    /**
+     * Carátula de una canción (null si no tiene). Se recuerda también la ausencia, para no repetir peticiones.
+     * [tiny]: reducida a [TINY_PX] a partir de la pequeña (160 px), para que la gráfica no tenga que escalarla en
+     * cada cuadro al desplazarse.
+     */
+    suspend fun loadArt(id: Long, small: Boolean, tiny: Boolean = false): ImageBitmap? {
+        val key = artKey(id, small, tiny)
         synchronized(artCache) { if (artCache.containsKey(key)) return artCache[key] }
         val d = device ?: return null
         val bmp = withContext(Dispatchers.IO) {
             runCatching {
-                val size = if (small) "small" else "big"
-                val req = Request.Builder().url("http://${d.host}:${d.port}/art/$id?token=${d.token}&size=$size").build()
-                http.newCall(req).execute().use { resp ->
-                    if (resp.code == 404) return@use null
-                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
-                    org.jetbrains.skia.Image.makeFromEncoded(resp.body!!.bytes()).toComposeImageBitmap()
+                val disk = artDiskFile(id, small)
+                val bytes = if (disk.isFile && disk.length() > 0) disk.readBytes() else {
+                    val size = if (small) "small" else "big"
+                    val req = Request.Builder().url("http://${d.host}:${d.port}/art/$id?token=${d.token}&size=$size").build()
+                    http.newCall(req).execute().use { resp ->
+                        if (resp.code == 404) return@runCatching null
+                        if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                        resp.body!!.bytes()
+                    }.also { b -> runCatching { disk.parentFile.mkdirs(); disk.writeBytes(b) } }
                 }
+                val image = org.jetbrains.skia.Image.makeFromEncoded(bytes)
+                if (tiny && small && image.width > TINY_PX) scaled(image, TINY_PX) else image.toComposeImageBitmap()
             }
         }
         // Los errores de red no se recuerdan: se reintentará la próxima vez
         if (bmp.isSuccess) synchronized(artCache) { artCache[key] = bmp.getOrNull() }
         return bmp.getOrNull()
+    }
+
+    private fun scaled(image: org.jetbrains.skia.Image, side: Int): ImageBitmap {
+        val ratio = side.toFloat() / maxOf(image.width, image.height)
+        val w = (image.width * ratio).toInt().coerceAtLeast(1); val h = (image.height * ratio).toInt().coerceAtLeast(1)
+        val bitmap = org.jetbrains.skia.Bitmap().apply { allocN32Pixels(w, h) }
+        org.jetbrains.skia.Canvas(bitmap).use { c ->
+            c.drawImageRect(
+                image, org.jetbrains.skia.Rect.makeWH(image.width.toFloat(), image.height.toFloat()),
+                org.jetbrains.skia.Rect.makeWH(w.toFloat(), h.toFloat()),
+                org.jetbrains.skia.SamplingMode.LINEAR, null, true
+            )
+        }
+        bitmap.setImmutable()
+        return bitmap.asComposeImageBitmap()
+    }
+
+    private val prefetchSlots = kotlinx.coroutines.sync.Semaphore(3)
+
+    /** Carga por adelantado las carátulas de las filas que están por aparecer (pocas a la vez, sin bloquear). */
+    fun prefetchArt(ids: List<Long>, small: Boolean = true, tiny: Boolean = false) {
+        ids.filter { cachedArt(it, small, tiny) == null }.forEach { id ->
+            scope.launch(Dispatchers.IO) {
+                prefetchSlots.acquire()
+                try { loadArt(id, small, tiny) } finally { prefetchSlots.release() }
+            }
+        }
+    }
+
+    /** Borra del disco las carátulas más viejas si la caché pasa de 200 MB. */
+    fun trimArtDiskCache() {
+        scope.launch(Dispatchers.IO) {
+            val files = java.io.File(Platform.cacheDir, "art_cache").listFiles()?.sortedBy { it.lastModified() } ?: return@launch
+            var total = files.sumOf { it.length() }
+            for (f in files) { if (total <= 200L * 1024 * 1024) break; total -= f.length(); f.delete() }
+        }
     }
 }

@@ -58,7 +58,10 @@ sealed interface Detail {
 @Composable
 fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Unit) {
     val client = LocalClient.current
-    val state by client.state.collectAsState()
+    // El estado llega cada segundo (posición): aquí solo interesa la canción actual, para que esa llegada no
+    // recomponga toda la pantalla; la posición la leen solo la barra inferior y Reproduciendo
+    val stateFlow = client.state.collectAsState()
+    val currentId by remember { derivedStateOf { stateFlow.value?.id } }
     val queue by client.queue.collectAsState()
     val lyrics by client.lyrics.collectAsState()
     val library by client.library.collectAsState()
@@ -92,7 +95,6 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
             Sidebar(status, section) { clearDetail(); onSection(it) }
             Box(Modifier.weight(1f).fillMaxHeight().padding(start = 28.dp, end = 28.dp, top = 24.dp)) {
                 val lib = library
-                val currentId = state?.id
                 if (section in setOf(Section.Home, Section.Songs, Section.Artists, Section.Albums, Section.Playlists) && lib == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         if (loading) CircularProgressIndicator()
@@ -146,7 +148,7 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
                             onOpenHistory = { open(Detail.History) },
                             onOpenNew = { open(Detail.NewSongs) }
                         )
-                        Section.NowPlaying -> NowPlayingScreen(state, lyrics)
+                        Section.NowPlaying -> StateReader(stateFlow) { NowPlayingScreen(it, lyrics) }
                         Section.Songs -> SongsScreen(lib!!, currentId)
                         Section.Artists -> ArtistsScreen(lib!!) { open(Detail.Artist(it)) }
                         Section.Albums -> AlbumsScreen(lib!!) { open(Detail.AlbumDetail(it)) }
@@ -158,7 +160,7 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
                 }
             }
         }
-        PlayerBar(state) { clearDetail(); onSection(Section.NowPlaying) }
+        StateReader(stateFlow) { PlayerBar(it) { clearDetail(); onSection(Section.NowPlaying) } }
     }
     Box(Modifier.fillMaxSize().padding(bottom = 108.dp), contentAlignment = Alignment.BottomCenter) { NoticeBanner() }
     }
@@ -308,3 +310,7 @@ private fun PlayerBar(state: PlayerState?, onOpenNowPlaying: () -> Unit) {
         }
     }
 }
+
+/** Lee el estado del reproductor en su propio ámbito: cada segundo solo se recompone [content]. */
+@Composable
+private fun StateReader(state: State<PlayerState?>, content: @Composable (PlayerState?) -> Unit) = content(state.value)

@@ -130,7 +130,7 @@ fun BottomNavBar(
                                             contentScale = ContentScale.Crop,
                                             placeholder = {
                                                 Icon(
-                                                    imageVector = Icons.Rounded.MusicNote,
+                                                    imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.MusicNote),
                                                     contentDescription = null,
                                                     tint = Color.White,
                                                     modifier = Modifier.size(18.dp)
@@ -176,7 +176,7 @@ fun BottomNavBar(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
-                                            imageVector = if (playerState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                            imageVector = if (playerState.isPlaying) com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Pause) else com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.PlayArrow),
                                             contentDescription = "Play/Pause",
                                             tint = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.size(22.dp)
@@ -191,7 +191,7 @@ fun BottomNavBar(
                                         modifier = Modifier.size(36.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Rounded.SkipNext,
+                                            imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.SkipNext),
                                             contentDescription = "Next",
                                             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
                                             modifier = Modifier.size(22.dp)
@@ -221,12 +221,18 @@ fun BottomNavBar(
                                             .fillMaxWidth(animatedProgress)
                                             .fillMaxHeight()
                                             .background(
-                                                Brush.horizontalGradient(
-                                                    listOf(
-                                                        MaterialTheme.colorScheme.primary,
-                                                        MaterialTheme.colorScheme.secondary
+                                                // Pixel Retro: color plano de la paleta (el degradado al secundario,
+                                                // p. ej. azul en Mazmorra, desentonaba con el estilo del tema)
+                                                if (com.kevshupp.kevmusicplayer.ui.theme.LocalPixelPalette.current != null) {
+                                                    androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary)
+                                                } else {
+                                                    Brush.horizontalGradient(
+                                                        listOf(
+                                                            MaterialTheme.colorScheme.primary,
+                                                            MaterialTheme.colorScheme.secondary
+                                                        )
                                                     )
-                                                )
+                                                }
                                             )
                                     )
                                 }
@@ -247,14 +253,14 @@ fun BottomNavBar(
             ) {
                 NavPillTab(
                     title = homeText,
-                    icon = Icons.Rounded.Home,
+                    icon = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Home),
                     isSelected = currentScreen == "home",
                     onClick = { onTabSelected("home") }
                 )
 
                 NavPillTab(
                     title = libraryText,
-                    icon = Icons.Rounded.LibraryMusic,
+                    icon = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.LibraryMusic),
                     isSelected = currentScreen == "library",
                     onClick = { onTabSelected("library") }
                 )

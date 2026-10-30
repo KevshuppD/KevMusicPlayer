@@ -807,7 +807,7 @@ fun PlayerScreen(
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     Icon(
-                                                        imageVector = Icons.Rounded.MusicNote,
+                                                        imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.MusicNote),
                                                         contentDescription = null,
                                                         modifier = Modifier.size(110.dp),
                                                         tint = Color.White.copy(alpha = 0.95f)
@@ -836,7 +836,7 @@ fun PlayerScreen(
                                                         contentAlignment = Alignment.Center
                                                     ) {
                                                         Icon(
-                                                            imageVector = Icons.Rounded.MusicNote,
+                                                            imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.MusicNote),
                                                             contentDescription = null,
                                                             modifier = Modifier.size(110.dp),
                                                             tint = Color.White.copy(alpha = 0.95f)
@@ -870,7 +870,7 @@ fun PlayerScreen(
 
                                             val hPos = heartPosition ?: androidx.compose.ui.geometry.Offset.Zero
                                             Icon(
-                                                imageVector = if (pageIsFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                                imageVector = if (pageIsFavorite) com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Favorite) else com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.FavoriteBorder),
                                                 contentDescription = null,
                                                 tint = if (pageIsFavorite) Color.Red else Color.White.copy(alpha = 0.8f),
                                                 modifier = Modifier
@@ -991,8 +991,8 @@ fun PlayerScreen(
                                          modifier = Modifier.size(44.dp)
                                      ) {
                                          val repeatIcon = when (repeatMode) {
-                                             Player.REPEAT_MODE_ONE -> Icons.Rounded.RepeatOne
-                                             else -> Icons.Rounded.Repeat
+                                             Player.REPEAT_MODE_ONE -> com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.RepeatOne)
+                                             else -> com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Repeat)
                                          }
                                          val isRepeatActive = repeatMode != Player.REPEAT_MODE_OFF
                                          Icon(
@@ -1009,7 +1009,7 @@ fun PlayerScreen(
                                          modifier = Modifier.size(54.dp)
                                      ) {
                                          Icon(
-                                             imageVector = Icons.Rounded.SkipPrevious,
+                                             imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.SkipPrevious),
                                              contentDescription = "Previous",
                                              tint = MaterialTheme.colorScheme.onBackground,
                                              modifier = Modifier.size(34.dp)
@@ -1044,7 +1044,7 @@ fun PlayerScreen(
                                          contentAlignment = Alignment.Center
                                      ) {
                                          Icon(
-                                             imageVector = if (playerState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                             imageVector = if (playerState.isPlaying) com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Pause) else com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.PlayArrow),
                                              contentDescription = "Play/Pause",
                                              tint = if (pixelPalette != null) MaterialTheme.colorScheme.onPrimary else Color.White,
                                              modifier = Modifier.size(38.dp)
@@ -1057,7 +1057,7 @@ fun PlayerScreen(
                                          modifier = Modifier.size(54.dp)
                                      ) {
                                          Icon(
-                                             imageVector = Icons.Rounded.SkipNext,
+                                             imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.SkipNext),
                                              contentDescription = "Next",
                                              tint = MaterialTheme.colorScheme.onBackground,
                                              modifier = Modifier.size(34.dp)
@@ -1077,7 +1077,7 @@ fun PlayerScreen(
                                           modifier = Modifier.size(44.dp)
                                       ) {
                                           Icon(
-                                              imageVector = Icons.Rounded.Shuffle,
+                                              imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Shuffle),
                                               contentDescription = "Shuffle",
                                               tint = if (isShuffle) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                                               modifier = Modifier.size(24.dp)
@@ -1206,7 +1206,7 @@ fun PlayerScreen(
                      }
                  ) {
                      Icon(
-                         imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                         imageVector = if (isFavorite) com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Favorite) else com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.FavoriteBorder),
                          contentDescription = "Favoritos",
                          tint = if (isFavorite) Color.Red else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                          modifier = Modifier.size(24.dp)
@@ -1283,7 +1283,7 @@ fun PlayerScreen(
                                     contentScale = ContentScale.Crop,
                                     placeholder = {
                                         Icon(
-                                            imageVector = Icons.Rounded.MusicNote,
+                                            imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.MusicNote),
                                             contentDescription = null,
                                             tint = Color.White,
                                             modifier = Modifier.size(28.dp)
@@ -1964,7 +1964,7 @@ fun PlayerScreen(
                                                 )
                                             } else {
                                                 Icon(
-                                                    imageVector = Icons.Rounded.MusicNote,
+                                                    imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.MusicNote),
                                                     contentDescription = null,
                                                     tint = if (isCurrent) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.4f),
                                                     modifier = Modifier.size(20.dp)

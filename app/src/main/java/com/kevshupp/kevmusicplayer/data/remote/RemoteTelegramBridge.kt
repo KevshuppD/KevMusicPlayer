@@ -109,8 +109,10 @@ class RemoteTelegramBridge(
                             result.put("tracks", tracksJson(DeezerTrackSearch.albumTracks(album), matcher))
                         }
                         "tgArtist" -> {
-                            val id = msg.optLong("id")
+                            // Sin id (panel de artista del PC): se busca por nombre exacto, como en el perfil de la app
                             val name = msg.optString("name")
+                            val id = msg.optLong("id").takeIf { it > 0 } ?: DeezerTrackSearch.findArtist(name)?.id
+                                ?: throw IllegalStateException("Deezer no tiene a $name")
                             result.put("tracks", tracksJson(DeezerTrackSearch.artistTopTracks(id), matcher))
                             result.put("albums", albumsJson(DeezerTrackSearch.artistAlbums(id, name), matcher))
                         }
@@ -151,7 +153,7 @@ class RemoteTelegramBridge(
         val items = JSONArray()
         list.forEach { t ->
             val status = statuses[t.id]
-            val json = trackJson(t, owned = false)
+            val json = trackJson(t, localId = null)
             when (status) {
                 null, DownloadStatus.Queued -> json.put("status", "queued")
                 DownloadStatus.Requesting -> json.put("status", "requesting")
@@ -164,13 +166,14 @@ class RemoteTelegramBridge(
         return JSONObject().put("type", "tgQueue").put("items", items)
     }
 
-    private fun trackJson(t: DeezerTrack, owned: Boolean) = JSONObject()
+    /** [localId]: la canción de la biblioteca que corresponde (el PC la reproduce desde ahí, no bajo demanda). */
+    private fun trackJson(t: DeezerTrack, localId: Long?) = JSONObject()
         .put("id", t.id).put("title", t.title).put("artist", t.artist).put("album", t.album)
         .put("duration", t.durationSec).put("cover", t.coverSmall).put("coverXl", t.coverXl).put("link", t.link)
-        .put("owned", owned)
+        .put("owned", localId != null).put("localId", localId ?: 0L)
 
     private fun tracksJson(tracks: List<DeezerTrack>, matcher: LibraryMatcher) =
-        JSONArray().apply { tracks.forEach { put(trackJson(it, matcher.hasTrack(it))) } }
+        JSONArray().apply { tracks.forEach { put(trackJson(it, matcher.findTrack(it)?.id)) } }
 
     private fun albumsJson(albums: List<DeezerAlbum>, matcher: LibraryMatcher) = JSONArray().apply {
         albums.forEach { a ->

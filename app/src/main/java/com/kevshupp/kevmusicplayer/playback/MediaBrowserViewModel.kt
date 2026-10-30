@@ -1826,6 +1826,24 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                         !playlists.containsKey(name) && !isSmart -> edit.reply("La lista \"$name\" ya no existe.")
                         else -> { deletePlaylist(name); edit.reply(null) }
                     }
+                    // Bajo demanda desde el PC (panel de artista): suena en el teléfono como si se tocara aquí
+                    "odPlay", "odQueue" -> {
+                        val t = msg.optJSONObject("track")
+                        if (!com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks.isEnabled(getApplication())) {
+                            edit.reply("Activa el modo bajo demanda en el teléfono (Ajustes › Biblioteca › Descargas).")
+                        } else if (t == null) {
+                            edit.reply("Falta la canción.")
+                        } else {
+                            val track = com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack(
+                                id = t.optLong("id"), title = t.optString("title"), artist = t.optString("artist"),
+                                album = t.optString("album"), durationSec = t.optInt("duration"),
+                                coverSmall = t.optString("cover"), coverXl = t.optString("coverXl"),
+                                link = t.optString("link").ifBlank { "https://www.deezer.com/track/${t.optLong("id")}" }
+                            )
+                            if (msg.optString("type") == "odPlay") playOnDemand(track) else queueOnDemand(track, msg.optBoolean("next"))
+                            edit.reply(null)
+                        }
+                    }
                     "deleteSongs" -> {
                         val known = ids.filter { id -> localAudioFiles.any { it.id == id } }
                         if (known.isEmpty()) edit.reply("Esas canciones ya no están en el teléfono.")

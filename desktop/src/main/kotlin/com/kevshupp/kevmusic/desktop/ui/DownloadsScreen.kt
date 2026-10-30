@@ -193,13 +193,20 @@ private fun DownloadAllButton(tracks: List<DzTrack>, statusById: Map<Long, Downl
 }
 
 @Composable
-private fun TrackRow(track: DzTrack, item: DownloadItem?) {
+internal fun TrackRow(track: DzTrack, item: DownloadItem?) {
     val client = LocalClient.current
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).padding(horizontal = 8.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        UrlImage(track.cover, 44.dp)
+        // Reproducir: desde la biblioteca si ya la tienes; si no, bajo demanda en el teléfono
+        Box(Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)).clickable {
+            if (track.localId > 0) client.playSongs(listOf(track.localId)) else client.playOnDemand(track)
+        }, contentAlignment = Alignment.Center) {
+            UrlImage(track.cover, 44.dp)
+            Icon(Icons.Rounded.PlayArrow, "Reproducir", tint = Color.White,
+                modifier = Modifier.size(26.dp).background(Color.Black.copy(alpha = 0.45f), androidx.compose.foundation.shape.CircleShape).padding(3.dp))
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(track.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -207,7 +214,10 @@ private fun TrackRow(track: DzTrack, item: DownloadItem?) {
             if (item?.status == DlStatus.Failed) Text(item.reason, fontSize = 11.sp, color = MaterialTheme.colorScheme.error, maxLines = 1)
         }
         Text(formatTime(track.durationSec * 1000L), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(10.dp))
+        if (track.localId == 0L && !track.owned) {
+            IconButton(onClick = { client.queueOnDemand(track, next = false) }) { Icon(Icons.Rounded.QueueMusic, "Añadir a la cola (bajo demanda)") }
+        }
+        Spacer(Modifier.width(4.dp))
         Box(Modifier.width(120.dp), contentAlignment = Alignment.CenterEnd) {
             when {
                 item?.status == DlStatus.Done -> StatusLabel(Icons.Rounded.CheckCircle, "Descargada", Color(0xFF00E676))
@@ -278,7 +288,7 @@ private fun ArtistRow(artist: DzArtist, onOpen: () -> Unit) {
 private fun recordTypeLabel(type: String) = when (type) { "single" -> "Sencillo"; "ep" -> "EP"; "compile" -> "Recopilatorio"; "album" -> "Álbum"; else -> "" }
 
 @Composable
-private fun AlbumPage(album: DzAlbum, statusById: Map<Long, DownloadItem>, onBack: () -> Unit) {
+internal fun AlbumPage(album: DzAlbum, statusById: Map<Long, DownloadItem>, onBack: () -> Unit) {
     val client = LocalClient.current
     var result by remember(album.id) { mutableStateOf<DzResult?>(null) }
     LaunchedEffect(album.id) { result = client.tgAlbum(album) }

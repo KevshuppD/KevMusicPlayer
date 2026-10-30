@@ -33,12 +33,21 @@ import androidx.compose.ui.unit.sp
 import com.kevshupp.kevmusic.desktop.Library
 import com.kevshupp.kevmusic.desktop.QueueState
 import com.kevshupp.kevmusic.desktop.Song
+import com.kevshupp.kevmusic.desktop.DzResult
 import com.kevshupp.kevmusic.desktop.formatTime
 import java.text.Normalizer
 
 /** Sin mayúsculas ni tildes, como el buscador de la app. */
-fun normalize(s: String): String =
-    Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
+private val diacritics = Regex("\\p{M}+")
+/** Normalizados ya calculados: ordenar con `sortedBy { normalize(…) }` la llama en cada comparación y la
+ *  biblioteca repite los mismos artistas y álbumes. Antes compilaba la Regex en cada llamada y entrar a
+ *  Canciones, Artistas o Álbumes (o escribir en el buscador) se notaba trabado. */
+private val normalized = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+fun normalize(s: String): String = normalized[s] ?: run {
+    if (normalized.size > 50_000) normalized.clear()
+    Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD).replace(diacritics, "").also { normalized[s] = it }
+}
 
 /** Artistas compuestos ("A, B", "A feat. B", "A & B") cuentan para cada uno, como en la app. */
 private val artistSplit = Regex("""\s*(?:,|;|&|/|\bfeat\.?|\bft\.?|\bx\b)\s*""", RegexOption.IGNORE_CASE)
@@ -47,8 +56,10 @@ fun splitArtists(artist: String): List<String> =
 
 data class Album(val name: String, val artist: String, val songs: List<Song>)
 
-fun albumsOf(lib: Library): List<Album> =
-    lib.songs.groupBy { normalize(it.album) to normalize(splitArtists(it.artist).first()) }
+fun albumsOf(lib: Library): List<Album> = lib.index.albums
+
+internal fun buildAlbums(songs: List<Song>): List<Album> =
+    songs.groupBy { normalize(it.album) to normalize(splitArtists(it.artist).first()) }
         .map { (_, songs) ->
             val sorted = songs.sortedWith(compareBy({ it.track.takeIf { t -> t > 0 } ?: Int.MAX_VALUE }, { it.title }))
             Album(sorted.first().album, splitArtists(sorted.first().artist).first(), sorted)
@@ -82,10 +93,14 @@ fun SongsScreen(lib: Library, currentId: Long?) {
     val client = LocalClient.current
     var query by remember { mutableStateOf("") }
     var sort by remember { mutableStateOf(SongSort.Title) }
-    val songs = remember(lib, query, sort) {
+    // Filtrar y ordenar fuera del hilo de la interfaz, 150 ms después de la última tecla
+    val songs by produceState(emptyList<Song>(), lib, query, sort) {
+        if (query.isNotBlank()) kotlinx.coroutines.delay(150)
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
         val q = normalize(query.trim())
+        val text = lib.index.searchText
         lib.songs
-            .filter { q.isEmpty() || normalize(it.title).contains(q) || normalize(it.artist).contains(q) || normalize(it.album).contains(q) }
+            .filter { q.isEmpty() || text[it.id]?.contains(q) == true }
             .let { list ->
                 when (sort) {
                     SongSort.Title -> list.sortedBy { normalize(it.title) }
@@ -95,6 +110,7 @@ fun SongsScreen(lib: Library, currentId: Long?) {
                     SongSort.Plays -> list.sortedByDescending { it.plays }
                 }
             }
+        }
     }
     Column(Modifier.fillMaxSize()) {
         SectionTitle("Canciones", "${songs.size} de ${lib.songs.size}") {
@@ -114,7 +130,39 @@ fun SongsScreen(lib: Library, currentId: Long?) {
             }
         }
         Spacer(Modifier.height(10.dp))
-        SongList(songs, currentId, numbered = false)
+        // Como en el teléfono: al buscar, debajo de lo local, lo que no tienes en Deezer para escucharlo bajo
+        // demanda o descargarlo (lo busca el teléfono, 600 ms después de la última tecla)
+        val telegram by client.telegram.collectAsState()
+        val online by produceState<DzResult?>(null, query, telegram.ready) {
+            value = null
+            val q = query.trim()
+            if (q.length < 2 || !telegram.ready || client.phoneProtocol < 5) return@produceState
+            kotlinx.coroutines.delay(600)
+            value = client.tgSearch(q, "tracks")
+        }
+        val downloads by client.downloads.collectAsState()
+        val statusById = remember(downloads) { downloads.associateBy { it.track.id } }
+        SongList(songs, currentId, numbered = false, footer = {
+            val r = online
+            val extra = r?.tracks?.filter { !it.owned }.orEmpty()
+            if (query.isNotBlank() && telegram.ready && client.phoneProtocol >= 5) {
+                item(key = "od-title") {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp)) {
+                        Icon(Icons.Rounded.Cloud, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("En línea · bajo demanda", fontWeight = FontWeight.Bold)
+                        if (r == null) { Spacer(Modifier.width(10.dp)); CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) }
+                    }
+                }
+                when {
+                    r?.error != null -> item(key = "od-error") { Text(r.error, fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
+                    r != null && extra.isEmpty() -> item(key = "od-empty") {
+                        Text("Nada más en Deezer que no tengas.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    else -> items(extra, key = { "od-" + it.id }) { TrackRow(it, statusById[it.id]) }
+                }
+            }
+        })
     }
 }
 
@@ -131,10 +179,14 @@ fun PlayShuffleButtons(ids: List<Long>) {
 }
 
 @Composable
-fun SongList(songs: List<Song>, currentId: Long?, numbered: Boolean, modifier: Modifier = Modifier.fillMaxSize(), playlist: String? = null) {
+fun SongList(
+    songs: List<Song>, currentId: Long?, numbered: Boolean, modifier: Modifier = Modifier.fillMaxSize(), playlist: String? = null,
+    footer: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
+) {
     val client = LocalClient.current
     val edits = LocalEdits.current
     val state = rememberLazyListState()
+    PrefetchArt(state, songs.size) { from, to -> client.prefetchArt(songs.subList(from, to).map { it.id }, tiny = true) }
     ScrollableList(state, modifier) {
         itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
             SongRow(
@@ -145,24 +197,37 @@ fun SongList(songs: List<Song>, currentId: Long?, numbered: Boolean, modifier: M
                 extraItems = { edits.songMenuItems(client, listOf(song), "esta canción", playlist) }
             )
         }
+        footer?.invoke(this)
+    }
+}
+
+/** Pide las carátulas de las ~20 filas que siguen a las visibles, mientras se desplaza la lista. */
+@Composable
+private fun PrefetchArt(state: androidx.compose.foundation.lazy.LazyListState, count: Int, load: (Int, Int) -> Unit) {
+    LaunchedEffect(state, count) {
+        snapshotFlow { state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .collect { last -> if (last >= 0 && last + 1 < count) load(last + 1, minOf(count, last + 21)) }
     }
 }
 
 @Composable
 fun ArtistsScreen(lib: Library, onOpen: (String) -> Unit) {
     var query by remember { mutableStateOf("") }
-    val artists = remember(lib) {
-        lib.songs.flatMap { s -> splitArtists(s.artist).map { it to s } }
-            .groupBy({ it.first }, { it.second })
-            .map { (name, songs) -> Triple(name, songs.size, songs.first().id) }
-            .sortedBy { normalize(it.first) }
+    val artists = lib.index.artists
+    val shown by produceState(artists, artists, query) {
+        if (query.isBlank()) { value = artists; return@produceState }
+        kotlinx.coroutines.delay(150)
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            normalize(query.trim()).let { q -> artists.filter { normalize(it.first).contains(q) } }
+        }
     }
-    val shown = remember(artists, query) { normalize(query.trim()).let { q -> artists.filter { q.isEmpty() || normalize(it.first).contains(q) } } }
     Column(Modifier.fillMaxSize()) {
         SectionTitle("Artistas", "${artists.size} artistas")
         SearchField(query, { query = it }, "Buscar artista", Modifier.fillMaxWidth())
         Spacer(Modifier.height(10.dp))
         val state = rememberLazyListState()
+        val client = LocalClient.current
+        PrefetchArt(state, shown.size) { from, to -> client.prefetchArt(shown.subList(from, to).map { it.third }, tiny = true) }
         ScrollableList(state, Modifier.fillMaxSize()) {
             items(shown, key = { it.first }) { (name, count, sampleId) ->
                 Row(
@@ -186,16 +251,26 @@ fun AlbumsScreen(lib: Library, onOpen: (Album) -> Unit) {
     val client = LocalClient.current
     val edits = LocalEdits.current
     var query by remember { mutableStateOf("") }
-    val albums = remember(lib) { albumsOf(lib) }
-    val shown = remember(albums, query) {
-        normalize(query.trim()).let { q -> albums.filter { q.isEmpty() || normalize(it.name).contains(q) || normalize(it.artist).contains(q) } }
+    val albums = lib.index.albums
+    val shown by produceState(albums, albums, query) {
+        if (query.isBlank()) { value = albums; return@produceState }
+        kotlinx.coroutines.delay(150)
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            normalize(query.trim()).let { q -> albums.filter { normalize(it.name).contains(q) || normalize(it.artist).contains(q) } }
+        }
     }
     Column(Modifier.fillMaxSize()) {
         SectionTitle("Álbumes", "${albums.size} álbumes")
         SearchField(query, { query = it }, "Buscar álbum o artista", Modifier.fillMaxWidth())
         Spacer(Modifier.height(14.dp))
+        val gridState = rememberLazyGridState()
+        val hd = com.kevshupp.kevmusic.desktop.Settings.hdGridArt
+        LaunchedEffect(gridState, shown, hd) {
+            snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+                .collect { last -> if (last >= 0) client.prefetchArt(shown.drop(last + 1).take(12).map { it.songs.first().id }, small = !hd) }
+        }
         LazyVerticalGrid(
-            GridCells.Adaptive(170.dp), state = rememberLazyGridState(),
+            GridCells.Adaptive(170.dp), state = gridState,
             horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             items(shown, key = { it.name + "|" + it.artist }) { album ->

@@ -82,9 +82,11 @@ private val placeholderBrushes = listOf(
 @Composable
 fun AlbumArt(songId: Long?, size: Dp, small: Boolean = true, corner: Dp = 8.dp, seed: String = "") {
     val client = LocalClient.current
-    var bitmap by remember(songId, small) { mutableStateOf<ImageBitmap?>(songId?.let { client.cachedArt(it, small) }) }
-    LaunchedEffect(songId, small) {
-        if (songId != null && songId != 0L && bitmap == null) bitmap = client.loadArt(songId, small)
+    // Filas de lista (≤ 48 dp): versión reducida, más barata de dibujar al desplazarse
+    val tiny = small && size <= 48.dp
+    var bitmap by remember(songId, small, tiny) { mutableStateOf<ImageBitmap?>(songId?.let { client.cachedArt(it, small, tiny) }) }
+    LaunchedEffect(songId, small, tiny) {
+        if (songId != null && songId != 0L && bitmap == null) bitmap = client.loadArt(songId, small, tiny)
     }
     Box(
         Modifier.size(size).clip(RoundedCornerShape(corner))

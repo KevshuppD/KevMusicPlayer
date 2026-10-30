@@ -167,7 +167,7 @@ fun PerformanceSettingsSection(
         ).joinToString("  ·  ")
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // CARD 0: PERFIL DE RENDIMIENTO (Performance Profile Selector)
         Column {
             Text(
@@ -306,7 +306,7 @@ fun PerformanceSettingsSection(
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     // 1. Refresh Rate Selector
                     Row(
@@ -499,7 +499,7 @@ fun PerformanceSettingsSection(
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     // 1. Artwork Preloading Toggle
                     Row(
@@ -899,7 +899,7 @@ fun PerformanceSettingsSection(
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     // 1. Queue size limit
                     Row(

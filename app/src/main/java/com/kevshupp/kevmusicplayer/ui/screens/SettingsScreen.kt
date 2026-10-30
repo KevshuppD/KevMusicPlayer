@@ -765,7 +765,7 @@ fun SettingsScreen(
                             .fillMaxSize()
                             .verticalScroll(hubScrollState)
                             .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         // 1. Cuenta de Google y copias (la sincronización en tiempo real está en el perfil de Inicio)
                         val hubCloudUser by viewModel.cloudUser.collectAsState()
@@ -775,11 +775,6 @@ fun SettingsScreen(
                             title = getLocalized("Cuenta y Copias", "Account & Backups"),
                             subtitle = hubCloudUser?.let { it.displayName ?: it.email }
                                 ?: getLocalized("Sin sesión de Google", "Not signed in to Google"),
-                            chips = listOf(
-                                "Google",
-                                getLocalized("Contenido", "Content"),
-                                getLocalized("Copia manual", "Manual backup")
-                            ),
                             onClick = { activeCategory = "cloud" }
                         )
 
@@ -808,11 +803,6 @@ fun SettingsScreen(
                                     "Pixel Retro · " + com.kevshupp.kevmusicplayer.ui.theme.pixelPalette(selectedTheme).nameEs
                                 else getLocalized("Cyberpunk Rosa", "Cyberpunk Pink")
                             }} • ${if (selectedLanguage == "es") "Español" else "English"}",
-                            chips = listOf(
-                                getLocalized("Temas", "Themes"),
-                                getLocalized("Glassmorphism", "Glassmorphism"),
-                                getLocalized("Reproductor", "Player")
-                            ),
                             onClick = { activeCategory = "general" }
                         )
 
@@ -822,12 +812,6 @@ fun SettingsScreen(
                             iconColor = Color(0xFF00E5FF),
                             title = getLocalized("Biblioteca y Música", "Library & Music"),
                             subtitle = "$totalSongs ${getLocalized("canciones detectadas", "songs detected")} • ${deviceFolders.size} ${getLocalized("carpetas", "folders")}",
-                            chips = listOf(
-                                getLocalized("Escanear", "Scan"),
-                                getLocalized("Carpetas", "Folders"),
-                                getLocalized("Carátulas", "Covers"),
-                                getLocalized("Pestañas", "Tabs")
-                            ),
                             onClick = { activeCategory = "library" }
                         )
 
@@ -837,12 +821,6 @@ fun SettingsScreen(
                             iconColor = Color(0xFF76FF03),
                             title = getLocalized("Audio y Sonido", "Audio & Sound"),
                             subtitle = getLocalized("Ecualizador 5 bandas, graves, normalización y crossfade", "5-band equalizer, bass, normalization and crossfade"),
-                            chips = listOf(
-                                getLocalized("Ecualizador", "Equalizer"),
-                                getLocalized("Graves", "Bass"),
-                                getLocalized("ReplayGain", "ReplayGain"),
-                                getLocalized("Crossfade", "Crossfade")
-                            ),
                             onClick = { activeCategory = "audio" }
                         )
 
@@ -852,11 +830,6 @@ fun SettingsScreen(
                             iconColor = Color(0xFFFFD600),
                             title = getLocalized("Rendimiento y Memoria", "Performance & Memory"),
                             subtitle = "$selectedRefreshRate Hz • ${if (disableAnimations) getLocalized("Sin animaciones", "No animations") else getLocalized("Animaciones fluidas", "Smooth animations")}",
-                            chips = listOf(
-                                "120 Hz",
-                                getLocalized("Caché", "Cache"),
-                                getLocalized("Optimización", "Optimization")
-                            ),
                             onClick = { activeCategory = "performance" }
                         )
 
@@ -866,11 +839,6 @@ fun SettingsScreen(
                             iconColor = Color(0xFFE040FB),
                             title = getLocalized("Sistema y Permisos", "System & Permissions"),
                             subtitle = if (audioGranted && notificationGranted) getLocalized("Todos los permisos concedidos", "All permissions granted") else getLocalized("Revisar permisos pendientes", "Review pending permissions"),
-                            chips = listOf(
-                                getLocalized("Permisos", "Permissions"),
-                                getLocalized("Batería", "Battery"),
-                                getLocalized("Segundo plano", "Background")
-                            ),
                             onClick = { activeCategory = "system" }
                         )
 
@@ -880,7 +848,7 @@ fun SettingsScreen(
                             colors = CardDefaults.cardColors(containerColor = settingsCardContainerColor()),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
+                            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth()
@@ -910,61 +878,32 @@ fun SettingsScreen(
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(12.dp))
-
+                                Spacer(modifier = Modifier.height(10.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    OutlinedButton(
-                                        onClick = { showDuplicateFinder = true },
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.weight(1f),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(getLocalized("Duplicados", "Duplicates"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = { showIntegrityChecker = true },
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.weight(1f),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Rounded.HealthAndSafety, contentDescription = null, modifier = Modifier.size(15.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(getLocalized("Integridad", "Integrity"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedButton(
-                                        onClick = { showShortSongsFinder = true },
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.weight(1f),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Rounded.Timer, contentDescription = null, modifier = Modifier.size(15.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(getLocalized("Audios cortos", "Short audio"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = { showMissingCoverFinder = true },
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.weight(1f),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Rounded.ImageNotSupported, contentDescription = null, modifier = Modifier.size(15.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(getLocalized("Sin carátula", "No cover"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    listOf(
+                                        Triple(Icons.Rounded.ContentCopy, getLocalized("Duplicados", "Duplicates")) { showDuplicateFinder = true },
+                                        Triple(Icons.Rounded.HealthAndSafety, getLocalized("Integridad", "Integrity")) { showIntegrityChecker = true },
+                                        Triple(Icons.Rounded.Timer, getLocalized("Cortos", "Short")) { showShortSongsFinder = true },
+                                        Triple(Icons.Rounded.ImageNotSupported, getLocalized("Carátulas", "Covers")) { showMissingCoverFinder = true }
+                                    ).forEach { (icon, label, open) ->
+                                        Surface(
+                                            onClick = open,
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                modifier = Modifier.padding(vertical = 8.dp)
+                                            ) {
+                                                Icon(icon, contentDescription = null, tint = Color(0xFFFF9100), modifier = Modifier.size(18.dp))
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = settingsTextColor(), maxLines = 1)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -976,11 +915,6 @@ fun SettingsScreen(
                             iconColor = Color(0xFF2979FF),
                             title = getLocalized("Acerca de KevMusic", "About KevMusic"),
                             subtitle = "${getLocalized("Versión", "Version")} $appVersionName • Desarrollado por Kevshupp",
-                            chips = listOf(
-                                "GitHub",
-                                getLocalized("Novedades", "Changelog"),
-                                getLocalized("Licencias", "Licenses")
-                            ),
                             onClick = { activeCategory = "about" }
                         )
 
@@ -993,7 +927,7 @@ fun SettingsScreen(
                             .fillMaxSize()
                             .verticalScroll(scrollState)
                             .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         when (activeCategory) {
                             "general" -> {
@@ -1141,7 +1075,6 @@ private fun SettingsCategoryHubCard(
     iconColor: Color,
     title: String,
     subtitle: String,
-    chips: List<String>,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1152,14 +1085,16 @@ private fun SettingsCategoryHubCard(
             .fillMaxWidth()
             .clickable { onClick() }
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        // Compacta: icono, título, resumen y flecha. Las etiquetas de debajo ("Temas · Glassmorphism…") no
+        // hacían nada y doblaban la altura de cada categoría
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(38.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(iconColor.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
@@ -1199,33 +1134,6 @@ private fun SettingsCategoryHubCard(
                 )
             }
 
-            if (chips.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.horizontalScroll(rememberScrollState())
-                ) {
-                    chips.forEach { chipText ->
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
-                            modifier = Modifier.height(24.dp)
-                        ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 8.dp)
-                            ) {
-                                Text(
-                                    text = chipText,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = settingsTextMutedColor()
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

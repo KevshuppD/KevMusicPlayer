@@ -132,6 +132,15 @@ val LocalSongImageRounded = androidx.compose.runtime.staticCompositionLocalOf { 
 val LocalTransparencyEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }
 val LocalCardTransparencyEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }
 val LocalNavBarTransparencyEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }
+/** Iconos en pixel art (corazón, aleatorio, reproducir…): solo con un tema Pixel Retro y `pixel_icons` activo. */
+val LocalPixelIcons = androidx.compose.runtime.staticCompositionLocalOf { false }
+/**
+ * Carátulas convertidas a pixel art (`pixel_album_art`), en cualquier tema: [level] 0 suave … 3 extremo
+ * (`pixel_album_art_level`) y [palette] con los colores de la paleta Pixel Retro (`pixel_album_art_palette`).
+ * Null = desactivado.
+ */
+data class PixelCoverStyle(val level: Int, val palette: Boolean)
+val LocalPixelArtCovers = androidx.compose.runtime.staticCompositionLocalOf<PixelCoverStyle?> { null }
 
 /** Colores de un tema de la app (`settings_prefs/app_theme`); también los usan los widgets. */
 fun appColorScheme(theme: String): androidx.compose.material3.ColorScheme = when (theme) {
@@ -157,6 +166,10 @@ fun KevMusicPlayerTheme(
     var currentTransparencyEnabled by remember { mutableStateOf(initialLegacyTrans) }
     var currentCardTransparencyEnabled by remember { mutableStateOf(prefs.getBoolean("enable_card_transparency", initialLegacyTrans)) }
     var currentNavBarTransparencyEnabled by remember { mutableStateOf(prefs.getBoolean("enable_navbar_transparency", initialLegacyTrans)) }
+    var currentPixelIcons by remember { mutableStateOf(prefs.getBoolean("pixel_icons", true)) }
+    var currentPixelArtCovers by remember { mutableStateOf(prefs.getBoolean("pixel_album_art", false)) }
+    var currentPixelArtLevel by remember { mutableStateOf(prefs.getInt("pixel_album_art_level", 1)) }
+    var currentPixelArtPalette by remember { mutableStateOf(prefs.getBoolean("pixel_album_art_palette", false)) }
     
     // Store strong references to the change listeners so they are not garbage collected
     val listener = remember {
@@ -175,6 +188,14 @@ fun KevMusicPlayerTheme(
                 currentCardTransparencyEnabled = p.getBoolean("enable_card_transparency", true)
             } else if (key == "enable_navbar_transparency") {
                 currentNavBarTransparencyEnabled = p.getBoolean("enable_navbar_transparency", true)
+            } else if (key == "pixel_icons") {
+                currentPixelIcons = p.getBoolean("pixel_icons", true)
+            } else if (key == "pixel_album_art") {
+                currentPixelArtCovers = p.getBoolean("pixel_album_art", false)
+            } else if (key == "pixel_album_art_level") {
+                currentPixelArtLevel = p.getInt("pixel_album_art_level", 1)
+            } else if (key == "pixel_album_art_palette") {
+                currentPixelArtPalette = p.getBoolean("pixel_album_art_palette", false)
             }
         }
     }
@@ -211,7 +232,9 @@ fun KevMusicPlayerTheme(
         LocalSongImageRounded provides currentSongImageRounded,
         LocalTransparencyEnabled provides currentTransparencyEnabled,
         LocalCardTransparencyEnabled provides currentCardTransparencyEnabled,
-        LocalNavBarTransparencyEnabled provides currentNavBarTransparencyEnabled
+        LocalNavBarTransparencyEnabled provides currentNavBarTransparencyEnabled,
+        LocalPixelIcons provides (isPixelTheme(currentTheme) && currentPixelIcons),
+        LocalPixelArtCovers provides (if (currentPixelArtCovers) PixelCoverStyle(currentPixelArtLevel.coerceIn(0, 3), currentPixelArtPalette && isPixelTheme(currentTheme)) else null)
     ) {
         MaterialTheme(
             colorScheme = colorScheme,

@@ -25,6 +25,23 @@ object Settings {
     const val CLOSE_EXIT = "exit"
     const val CLOSE_MINIMIZE = "minimize"
     const val CLOSE_TRAY = "tray"
+    /** Cómo dibuja Skiko la ventana: [RENDER_AUTO], [RENDER_HARDWARE] (OpenGL / Direct3D) o [RENDER_SOFTWARE]. Se aplica al abrir. */
+    var renderer by mutableStateOf(RENDER_AUTO)
+    const val RENDER_AUTO = "auto"
+    const val RENDER_HARDWARE = "hardware"
+    const val RENDER_SOFTWARE = "software"
+
+    /** Contador de cuadros por segundo de Skiko en una esquina de la ventana (para medir la fluidez). */
+    var showFps by mutableStateOf(false)
+
+    /** Antes de crear la ventana: Skiko lee `skiko.renderApi` y `skiko.fps.enabled` una sola vez. */
+    fun applyRenderer() {
+        if (showFps) System.setProperty("skiko.fps.enabled", "true")
+        when (renderer) {
+            RENDER_HARDWARE -> System.setProperty("skiko.renderApi", if (Platform.isWindows) "DIRECT3D" else "OPENGL")
+            RENDER_SOFTWARE -> System.setProperty("skiko.renderApi", "SOFTWARE_FAST")
+        }
+    }
 
     fun load() {
         runCatching {
@@ -35,6 +52,8 @@ object Settings {
             autoCheckUpdates = j.optBoolean("autoCheckUpdates", true)
             hdGridArt = j.optBoolean("hdGridArt", false)
             closeAction = j.optString("closeAction", CLOSE_EXIT).takeIf { it in setOf(CLOSE_EXIT, CLOSE_MINIMIZE, CLOSE_TRAY) } ?: CLOSE_EXIT
+            showFps = j.optBoolean("showFps", false)
+            renderer = j.optString("renderer", RENDER_AUTO).takeIf { it in setOf(RENDER_AUTO, RENDER_HARDWARE, RENDER_SOFTWARE) } ?: RENDER_AUTO
         }
     }
 
@@ -43,7 +62,8 @@ object Settings {
             Config.dir.mkdirs()
             file.writeText(
                 JSONObject().put("theme", theme).put("showTranslation", showTranslation).put("lyricsSize", lyricsSize)
-                    .put("autoCheckUpdates", autoCheckUpdates).put("hdGridArt", hdGridArt).put("closeAction", closeAction).toString(2)
+                    .put("autoCheckUpdates", autoCheckUpdates).put("hdGridArt", hdGridArt).put("closeAction", closeAction)
+                    .put("renderer", renderer).put("showFps", showFps).toString(2)
             )
         }
     }

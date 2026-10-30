@@ -202,7 +202,7 @@ fun AboutSettingsSection(
 
     // Acerca de la Aplicación & Actualizaciones (About & GitHub Updates Card)
     Column(
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Text(

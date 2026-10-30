@@ -116,8 +116,30 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("rendimiento", "carátulas", "caratulas", "hd", "caché", "cache", "memoria", "imágenes", "lento")) {
+                if (matches("rendimiento", "carátulas", "caratulas", "hd", "caché", "cache", "memoria", "imágenes", "lento", "fps", "fluidez", "gráfica", "grafica", "hardware", "software", "opengl", "renderizado")) {
                     SettingsCard("Rendimiento", Icons.Rounded.Speed) {
+                        Text("Renderizado", fontWeight = FontWeight.Medium)
+                        Text(
+                            when (Settings.renderer) {
+                                Settings.RENDER_HARDWARE -> "Con la tarjeta gráfica (${if (com.kevshupp.kevmusic.desktop.Platform.isWindows) "Direct3D" else "OpenGL"}). Lo más fluido si los drivers funcionan bien."
+                                Settings.RENDER_SOFTWARE -> "Con el procesador. Úsalo si con la gráfica ves parpadeos, pantalla negra o cortes."
+                                else -> "Elige solo: normalmente la tarjeta gráfica."
+                            } + " Se aplica al volver a abrir la app.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(Settings.RENDER_AUTO to "Automático", Settings.RENDER_HARDWARE to "Hardware", Settings.RENDER_SOFTWARE to "Software").forEach { (key, label) ->
+                                FilterChip(selected = Settings.renderer == key, onClick = { Settings.renderer = key; Settings.save() }, label = { Text(label) })
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        SwitchRow(
+                            "Mostrar FPS",
+                            "Cuadros por segundo en una esquina de la ventana, para comparar la fluidez. Se aplica al volver a abrir la app.",
+                            Settings.showFps
+                        ) { Settings.showFps = it; Settings.save() }
+                        Spacer(Modifier.height(10.dp))
                         SwitchRow(
                             "Carátulas en alta calidad en cuadrículas",
                             "Álbumes e Inicio con imágenes de 640 px. Más nítido, pero más pesado para gráficas integradas.",

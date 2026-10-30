@@ -60,6 +60,11 @@ fun HomeScreen(
             .take(12)
     }
     val favorites = lib.playlists.firstOrNull { it.name == FAVORITES }
+    // "Hecho para ti": las mismas mezclas que el teléfono, calculadas fuera de la interfaz
+    val mixes by produceState(emptyList<com.kevshupp.kevmusic.desktop.HomeMix>(), lib.songs) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { com.kevshupp.kevmusic.desktop.HomeMixes.build(lib.songs) }
+    }
+    val smart = lib.playlists.filter { it.smart && it.songIds.isNotEmpty() }
     val greeting = when (LocalTime.now().hour) {
         in 5..11 -> "Buenos días"
         in 12..19 -> "Buenas tardes"
@@ -91,6 +96,24 @@ fun HomeScreen(
             }
 
             SongShelf("Escuchado recientemente", "Aquí aparecerán tus últimas reproducciones", recent, currentId)
+            if (mixes.isNotEmpty() || smart.isNotEmpty()) {
+                Column {
+                    ShelfTitle("Hecho para ti")
+                    val cards = mixes.map { Triple(it.title, it.subtitle, it.songs) to { client.playSongs(it.songs.map { s -> s.id }) } } +
+                        smart.map { pl ->
+                            Triple(pl.name, "Lista inteligente · ${pl.songIds.size}", pl.songIds.mapNotNull { lib.byId[it] }) to { onOpenPlaylist(pl.name) }
+                        }
+                    HorizontalShelf(cards) { (info, open) ->
+                        val (title, subtitle, songs) = info
+                        Column(Modifier.width(160.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = open).padding(8.dp)) {
+                            Mosaic(songs, 144.dp, seed = title)
+                            Spacer(Modifier.height(8.dp))
+                            Text(title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
             SongShelf("Lo que más escuchas", "Tus canciones favoritas saldrán aquí", top, currentId, showPlays = true)
             SongShelf("Agregado recientemente", "No hay canciones", added, currentId)
 
@@ -191,6 +214,21 @@ private fun SongShelf(title: String, empty: String, songs: List<Song>, currentId
                         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
+        }
+    }
+}
+
+/** Portada de mezcla o lista: 2×2 con cuatro álbumes distintos de sus canciones, o la carátula de la primera. */
+@Composable
+fun Mosaic(songs: List<Song>, size: androidx.compose.ui.unit.Dp, seed: String) {
+    val covers = remember(songs) { songs.distinctBy { normalize(it.album) }.take(4) }
+    Box(Modifier.size(size).clip(RoundedCornerShape(14.dp))) {
+        if (covers.size < 4) {
+            AlbumArt(covers.firstOrNull()?.id, size, small = size <= 160.dp, corner = 0.dp, seed = seed)
+        } else Column {
+            for (row in 0..1) Row {
+                for (col in 0..1) AlbumArt(covers[row * 2 + col].id, size / 2, small = true, corner = 0.dp, seed = seed)
             }
         }
     }

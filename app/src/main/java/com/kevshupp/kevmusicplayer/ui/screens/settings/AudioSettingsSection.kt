@@ -91,7 +91,7 @@ fun AudioSettingsSection(
     var crossfade by remember { mutableStateOf(settingsPrefs.getInt("crossfade_duration", 0)) }
 
     Column(
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // 0. Audio Normalization Card
         Row(
@@ -174,7 +174,7 @@ fun AudioSettingsSection(
         ) {
             Column(
                 modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Ignore transient audio focus (anti-cut with Instagram/social apps)
                 var ignoreTransientFocus by remember {

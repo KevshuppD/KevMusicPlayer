@@ -58,7 +58,7 @@ fun SystemSettingsSection(
     context: android.content.Context,
 ) {
     RemoteControlSettingsCard(context, getLocalized)
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(4.dp))
 
     // 1. Diagnóstico y Servicios (Diagnostics & Services Card)
     Column {
@@ -80,7 +80,7 @@ fun SystemSettingsSection(
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // 1. Automatic Translation Toggle
                 var autoTranslate by remember { mutableStateOf(settingsPrefs.getBoolean("auto_translate", false)) }
@@ -414,7 +414,7 @@ fun SystemSettingsSection(
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 // 1. Audio Storage Permission Row
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -713,7 +713,7 @@ fun SystemSettingsSection(
         }
     }
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(4.dp))
 
     // 3. Bluetooth Auto-Resume Card
     Column {
@@ -793,7 +793,7 @@ fun SystemSettingsSection(
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Main Toggle Row
                 Row(

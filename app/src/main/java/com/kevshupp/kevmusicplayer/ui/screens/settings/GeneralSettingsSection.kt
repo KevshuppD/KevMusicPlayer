@@ -64,6 +64,7 @@ fun GeneralSettingsSection(
     viewModel: com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 ) {
     var showPlayerCustomizer by remember { mutableStateOf(false) }
+    var themesExpanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     // 1. Temas de colores (Aesthetic Color Themes Selector)
     Column {
@@ -96,7 +97,33 @@ fun GeneralSettingsSection(
                     Triple("pixel", getLocalized("Pixel Retro", "Pixel Retro"), getLocalized("Letra pixelada y paletas de consolas retro", "Pixel font and retro console palettes"))
                 )
 
-                themes.forEachIndexed { index, (tag, name, desc) ->
+                // Plegable: la lista de temas ocupaba media pantalla; cerrada muestra solo el tema actual
+                val current = themes.firstOrNull { (tag, _, _) -> if (tag == "pixel") isPixelTheme(selectedTheme) else selectedTheme == tag }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                        .clickable { themesExpanded = !themesExpanded }.padding(horizontal = 8.dp, vertical = 10.dp)
+                ) {
+                    Box(
+                        Modifier.size(28.dp).clip(CircleShape).background(
+                            Brush.linearGradient(listOf(MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.primary))
+                        )
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(current?.second ?: selectedTheme, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        Text(
+                            if (themesExpanded) getLocalized("Toca para cerrar", "Tap to collapse") else getLocalized("Toca para cambiar el tema", "Tap to change the theme"),
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                    Icon(
+                        if (themesExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+
+                if (themesExpanded) themes.forEachIndexed { index, (tag, name, desc) ->
                     // Pixel Retro agrupa sus paletas (pixel, pixel_gameboy…): elegirlo de nuevo no cambia la paleta
                     val isSelected = if (tag == "pixel") isPixelTheme(selectedTheme) else selectedTheme == tag
                     fun select() {
@@ -173,54 +200,66 @@ fun GeneralSettingsSection(
     var launcherIconFollowsTheme by remember {
         mutableStateOf(settingsPrefs.getBoolean(com.kevshupp.kevmusicplayer.data.LauncherIcon.KEY_ENABLED, false))
     }
-    Spacer(modifier = Modifier.height(12.dp))
+    // Icono de la app y pixel art en una sola tarjeta (antes, una tarjeta por ajuste y mucho scroll)
+    val pixelTheme = isPixelTheme(selectedTheme)
+    var pixelIcons by remember { mutableStateOf(settingsPrefs.getBoolean("pixel_icons", true)) }
+    var pixelCovers by remember { mutableStateOf(settingsPrefs.getBoolean("pixel_album_art", false)) }
+    var pixelLevel by remember { mutableStateOf(settingsPrefs.getInt("pixel_album_art_level", 1)) }
+    var pixelPalette by remember { mutableStateOf(settingsPrefs.getBoolean("pixel_album_art_palette", false)) }
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = settingsCardContainerColor()),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(16.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Apps,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp)
-                )
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            CompactSwitchRow(
+                Icons.Rounded.Apps,
+                getLocalized("Icono a juego con el tema", "Icon matches the theme"),
+                getLocalized("Cambia al salir de la app; algunos launchers quitan el acceso directo", "Changes when you leave the app; some launchers remove the shortcut"),
+                launcherIconFollowsTheme
+            ) { checked ->
+                launcherIconFollowsTheme = checked
+                settingsPrefs.edit().putBoolean(com.kevshupp.kevmusicplayer.data.LauncherIcon.KEY_ENABLED, checked).apply()
             }
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = getLocalized("Icono a juego con el tema", "Icon matches the theme"),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = getLocalized(
-                        "El icono de la app toma los colores del tema (en pixel art con Pixel Retro). Cambia al salir de la app; algunos launchers quitan el acceso de la pantalla de inicio.",
-                        "The app icon takes the theme colors (pixel art with Pixel Retro). It changes when you leave the app; some launchers remove the home screen shortcut."
-                    ),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            if (pixelTheme) {
+                CompactSwitchRow(
+                    com.kevshupp.kevmusicplayer.ui.theme.PixelIcons.Heart,
+                    getLocalized("Iconos pixel art", "Pixel art icons"),
+                    getLocalized("Corazón, reproducir, Inicio y Biblioteca en píxeles", "Heart, play, Home and Library in pixels"),
+                    pixelIcons
+                ) { pixelIcons = it; settingsPrefs.edit().putBoolean("pixel_icons", it).apply() }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
             }
-            Switch(
-                checked = launcherIconFollowsTheme,
-                onCheckedChange = { checked ->
-                    launcherIconFollowsTheme = checked
-                    settingsPrefs.edit().putBoolean(com.kevshupp.kevmusicplayer.data.LauncherIcon.KEY_ENABLED, checked).apply()
+            CompactSwitchRow(
+                Icons.Rounded.GridOn,
+                getLocalized("Carátulas en pixel art", "Pixel art covers"),
+                getLocalized("Solo cambia cómo se ven; tus archivos no", "Only changes how they look, not your files"),
+                pixelCovers
+            ) { pixelCovers = it; settingsPrefs.edit().putBoolean("pixel_album_art", it).apply() }
+            if (pixelCovers) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 50.dp, bottom = 6.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(getLocalized("Suave", "Subtle"), getLocalized("Medio", "Medium"), getLocalized("Fuerte", "Strong"), getLocalized("Extremo", "Extreme"))
+                        .forEachIndexed { i, label ->
+                            FilterChip(
+                                selected = pixelLevel == i,
+                                onClick = { pixelLevel = i; settingsPrefs.edit().putInt("pixel_album_art_level", i).apply() },
+                                label = { Text(label, fontSize = 12.sp) }
+                            )
+                        }
                 }
-            )
+                if (pixelTheme) {
+                    CompactSwitchRow(
+                        Icons.Rounded.Palette,
+                        getLocalized("Con los colores de la paleta", "Use the palette colors"),
+                        getLocalized("Cada bloque toma un color de la paleta Pixel Retro", "Each block takes a Pixel Retro palette color"),
+                        pixelPalette
+                    ) { pixelPalette = it; settingsPrefs.edit().putBoolean("pixel_album_art_palette", it).apply() }
+                }
+            }
         }
     }
 
@@ -228,7 +267,7 @@ fun GeneralSettingsSection(
     var enableNavBarTransparency by remember { mutableStateOf(settingsPrefs.getBoolean("enable_navbar_transparency", initialLegacyTrans)) }
     var enableCardTransparency by remember { mutableStateOf(settingsPrefs.getBoolean("enable_card_transparency", initialLegacyTrans)) }
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(8.dp))
 
     // 1.5. Transparencia y Glassmorphism
     Column {
@@ -361,7 +400,7 @@ fun GeneralSettingsSection(
         }
     }
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(8.dp))
 
     Column {
         Text(
@@ -854,7 +893,7 @@ fun GeneralSettingsSection(
         }
     }
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(8.dp))
 
     // 2. Language Settings Section
     Column {
@@ -1031,5 +1070,31 @@ private fun PixelPaletteChooser(selected: String, getLocalized: (String, String)
                 if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
+    }
+}
+
+/** Fila compacta de ajuste: icono, título, descripción corta e interruptor. */
+@Composable
+private fun CompactSwitchRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Box(
+            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Text(description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }

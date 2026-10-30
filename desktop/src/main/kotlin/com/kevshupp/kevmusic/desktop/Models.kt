@@ -1,5 +1,10 @@
 package com.kevshupp.kevmusic.desktop
 
+import com.kevshupp.kevmusic.desktop.ui.Album
+import com.kevshupp.kevmusic.desktop.ui.buildAlbums
+import com.kevshupp.kevmusic.desktop.ui.normalize
+import com.kevshupp.kevmusic.desktop.ui.splitArtists
+
 data class Song(
     val id: Long,
     val title: String,
@@ -19,6 +24,32 @@ data class Playlist(val name: String, val songIds: List<Long>, val smart: Boolea
 
 data class Library(val device: String, val songs: List<Song>, val playlists: List<Playlist>) {
     val byId: Map<Long, Song> = songs.associateBy { it.id }
+    /** Álbumes, artistas y textos de búsqueda: se calcula en segundo plano al llegar la biblioteca
+     *  ([RemoteClient] llama a [warm]) y se comparte entre copias con las mismas canciones. */
+    val index: LibraryIndex get() = LibraryIndex.of(songs)
+    fun warm() = index.also { it.albums; it.artists; it.searchText }
+}
+
+class LibraryIndex private constructor(val songs: List<Song>) {
+    val albums: List<Album> by lazy { buildAlbums(songs) }
+    /** (nombre, canciones, id de una canción para la carátula), en orden alfabético sin tildes. */
+    val artists: List<Triple<String, Int, Long>> by lazy {
+        songs.flatMap { s -> splitArtists(s.artist).map { it to s } }
+            .groupBy({ it.first }, { it.second })
+            .map { (name, list) -> Triple(name, list.size, list.first().id) }
+            .sortedBy { normalize(it.first) }
+    }
+    /** Título, artista y álbum normalizados por canción, para filtrar sin normalizar en cada tecla. */
+    val searchText: Map<Long, String> by lazy {
+        songs.associate { it.id to normalize(it.title) + "\u0000" + normalize(it.artist) + "\u0000" + normalize(it.album) }
+    }
+
+    companion object {
+        @Volatile private var last: LibraryIndex? = null
+        /** El mismo índice mientras la lista de canciones sea la misma (las listas inteligentes cambian solas). */
+        fun of(songs: List<Song>): LibraryIndex =
+            last?.takeIf { it.songs === songs || it.songs == songs } ?: LibraryIndex(songs).also { last = it }
+    }
 }
 
 data class PlayerState(
@@ -109,7 +140,9 @@ data class DzTrack(
     val coverXl: String,
     val link: String,
     /** Ya está en la biblioteca del teléfono. */
-    val owned: Boolean
+    val owned: Boolean,
+    /** Id de esa canción en la biblioteca (0 si no la tienes o el teléfono es de protocolo < 5). */
+    val localId: Long = 0L
 )
 
 data class DzAlbum(

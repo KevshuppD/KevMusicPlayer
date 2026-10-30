@@ -99,6 +99,16 @@ fun HomeScreen(
         }
     }
 
+    // "Hecho para ti": mezclas automáticas (artistas, géneros, Redescubre, Sin escuchar), calculadas fuera del
+    // hilo principal y de nuevo solo cuando cambian la biblioteca o las reproducciones
+    val statsVersion = viewModel?.statsVersion?.intValue ?: 0
+    val homeMixes by produceState(emptyList<com.kevshupp.kevmusicplayer.data.HomeMix>(), audioFiles.size, statsVersion) {
+        val songs = (viewModel?.audioFilesWithStats ?: audioFiles).toList()
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            com.kevshupp.kevmusicplayer.data.HomeMixes.build(songs)
+        }
+    }
+
     // 3. Recently Added
     val recentlyAdded by remember(audioFiles) {
         derivedStateOf {
@@ -125,35 +135,15 @@ fun HomeScreen(
                 .fillMaxSize()
                 .navigationBarsPadding()
         ) {
-            // Header row with Greeting, Profile, Insights, Settings and Refresh
-            Row(
+            // Cabecera: perfil y botones arriba, el saludo debajo a todo el ancho (en una sola fila, con
+            // Telegram y Soulseek activos, el saludo quedaba en "Bu…")
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 16.dp)
             ) {
-                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                    Text(
-                        text = greeting,
-                        style = MaterialTheme.typography.headlineLarge.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = (-1).sp
-                        ),
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = if (isEs) "Tu música favorita te espera" else "Your favorite music awaits",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -198,6 +188,7 @@ fun HomeScreen(
                         }
                     }
 
+                    Spacer(Modifier.weight(1f))
                     val isScanning = viewModel?.isScanning?.value == true
                     IconButton(
                         onClick = { viewModel?.scanFiles(isManual = true) },
@@ -281,6 +272,26 @@ fun HomeScreen(
                         )
                     }
                 }
+                Spacer(Modifier.height(12.dp))
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = greeting,
+                        style = MaterialTheme.typography.headlineLarge.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = (-1).sp
+                        ),
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = if (isEs) "Tu música favorita te espera" else "Your favorite music awaits",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             if (showSoulseek) {
@@ -331,7 +342,7 @@ fun HomeScreen(
                     ) {
                         QuickActionCard(
                             title = if (isEs) "Modo Aleatorio" else "Shuffle All",
-                            icon = Icons.Rounded.Shuffle,
+                            icon = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Shuffle),
                             gradient = quick(Brush.linearGradient(listOf(Color(0xFF8E2DE2), Color(0xFF4A00E0)))) { scheme.primary },
                             iconTint = iconTint,
                             onClick = {
@@ -350,7 +361,7 @@ fun HomeScreen(
                         )
                         QuickActionCard(
                             title = if (isEs) "Favoritas" else "Favorites",
-                            icon = Icons.Rounded.Favorite,
+                            icon = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Favorite),
                             gradient = quick(Brush.linearGradient(listOf(Color(0xFFFF007F), Color(0xFFE0115F)))) { scheme.secondary },
                             iconTint = iconTint,
                             onClick = {
@@ -377,7 +388,7 @@ fun HomeScreen(
                     ) {
                         QuickActionCard(
                             title = if (isEs) "Historial" else "History",
-                            icon = Icons.Rounded.History,
+                            icon = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.History),
                             gradient = quick(Brush.linearGradient(listOf(Color(0xFF00F0FF), Color(0xFF0083B0)))) { scheme.tertiary },
                             iconTint = iconTint,
                             onClick = {
@@ -394,7 +405,7 @@ fun HomeScreen(
                         )
                         QuickActionCard(
                             title = if (isEs) "Nuevas" else "New Added",
-                            icon = Icons.Rounded.NewReleases,
+                            icon = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.NewReleases),
                             gradient = quick(Brush.linearGradient(listOf(Color(0xFF11998E), Color(0xFF38EF7D)))) { scheme.onSurfaceVariant },
                             iconTint = iconTint,
                              onClick = {
@@ -424,6 +435,53 @@ fun HomeScreen(
 
                 // Últimos videos creados: solo aparece si hay alguno
                 HomeClipsSection(isEs = isEs)
+
+                // Mezclas automáticas y listas inteligentes, con portada de las carátulas de sus canciones
+                val smartLists = viewModel?.smartPlaylists?.filterValues { it.isNotEmpty() }.orEmpty()
+                if (homeMixes.isNotEmpty() || smartLists.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text(
+                        text = if (isEs) "Hecho para ti" else "Made for you",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        contentPadding = PaddingValues(horizontal = 20.dp)
+                    ) {
+                        items(homeMixes, key = { "mix_" + it.id }) { mix ->
+                            HomeMixCard(
+                                title = if (isEs) mix.titleEs else mix.titleEn,
+                                subtitle = if (isEs) mix.subtitleEs else mix.subtitleEn,
+                                songs = mix.songs,
+                                smart = false,
+                                onClick = { mix.songs.firstOrNull()?.let { onFileClick(it, mix.songs) } }
+                            )
+                        }
+                        items(smartLists.keys.toList(), key = { "smart_$it" }) { name ->
+                            val songs = smartLists[name].orEmpty()
+                            HomeMixCard(
+                                title = name,
+                                subtitle = (if (isEs) "Lista inteligente · " else "Smart playlist · ") + songs.size,
+                                songs = songs,
+                                smart = true,
+                                onClick = {
+                                    if (viewModel != null) {
+                                        viewModel.requestedTab.value = "Playlists"
+                                        viewModel.requestedSubViewType.value = "Playlist"
+                                        viewModel.requestedSubViewName.value = name
+                                        viewModel.returnToHomeScreenOnDetailBack.value = true
+                                        viewModel.returnToPlayerOnDetailBack.value = false
+                                        onNavigateToLibrary()
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -651,7 +709,7 @@ fun HomeSongCard(
                 )
             } else {
                 Icon(
-                    imageVector = Icons.Rounded.MusicNote,
+                    imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.MusicNote),
                     contentDescription = null,
                     tint = Color.White.copy(alpha = 0.8f),
                     modifier = Modifier.size(40.dp)
@@ -749,7 +807,7 @@ private fun HomeClipsSection(isEs: Boolean) {
                             modifier = Modifier.fillMaxSize()
                         )
                         Icon(
-                            Icons.Rounded.PlayArrow,
+                            com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.PlayArrow),
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier
@@ -764,6 +822,32 @@ private fun HomeClipsSection(isEs: Boolean) {
                     Text(entry.artist, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
                 }
             }
+        }
+    }
+}
+
+/** Tarjeta de "Hecho para ti": portada en mosaico con las carátulas de la mezcla o lista. */
+@Composable
+private fun HomeMixCard(title: String, subtitle: String, songs: List<AudioFile>, smart: Boolean, onClick: () -> Unit) {
+    val shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(16.dp)
+    else androidx.compose.ui.graphics.RectangleShape
+    Column(
+        modifier = Modifier.width(150.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(Modifier.size(150.dp).clip(shape).background(getGradientForString(title))) {
+            SongMosaic(songs, Modifier.fillMaxSize())
+            Icon(
+                com.kevshupp.kevmusicplayer.ui.theme.px(if (smart) com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.AutoAwesome) else com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.PlayArrow)),
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(30.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), CircleShape).padding(6.dp)
+            )
+        }
+        Column(Modifier.padding(horizontal = 2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

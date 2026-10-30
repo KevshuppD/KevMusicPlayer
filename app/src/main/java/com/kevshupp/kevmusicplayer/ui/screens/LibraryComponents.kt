@@ -1400,7 +1400,15 @@ fun rememberAlbumArt(uriString: String?, thumbnail: Boolean = false): android.gr
             }
         }
     }
-    return bitmap
+    // Carátulas en pixel art (opción de Apariencia): se derivan de la original, que sigue en la caché intacta
+    val pixelCovers = com.kevshupp.kevmusicplayer.ui.theme.LocalPixelArtCovers.current
+    val palette = com.kevshupp.kevmusicplayer.ui.theme.LocalPixelPalette.current
+    val original = bitmap
+    return remember(original, pixelCovers, palette, thumbnail) {
+        if (pixelCovers != null && original != null) {
+            PixelArtCovers.of(original, thumbnail, pixelCovers.level, if (pixelCovers.palette) palette else null)
+        } else original
+    }
 }
 
 
@@ -1591,7 +1599,7 @@ private fun PlaylistListRow(
     name: String,
     songCount: Int,
     coverPath: String?,
-    firstSongUri: String?,
+    songs: List<AudioFile>,
     isSmart: Boolean,
     isFavorites: Boolean,
     onClick: () -> Unit,
@@ -1612,12 +1620,11 @@ private fun PlaylistListRow(
                     .background(if (isFavorites) FavoritesGradient else getGradientForString(name)),
                 contentAlignment = Alignment.Center
             ) {
-                val art = if (coverPath == null && !isFavorites) rememberAlbumArt(firstSongUri, thumbnail = true) else null
                 when {
                     coverPath != null -> SubcomposeAsyncImage(model = coverPath, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                    isFavorites -> Icon(Icons.Rounded.Favorite, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
-                    art != null -> androidx.compose.foundation.Image(bitmap = art.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                    else -> Icon(if (isSmart) Icons.Rounded.AutoAwesome else Icons.Rounded.QueueMusic, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(26.dp))
+                    isFavorites -> Icon(com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Favorite), contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+                    songs.isNotEmpty() -> SongMosaic(songs, Modifier.fillMaxSize())
+                    else -> Icon(if (isSmart) com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.AutoAwesome) else Icons.Rounded.QueueMusic, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(26.dp))
                 }
             }
             Spacer(modifier = Modifier.width(14.dp))
@@ -1630,8 +1637,8 @@ private fun PlaylistListRow(
                 )
             }
             when {
-                isFavorites -> Icon(Icons.Rounded.Favorite, contentDescription = null, tint = Color(0xFFFF4081), modifier = Modifier.padding(horizontal = 10.dp).size(20.dp))
-                isSmart -> Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 10.dp).size(20.dp))
+                isFavorites -> Icon(com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Favorite), contentDescription = null, tint = Color(0xFFFF4081), modifier = Modifier.padding(horizontal = 10.dp).size(20.dp))
+                isSmart -> Icon(com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.AutoAwesome), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 10.dp).size(20.dp))
                 else -> Box {
                     IconButton(onClick = { expandedMenu = true }) {
                         Icon(Icons.Rounded.MoreVert, contentDescription = "Opciones", tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
@@ -1727,7 +1734,7 @@ fun PlaylistGridView(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (isSmartDialog) Icons.Rounded.AutoAwesome else Icons.AutoMirrored.Rounded.PlaylistAdd,
+                                imageVector = if (isSmartDialog) com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.AutoAwesome) else Icons.AutoMirrored.Rounded.PlaylistAdd,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary
                             )
@@ -1766,7 +1773,7 @@ fun PlaylistGridView(
                             ) {
                                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                                     Icon(
-                                        imageVector = if (smartOption) Icons.Rounded.AutoAwesome else Icons.Rounded.QueueMusic,
+                                        imageVector = if (smartOption) com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.AutoAwesome) else Icons.Rounded.QueueMusic,
                                         contentDescription = null,
                                         tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                                         modifier = Modifier.size(22.dp)
@@ -2305,7 +2312,7 @@ fun PlaylistGridView(
                     name = name,
                     songCount = listSongs.size,
                     coverPath = coverPath,
-                    firstSongUri = listSongs.firstOrNull()?.uriString,
+                    songs = listSongs,
                     isSmart = isSmart,
                     isFavorites = isFavorites,
                     onClick = { onPlaylistClick(name) },
@@ -2333,7 +2340,7 @@ fun PlaylistGridView(
                         ) {
                             if (isFavorites && coverPath == null) {
                                 Icon(
-                                    imageVector = Icons.Rounded.Favorite,
+                                    imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Favorite),
                                     contentDescription = null,
                                     tint = Color.White.copy(alpha = 0.95f),
                                     modifier = Modifier.size(64.dp).align(Alignment.Center).offset(y = (-12).dp)
@@ -2346,6 +2353,9 @@ fun PlaylistGridView(
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
                                 )
+                            } else if (!isFavorites && listSongs.isNotEmpty()) {
+                                // Sin portada propia: mosaico con las carátulas de sus canciones (antes, solo el degradado)
+                                SongMosaic(listSongs, Modifier.fillMaxSize(), thumbnail = false)
                             }
                         }
 
@@ -2371,7 +2381,7 @@ fun PlaylistGridView(
                                     .background(Color.Black.copy(alpha = 0.4f), CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Rounded.Favorite, contentDescription = "Favoritos", tint = Color(0xFFFF4081), modifier = Modifier.size(14.dp))
+                                Icon(com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Favorite), contentDescription = "Favoritos", tint = Color(0xFFFF4081), modifier = Modifier.size(14.dp))
                             }
                         } else if (isSmart) {
                             Box(
@@ -2383,7 +2393,7 @@ fun PlaylistGridView(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Rounded.AutoAwesome,
+                                    imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.AutoAwesome),
                                     contentDescription = "Lista Inteligente",
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(14.dp)

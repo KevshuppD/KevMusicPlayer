@@ -71,7 +71,7 @@ class RemoteControlServer(
         const val SERVICE_TYPE = "_kevmusic._tcp."
         private const val PREFS = "remote_prefs"
         private const val KEY_TOKENS = "tokens"
-        private const val PROTOCOL_VERSION = 4
+        private const val PROTOCOL_VERSION = 5
         private const val MAX_UPLOAD_BYTES = 2L * 1024 * 1024 * 1024
         private val UPLOAD_EXTENSIONS = setOf("mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "wma", "alac", "ape")
 
@@ -97,7 +97,7 @@ class RemoteControlServer(
         val shuffleToggleRequests = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 4)
 
         /** Comandos del escritorio que editan la biblioteca ([LIBRARY_EDITS]). */
-        val LIBRARY_EDITS = setOf("playlistCreate", "playlistAdd", "playlistRemove", "playlistDelete", "deleteSongs")
+        val LIBRARY_EDITS = setOf("playlistCreate", "playlistAdd", "playlistRemove", "playlistDelete", "deleteSongs", "odPlay", "odQueue")
         /** Una edición pedida por el escritorio; [reply] recibe null si salió bien o el motivo del fallo. */
         class LibraryEdit(val msg: JSONObject, val reply: (error: String?) -> Unit)
         /**
@@ -391,10 +391,13 @@ class RemoteControlServer(
             socket.post(JSONObject().put("type", "editResult").put("req", msg.optLong("req"))
                 .put("ok", error == null).put("error", error ?: "").toString())
             // Las listas no cambian la firma de Room: el escritorio recarga la biblioteca a mano
-            if (error == null) broadcast(JSONObject().put("type", "libraryChanged"))
+            if (error == null && !msg.optString("type").startsWith("od")) broadcast(JSONObject().put("type", "libraryChanged"))
         }
         if (libraryEdits.subscriptionCount.value == 0) {
-            result("Abre KevMusicPlayer en el teléfono para editar la biblioteca.")
+            result(
+                if (msg.optString("type").startsWith("od")) "Abre KevMusicPlayer en el teléfono para escuchar bajo demanda."
+                else "Abre KevMusicPlayer en el teléfono para editar la biblioteca."
+            )
             return
         }
         libraryEdits.tryEmit(LibraryEdit(msg) { error -> result(error) })
