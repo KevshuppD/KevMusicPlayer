@@ -1,0 +1,11 @@
+- **Bajo demanda desde el PC**
+  - Al buscar en **Canciones**, abajo aparece "En línea · bajo demanda" con lo que no tienes: reprodúcelo en el teléfono, ponlo en la cola o descárgalo.
+  - En **Descargar** cada canción tiene botón de reproducir.
+  - Requiere KevMusic en el teléfono 1.13.0 con el modo bajo demanda activado.
+- **Panel de artista renovado** con pestañas, como en el teléfono: **Resumen** (populares y discografía), **En tu biblioteca** y **Discografía** con filtros y "Tienes N".
+- **"Hecho para ti" en Inicio:** las mismas mezclas que el teléfono y tus listas inteligentes, con portada en mosaico.
+- **Mucho más fluido**
+  - Canciones, Artistas y Álbumes abren al instante y la búsqueda ya no traba.
+  - Las carátulas se guardan en disco y se cargan por adelantado al desplazarte.
+  - Al abrir la app se ve tu biblioteca de inmediato, sin esperar al teléfono.
+  - Nuevo en Ajustes › Rendimiento: elegir **renderizado por hardware o software** y **mostrar FPS**.
