@@ -1,5 +1,7 @@
 package com.kevshupp.kevmusicplayer.ui.screens.dialogs
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -264,7 +266,7 @@ private fun BotUsernameForm(showSteps: Boolean, onSaved: () -> Unit) {
     }
 }
 
-private enum class SearchMode(val label: String) { Tracks("Canciones"), Albums("Álbumes"), Artists("Artistas") }
+private enum class SearchMode(val label: String) { Tracks("Canciones"), Albums("Álbumes"), Artists("Artistas"), SoundCloud("SoundCloud") }
 
 private sealed interface SearchDetail {
     data class Album(val album: DeezerAlbum) : SearchDetail
@@ -281,6 +283,7 @@ private fun SearchContent(librarySongs: List<AudioFile>) {
     var tracks by remember { mutableStateOf<List<DeezerTrack>>(emptyList()) }
     var albums by remember { mutableStateOf<List<DeezerAlbum>>(emptyList()) }
     var artists by remember { mutableStateOf<List<DeezerArtist>>(emptyList()) }
+    var soundCloud by remember { mutableStateOf<List<DeezerTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchedFor by remember { mutableStateOf<Pair<String, SearchMode>?>(null) }
@@ -311,6 +314,7 @@ private fun SearchContent(librarySongs: List<AudioFile>) {
                     SearchMode.Tracks -> tracks = affinity.rank(DeezerTrackSearch.search(q)) { it.artist }
                     SearchMode.Albums -> albums = affinity.rank(DeezerTrackSearch.searchAlbums(q)) { it.artist }
                     SearchMode.Artists -> artists = affinity.rank(DeezerTrackSearch.searchArtists(q)) { it.name }
+                    SearchMode.SoundCloud -> soundCloud = TelegramMusicClient.searchSoundCloud(q).map(TelegramDownloadQueue::registerBotResult)
                 }
                 searchedFor = q to m
             } catch (e: Exception) {
@@ -380,7 +384,7 @@ private fun SearchContent(librarySongs: List<AudioFile>) {
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             SearchMode.entries.forEach { m ->
                 FilterChip(
                     selected = mode == m,
@@ -391,6 +395,14 @@ private fun SearchContent(librarySongs: List<AudioFile>) {
             }
         }
         Spacer(Modifier.height(8.dp))
+        if (mode == SearchMode.SoundCloud) {
+            Text(
+                "Lo que no está en Deezer, como discos antiguos. Suele ser MP3 de 128 kbps y la búsqueda queda escrita en tu chat con el bot.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+        }
         searchError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (loading) {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -398,6 +410,9 @@ private fun SearchContent(librarySongs: List<AudioFile>) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
             when (mode) {
                 SearchMode.Tracks -> items(tracks, key = { it.id }) { track ->
+                    TrackRow(track, statuses[track.id], matcher.hasTrack(track)) { enqueue(track) }
+                }
+                SearchMode.SoundCloud -> items(soundCloud, key = { it.id }) { track ->
                     TrackRow(track, statuses[track.id], matcher.hasTrack(track)) { enqueue(track) }
                 }
                 SearchMode.Albums -> items(albums, key = { it.id }) { album ->
@@ -651,7 +666,10 @@ private fun TrackRow(track: DeezerTrack, status: DownloadStatus?, inLibrary: Boo
         Column(Modifier.weight(1f)) {
             Text(track.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                "${track.artist} · ${track.album} · ${track.durationSec / 60}:${"%02d".format(track.durationSec % 60)}",
+                listOf(
+                    track.artist, track.album,
+                    if (track.durationSec > 0) "${track.durationSec / 60}:${"%02d".format(track.durationSec % 60)}" else ""
+                ).filter { it.isNotBlank() }.joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

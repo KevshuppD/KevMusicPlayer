@@ -19,8 +19,8 @@ android {
         applicationId = "com.kevshupp.kevmusicplayer"
         minSdk = 33
         targetSdk = 37
-        versionCode = 84
-        versionName = "1.13.1"
+        versionCode = 85
+        versionName = "1.14.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -108,8 +108,7 @@ android {
         jniLibs {
             keepDebugSymbols += listOf(
                 "**/libandroidx.graphics.path.so",
-                "**/libdatastore_shared_counter.so",
-                "**/libtaglib.so"
+                "**/libdatastore_shared_counter.so"
             )
         }
         resources {
@@ -130,7 +129,6 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.session)
-    implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.compose.adaptive)
     implementation(libs.androidx.compose.adaptive.navigation3)
@@ -155,7 +153,6 @@ dependencies {
     implementation(libs.coil.compose)
     implementation("net.jthink:jaudiotagger:3.0.1")
     implementation("com.mpatric:mp3agic:0.9.1")
-    implementation("io.github.kyant0:taglib:1.0.6")
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
     implementation(libs.kotlinx.coroutines.android)
@@ -164,7 +161,6 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.palette:palette-ktx:1.0.0")
     implementation(libs.material)
-    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.okhttp)
     implementation("org.nanohttpd:nanohttpd-websocket:2.3.1")
     implementation("dev.g000sha256:tdl-coroutines:13.0.0")
@@ -174,9 +170,6 @@ dependencies {
     implementation(libs.firebase.auth)
     implementation(libs.firebase.firestore)
     implementation(libs.play.services.auth)
-    implementation(libs.androidx.credentials)
-    implementation(libs.androidx.credentials.play.services.auth)
-    implementation(libs.googleid)
     testImplementation(libs.androidx.core)
     testImplementation(libs.androidx.junit)
     testImplementation(libs.junit)

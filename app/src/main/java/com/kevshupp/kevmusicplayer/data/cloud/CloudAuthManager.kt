@@ -20,8 +20,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 
 /**
  * Manages Cloud User Authentication state (Google Sign-In), token lifecycle, and persistence.
@@ -41,18 +39,6 @@ object CloudAuthManager {
     val currentUser: StateFlow<CloudUser?> = _currentUser.asStateFlow()
 
     private val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
-
-    fun isWifiConnected(context: Context): Boolean {
-        return try {
-            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
-            val activeNetwork = cm.activeNetwork ?: return false
-            val capabilities = cm.getNetworkCapabilities(activeNetwork) ?: return false
-            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
-        } catch (e: Exception) {
-            true
-        }
-    }
 
     fun getGoogleSignInClient(context: Context): GoogleSignInClient {
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
@@ -80,8 +66,6 @@ object CloudAuthManager {
         val name = prefs.getString(KEY_USER_NAME, defaultName)
         val lastSync = prefs.getLong(KEY_LAST_SYNC, 0L)
         val autoSync = prefs.getBoolean(KEY_AUTO_SYNC, true)
-        val mode = prefs.getString(PreferenceConstants.KEY_CLOUD_AUTO_SYNC_MODE, "realtime") ?: "realtime"
-        val wifiOnly = prefs.getBoolean(PreferenceConstants.KEY_CLOUD_SYNC_WIFI_ONLY, false)
         val incPlaylists = prefs.getBoolean(PreferenceConstants.KEY_CLOUD_SYNC_INCLUDE_PLAYLISTS, true)
         val incLyrics = prefs.getBoolean(PreferenceConstants.KEY_CLOUD_SYNC_INCLUDE_LYRICS, true)
         val incStats = prefs.getBoolean(PreferenceConstants.KEY_CLOUD_SYNC_INCLUDE_STATS, true)
@@ -94,9 +78,6 @@ object CloudAuthManager {
             photoUrl = photo,
             lastSyncTimestamp = lastSync,
             isAutoSyncEnabled = autoSync,
-            // Ya no hay modos: la sincronización es siempre en tiempo real (Firestore) y por cualquier red
-            autoSyncMode = "realtime",
-            syncWifiOnly = false,
             includePlaylists = incPlaylists,
             includeLyrics = incLyrics,
             includeStats = incStats,
@@ -203,8 +184,6 @@ object CloudAuthManager {
             .putString(KEY_USER_PHOTO, user.photoUrl)
             .putLong(KEY_LAST_SYNC, user.lastSyncTimestamp)
             .putBoolean(KEY_AUTO_SYNC, user.isAutoSyncEnabled)
-            .putString(PreferenceConstants.KEY_CLOUD_AUTO_SYNC_MODE, user.autoSyncMode)
-            .putBoolean(PreferenceConstants.KEY_CLOUD_SYNC_WIFI_ONLY, user.syncWifiOnly)
             .putBoolean(PreferenceConstants.KEY_CLOUD_SYNC_INCLUDE_PLAYLISTS, user.includePlaylists)
             .putBoolean(PreferenceConstants.KEY_CLOUD_SYNC_INCLUDE_LYRICS, user.includeLyrics)
             .putBoolean(PreferenceConstants.KEY_CLOUD_SYNC_INCLUDE_STATS, user.includeStats)
@@ -220,22 +199,6 @@ object CloudAuthManager {
         val updated = current.copy(isAutoSyncEnabled = enabled)
         val prefs = PreferenceConstants.getSettingsPrefs(context)
         prefs.edit().putBoolean(KEY_AUTO_SYNC, enabled).apply()
-        _currentUser.value = updated
-    }
-
-    fun setAutoSyncMode(context: Context, mode: String) {
-        val current = _currentUser.value ?: return
-        val updated = current.copy(autoSyncMode = mode)
-        val prefs = PreferenceConstants.getSettingsPrefs(context)
-        prefs.edit().putString(PreferenceConstants.KEY_CLOUD_AUTO_SYNC_MODE, mode).apply()
-        _currentUser.value = updated
-    }
-
-    fun setSyncWifiOnly(context: Context, wifiOnly: Boolean) {
-        val current = _currentUser.value ?: return
-        val updated = current.copy(syncWifiOnly = wifiOnly)
-        val prefs = PreferenceConstants.getSettingsPrefs(context)
-        prefs.edit().putBoolean(PreferenceConstants.KEY_CLOUD_SYNC_WIFI_ONLY, wifiOnly).apply()
         _currentUser.value = updated
     }
 

@@ -299,3 +299,15 @@ internal fun OnDemandSearchResultItem(
         }
     }
 }
+
+@Composable
+fun SearchHeader(text: String) {
+    Text(
+        text = text.uppercase(),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp)
+    )
+}

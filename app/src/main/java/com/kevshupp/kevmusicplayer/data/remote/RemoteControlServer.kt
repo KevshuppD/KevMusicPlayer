@@ -71,7 +71,7 @@ class RemoteControlServer(
         const val SERVICE_TYPE = "_kevmusic._tcp."
         private const val PREFS = "remote_prefs"
         private const val KEY_TOKENS = "tokens"
-        private const val PROTOCOL_VERSION = 5
+        private const val PROTOCOL_VERSION = 6
         private const val MAX_UPLOAD_BYTES = 2L * 1024 * 1024 * 1024
         private val UPLOAD_EXTENSIONS = setOf("mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "wma", "alac", "ape")
 

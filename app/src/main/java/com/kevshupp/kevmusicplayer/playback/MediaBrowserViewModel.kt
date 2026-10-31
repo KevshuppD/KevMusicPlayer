@@ -1455,29 +1455,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         if (!user.isAutoSyncEnabled) return
         if (!hasCloudBaseline(user)) return
 
-        // Validate trigger against configured autoSyncMode
-        when (trigger) {
-            com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.REALTIME -> {
-                if (user.autoSyncMode != "realtime") return
-            }
-            com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.ON_EXIT -> {
-                if (user.autoSyncMode == "manual") return
-                // Nothing new to upload since the last successful sync
-                if (!hasPendingCloudChanges()) return
-                // "daily" means at most one automatic upload every 24 hours
-                if (user.autoSyncMode == "daily" &&
-                    System.currentTimeMillis() - user.lastSyncTimestamp < 24L * 60 * 60 * 1000
-                ) return
-            }
-            com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.PERIODIC -> {
-                if (user.autoSyncMode != "daily" && user.autoSyncMode != "realtime") return
-            }
-        }
-
-        // Wi-Fi only check
-        if (user.syncWifiOnly && !com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.isWifiConnected(getApplication())) {
-            return
-        }
+        // Al salir, nada que subir si no hubo cambios desde la última subida correcta
+        if (trigger == com.kevshupp.kevmusicplayer.data.cloud.AutoSyncTrigger.ON_EXIT && !hasPendingCloudChanges()) return
 
         autoSyncJob?.cancel()
         autoSyncJob = viewModelScope.launch(Dispatchers.IO) {
@@ -1501,14 +1480,6 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         if (enabled) {
             triggerAutoSync(debounceMs = 0L)
         }
-    }
-
-    fun setCloudAutoSyncMode(context: Context, mode: String) {
-        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.setAutoSyncMode(context, mode)
-    }
-
-    fun setCloudSyncWifiOnly(context: Context, wifiOnly: Boolean) {
-        com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager.setSyncWifiOnly(context, wifiOnly)
     }
 
     fun setCloudSyncIncludePlaylists(context: Context, include: Boolean) {

@@ -751,6 +751,27 @@ fun LibrarySettingsSection(
 
     }
     if (libTab == "tools") {
+        // Solo el editor de etiquetas: Normalizar y las carátulas necesitan datos que únicamente da Deezer
+        var metadataProvider by remember { mutableStateOf(com.kevshupp.kevmusicplayer.data.MetadataProvider.current(context)) }
+        Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            Text(getLocalized("Proveedor de metadatos", "Metadata provider"), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp)
+            Text(
+                getLocalized("Dónde busca título, artista y álbum el editor de etiquetas.", "Where the tag editor looks up title, artist and album."),
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.kevshupp.kevmusicplayer.data.MetadataProvider.entries.forEach { provider ->
+                    FilterChip(
+                        selected = metadataProvider == provider,
+                        onClick = {
+                            metadataProvider = provider
+                            settingsPrefs.edit().putString(com.kevshupp.kevmusicplayer.data.MetadataProvider.PREF, provider.key).apply()
+                        },
+                        label = { Text(provider.label) }
+                    )
+                }
+            }
+        }
         // Herramientas en filas de una línea: las de una sola acción abren su diálogo al tocarlas; Letras y
         // Organizar se despliegan para mostrar sus botones
         var openTool by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }

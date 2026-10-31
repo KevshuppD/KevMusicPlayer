@@ -440,6 +440,62 @@ object TelegramMusicClient {
         return download(c, received, onProgress)
     }
 
+    /**
+     * Busca en SoundCloud a través del bot: se escribe la búsqueda (queda en el chat) y se pulsa su filtro, que edita
+     * ese mismo mensaje. El filtro no se recuerda: la siguiente búsqueda vuelve a Deezer (comprobado el 31/10/2026).
+     */
+    suspend fun searchSoundCloud(query: String): List<BotSearchResult> = botMutex.withLock {
+        val c = readyClientLocked()
+        val chatId = resolveBotChat(c)
+        val (messageId, filter) = coroutineScope {
+            val reply = async(start = CoroutineStart.UNDISPATCHED) {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    c.newMessageUpdates
+                        .filter { it.message.chatId == chatId && !it.message.isOutgoing }
+                        .mapNotNull { u -> soundCloudButton(u.message.replyMarkup)?.let { u.message.id to it } }
+                        .first()
+                }
+            }
+            sendText(c, chatId, query)
+            reply.await()
+        }
+        val data = (filter.type as InlineKeyboardButtonTypeCallback).data
+        scope.launch { c.getCallbackQueryAnswer(chatId = chatId, messageId = messageId, payload = CallbackQueryPayloadData(data = data)) }
+        repeat(FILTER_POLLS) {
+            kotlinx.coroutines.delay(FILTER_POLL_MS)
+            val markup = c.getMessage(chatId = chatId, messageId = messageId).getOrThrow().replyMarkup
+            if (soundCloudButton(markup)?.text?.contains(SELECTED_MARK) == true) {
+                return@withLock resultButtons(markup).orEmpty().map { b ->
+                    BotSearchResult(messageId, b.text, (b.type as InlineKeyboardButtonTypeCallback).data)
+                }
+            }
+        }
+        throw java.io.IOException("SoundCloud no respondió, inténtalo de nuevo")
+    }
+
+    /** Descarga un resultado de [searchSoundCloud]: su botón sigue activo después de otras peticiones. */
+    suspend fun requestBotResult(result: BotSearchResult, onProgress: (Float) -> Unit): TelegramAudio = botMutex.withLock {
+        val c = readyClientLocked()
+        val chatId = resolveBotChat(c)
+        val received = coroutineScope {
+            val reply = async(start = CoroutineStart.UNDISPATCHED) {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    c.newMessageUpdates
+                        .filter { it.message.chatId == chatId && !it.message.isOutgoing }
+                        .mapNotNull { audioOf(it.message.content) }
+                        .first()
+                }
+            }
+            launch { c.getCallbackQueryAnswer(chatId = chatId, messageId = result.messageId, payload = CallbackQueryPayloadData(data = result.data)) }
+            reply.await()
+        }
+        download(c, received, onProgress)
+    }
+
+    private fun soundCloudButton(markup: ReplyMarkup?): InlineKeyboardButton? =
+        (markup as? ReplyMarkupInlineKeyboard)?.rows?.flatMap { it.toList() }
+            ?.firstOrNull { it.type is InlineKeyboardButtonTypeCallback && it.text.contains("SoundCloud", ignoreCase = true) }
+
     /** Botones de resultado ("1. Artista - Título") de un teclado del bot; null si no los tiene. */
     private fun resultButtons(markup: ReplyMarkup?): List<InlineKeyboardButton>? {
         val keyboard = markup as? ReplyMarkupInlineKeyboard ?: return null
@@ -515,8 +571,30 @@ object TelegramMusicClient {
     private fun TdlResult<*>.failureMessage(): String? = (this as? TdlResult.Failure)?.message
 
     private const val REPLY_TIMEOUT_MS = 90_000L
+    private const val FILTER_POLLS = 30
+    private const val FILTER_POLL_MS = 500L
+    private const val SELECTED_MARK = "\u2705"
     private const val IDLE_CLOSE_MS = 5 * 60_000L
     private const val IDLE_CHECK_MS = 30_000L
     private const val WAKE_TIMEOUT_MS = 30_000L
     private val RESULT_BUTTON = Regex("^\\s*\\d+\\.\\s+\\S")
+}
+
+/** Resultado de una búsqueda en el bot: el texto del botón, tal como lo manda, y lo necesario para pulsarlo. */
+class BotSearchResult(val messageId: Long, val label: String, val data: ByteArray) {
+    /** Texto sin el "3. " del principio. */
+    val text: String get() = label.replace(Regex("^\\s*\\d+\\.\\s*"), "").trim()
+
+    /**
+     * Fila para la cola. El orden "Artista - Título" no es fiable en SoundCloud ("Título - BTS", "893348031 - Título"),
+     * así que al guardar mandan las etiquetas del archivo. Id negativo y estable: no choca con los de Deezer.
+     */
+    fun toTrack(): DeezerTrack {
+        val artist = text.substringBefore(" - ", "").trim()
+        val title = text.substringAfter(" - ", text).trim()
+        val id = -((text.lowercase().hashCode().toLong() and 0x7fffffffL) + 1)
+        return DeezerTrack(id, title, artist, "", 0, "", "", "$SOUNDCLOUD_LINK$text")
+    }
+
+    companion object { const val SOUNDCLOUD_LINK = "soundcloud:" }
 }

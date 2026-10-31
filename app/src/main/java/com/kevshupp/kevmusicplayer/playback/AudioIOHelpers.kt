@@ -369,12 +369,6 @@ fun safeReadAudioFile(file: File): org.jaudiotagger.audio.AudioFile {
     }
 }
 
-fun writeMetadataWithTagLib(context: android.content.Context, physicalPath: String, title: String? = null, artist: String? = null, album: String? = null, genre: String? = null, coverBytes: ByteArray? = null): Boolean {
-    // Native TagLib JNI file descriptor operations trigger Android 10+ fdsan SIGABRT crashes on detached FDs.
-    // Metadata and cover art writing is safely handled by Java jaudiotagger (writeMetadataWithTempFile).
-    return false
-}
-
 /** File name used for a cover saved by [saveFolderCoverArt]; the loader uses the same name to find it again. */
 fun folderCoverFileName(artist: String?, albumOrTitle: String?): String {
     val cleanArtist = artist?.replace(Regex("[\\\\/:*?\"<>|]"), "_")?.trim() ?: ""

@@ -46,8 +46,10 @@ fun TagEditorDialog(
 
     // Online metadata search state
     var searchQuery by remember { mutableStateOf("${song.artist} ${song.title}") }
+    // Solo para este diálogo: al volver a abrirlo manda el proveedor de Ajustes
+    var searchProvider by remember { mutableStateOf(com.kevshupp.kevmusicplayer.data.MetadataProvider.current(context)) }
     var isSearchingOnline by remember { mutableStateOf(false) }
-    var searchResults by remember { mutableStateOf<List<LrcLibSearchResult>>(emptyList()) }
+    var searchResults by remember { mutableStateOf<List<com.kevshupp.kevmusicplayer.data.MetadataResult>>(emptyList()) }
     var searchStatus by remember { mutableStateOf("") }
 
     var isSaving by remember { mutableStateOf(false) }
@@ -569,6 +571,22 @@ fun TagEditorDialog(
                 }
 
                 item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.kevshupp.kevmusicplayer.data.MetadataProvider.entries.forEach { provider ->
+                            FilterChip(
+                                selected = searchProvider == provider,
+                                onClick = {
+                                    searchProvider = provider
+                                    searchResults = emptyList()
+                                    searchStatus = ""
+                                },
+                                label = { Text(provider.label, fontSize = 12.sp) }
+                            )
+                        }
+                    }
+                }
+
+                item {
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
@@ -580,11 +598,20 @@ fun TagEditorDialog(
                                 onClick = {
                                     scope.launch {
                                         isSearchingOnline = true
-                                        searchStatus = getLocalized("Buscando en LRCLIB...", "Searching LRCLIB...")
-                                        val results = LyricsRepository.searchLyricsOptionsFromLrcLib(artist, searchQuery)
-                                        searchResults = results
+                                        searchStatus = getLocalized("Buscando en ${searchProvider.label}...", "Searching ${searchProvider.label}...")
+                                        var failed = false
+                                        val results = try {
+                                            com.kevshupp.kevmusicplayer.data.MetadataSearch.search(searchProvider, searchQuery.trim(), artist, song.duration.toLong())
+                                        } catch (e: Exception) {
+                                            if (e is kotlinx.coroutines.CancellationException) throw e
+                                            failed = true
+                                            emptyList()
+                                        }
+                                        searchResults = results.distinct() // la clave de la lista no admite repetidos
                                         isSearchingOnline = false
-                                        if (results.isEmpty()) {
+                                        if (failed) {
+                                            searchStatus = getLocalized("No se pudo conectar con ${searchProvider.label}. Inténtalo más tarde o cambia de proveedor en Ajustes.", "Could not reach ${searchProvider.label}. Try later or change provider in Settings.")
+                                        } else if (results.isEmpty()) {
                                             searchStatus = getLocalized("No se encontraron coincidencias.", "No matches found.")
                                         } else {
                                             searchStatus = getLocalized("Se encontraron ${results.size} coincidencias.", "Found ${results.size} matches.")
@@ -622,23 +649,23 @@ fun TagEditorDialog(
                 }
 
                 if (searchResults.isNotEmpty()) {
-                    items(searchResults, key = { it.id }) { result ->
+                    items(searchResults, key = { "${it.title}|${it.artist}|${it.album}" }) { result ->
                         Card(
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    title = result.trackName
-                                    artist = result.artistName
-                                    album = result.albumName
+                                    title = result.title
+                                    artist = result.artist
+                                    if (result.album.isNotBlank()) album = result.album
                                     searchResults = emptyList()
                                     searchStatus = getLocalized("Metadatos aplicados desde la búsqueda en línea", "Metadata applied from online search")
                                 }
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
-                                Text(text = result.trackName, fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
-                                Text(text = "${result.artistName} • ${result.albumName}", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
+                                Text(text = result.title, fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
+                                Text(text = "${result.artist} • ${result.album}", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
                             }
                         }
                     }

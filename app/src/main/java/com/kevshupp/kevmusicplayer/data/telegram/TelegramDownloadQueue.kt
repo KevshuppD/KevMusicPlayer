@@ -43,7 +43,9 @@ object TelegramDownloadQueue {
         val replacePath: String?,
         /** Sin [track]: se busca este texto en el propio bot y [choose] elige uno de sus resultados. */
         val textQuery: String? = null,
-        val choose: ((List<String>) -> Int?)? = null
+        val choose: ((List<String>) -> Int?)? = null,
+        /** Resultado de SoundCloud ya elegido: se pulsa su botón en vez de pedir [track] por enlace. */
+        val botResult: BotSearchResult? = null
     )
 
     private val pending = Channel<Request>(Channel.UNLIMITED)
@@ -75,12 +77,24 @@ object TelegramDownloadQueue {
     /** Canciones que ya se reintentaron solas tras no responder el bot (una vez cada una). */
     private val autoRetried = java.util.Collections.synchronizedSet(HashSet<Long>())
 
+    /** Resultados de SoundCloud mostrados, por id de su fila, para descargarlos o reintentarlos desde la cola. */
+    private val botResults = java.util.concurrent.ConcurrentHashMap<Long, BotSearchResult>()
+
+    fun registerBotResult(result: BotSearchResult): DeezerTrack = result.toTrack().also { botResults[it.id] = result }
+
     fun enqueue(context: Context, track: DeezerTrack) {
         val current = _statuses.value[track.id]
         if (current != null && current !is DownloadStatus.Failed) return
+        val botResult = botResults[track.id]
+        // Sus botones solo existen en memoria: tras reiniciar la app (o desde un PC con la lista vieja) no hay qué pulsar
+        if (botResult == null && track.link.startsWith(BotSearchResult.SOUNDCLOUD_LINK)) {
+            _downloads.update { list -> if (list.any { it.id == track.id }) list else list + track }
+            _statuses.update { it + (track.id to DownloadStatus.Failed("Vuelve a buscarla en SoundCloud")) }
+            return
+        }
         if (current is DownloadStatus.Failed) autoRetried.remove(track.id)
         _downloads.update { list -> if (list.any { it.id == track.id }) list else list + track }
-        submit(context, Request(track, null, null))
+        submit(context, Request(track, null, null, botResult = botResult))
     }
 
     /**
@@ -125,7 +139,9 @@ object TelegramDownloadQueue {
         try {
             setFor(request, DownloadStatus.Requesting)
             val onProgress: (Float) -> Unit = { p -> setFor(request, DownloadStatus.Downloading(p)) }
-            val audio = if (track != null) {
+            val audio = if (request.botResult != null) {
+                TelegramMusicClient.requestBotResult(request.botResult, onProgress)
+            } else if (track != null) {
                 TelegramMusicClient.requestTrack(track, onProgress)
             } else {
                 TelegramMusicClient.requestByText(request.textQuery.orEmpty(), request.choose ?: { null }, onProgress)
@@ -134,7 +150,8 @@ object TelegramDownloadQueue {
             val saved = if (song != null && request.replacePath != null) {
                 replaceSongFile(File(audio.localPath), File(request.replacePath))
             } else {
-                saveToMusicFolder(context, File(audio.localPath), track ?: throw IllegalStateException("Sin canción"))
+                val target = track ?: throw IllegalStateException("Sin canción")
+                saveToMusicFolder(context, File(audio.localPath), if (request.botResult != null) withFileTags(target, audio) else target)
             }
             TelegramMusicClient.deleteCachedFile(audio.fileId)
             val newUri = scanFile(context, saved)
@@ -187,6 +204,20 @@ object TelegramDownloadQueue {
         }
         if (!temp.renameTo(target)) throw java.io.IOException("No se pudo guardar el archivo")
         return target
+    }
+
+    /** El texto del botón no es fiable: carpeta y nombre salen de las etiquetas del archivo si las tiene. */
+    private fun withFileTags(track: DeezerTrack, audio: TelegramAudio): DeezerTrack {
+        val r = android.media.MediaMetadataRetriever()
+        val album = try {
+            r.setDataSource(audio.localPath)
+            r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM).orEmpty()
+        } catch (e: Exception) {
+            ""
+        } finally {
+            runCatching { r.release() }
+        }
+        return track.copy(title = audio.title.ifBlank { track.title }, artist = audio.performer.ifBlank { track.artist }, album = album)
     }
 
     /** `<carpeta principal>/Artista/Álbum/Artista - Título.ext`; nunca sobrescribe un archivo existente. */

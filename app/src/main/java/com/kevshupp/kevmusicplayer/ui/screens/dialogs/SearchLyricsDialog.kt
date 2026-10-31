@@ -86,10 +86,13 @@ fun SearchLyricsDialog(
                         scope.launch {
                             searchStatusMessage = getLocalized("Buscando en la base de datos...", "Searching LRCLIB database...")
                             isSearchingOnline = true
-                            val results = LyricsRepository.searchLyricsOptionsFromLrcLib(searchArtist, searchTitle)
+                            val failed = java.util.concurrent.atomic.AtomicBoolean(false)
+                            val results = LyricsRepository.searchLyricsOptionsFromLrcLib(searchArtist, searchTitle, failed)
                             searchLyricsResults = results
                             if (results.isNotEmpty()) {
                                 searchStatusMessage = getLocalized("Se encontraron ${results.size} resultados.", "Found ${results.size} results.")
+                            } else if (failed.get()) {
+                                searchStatusMessage = getLocalized("No se pudo conectar con LRCLIB, el servicio de letras. Inténtalo más tarde.", "Could not reach LRCLIB, the lyrics service. Try again later.")
                             } else {
                                 searchStatusMessage = getLocalized("No se encontraron letras. Intenta refinar la búsqueda.", "No lyrics found. Try refining the query!")
                             }

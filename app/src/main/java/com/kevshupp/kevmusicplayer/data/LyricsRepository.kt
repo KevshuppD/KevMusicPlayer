@@ -38,9 +38,18 @@ object LyricsRepository {
         .addInterceptor { chain ->
             val original = chain.request()
             val request = original.newBuilder()
-                .header("User-Agent", "KevMusicPlayer/1.5.4 (https://github.com/kevshupp/kevmusicplayer)")
+                .header("User-Agent", "KevMusicPlayer v${com.kevshupp.kevmusicplayer.BuildConfig.VERSION_NAME} (https://github.com/KevshuppD/KevMusicPlayer)")
+                // Id público de la app registrada en LRCLIB (no es secreto); uno inválido responde 401. Este cliente también baja carátulas de otros sitios
                 .build()
-            chain.proceed(request)
+            if (original.url.host != "lrclib.net") return@addInterceptor chain.proceed(request)
+            val response = chain.proceed(request.newBuilder().header("Lrclib-App-Id", "yfTA27oLM2hOELk1nTMAEqbsEHWUQDPfggeMye1fpCw").build())
+            // Un id rechazado no debe dejar a nadie sin letras: el acceso anónimo sigue permitido
+            if (response.code == 401) {
+                response.close()
+                chain.proceed(request)
+            } else {
+                response
+            }
         }
         .build()
 

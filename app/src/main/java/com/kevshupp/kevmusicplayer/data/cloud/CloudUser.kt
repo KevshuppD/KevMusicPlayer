@@ -15,8 +15,6 @@ data class CloudUser(
     val photoUrl: String? = null,
     val lastSyncTimestamp: Long = 0L,
     val isAutoSyncEnabled: Boolean = true,
-    val autoSyncMode: String = "realtime", // "realtime", "on_exit", "daily", "manual"
-    val syncWifiOnly: Boolean = false,
     val includePlaylists: Boolean = true,
     val includeLyrics: Boolean = true,
     val includeStats: Boolean = true,
@@ -27,6 +25,5 @@ data class CloudUser(
 
 enum class AutoSyncTrigger {
     REALTIME,
-    ON_EXIT,
-    PERIODIC
+    ON_EXIT
 }

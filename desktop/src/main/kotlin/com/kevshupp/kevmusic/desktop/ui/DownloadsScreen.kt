@@ -33,28 +33,43 @@ import androidx.compose.ui.unit.sp
 import com.kevshupp.kevmusic.desktop.*
 import kotlinx.coroutines.launch
 
-private enum class DzMode(val label: String, val key: String) { Tracks("Canciones", "tracks"), Albums("Álbumes", "albums"), Artists("Artistas", "artists") }
+private enum class DzMode(val label: String, val key: String) { Tracks("Canciones", "tracks"), Albums("Álbumes", "albums"), Artists("Artistas", "artists"), SoundCloud("SoundCloud", "soundcloud") }
 
 private sealed interface DzPage {
     data class AlbumPage(val album: DzAlbum) : DzPage
     data class ArtistPage(val artist: DzArtist) : DzPage
 }
 
-/** Dos fuentes: el bot de Telegram del teléfono y Soulseek en el propio PC. */
+private enum class DownloadSource { Telegram, Soulseek, YouTube, Albums }
+
+/** El bot de Telegram del teléfono, y Soulseek, YouTube Music y los discos armados con SoundCloud en el propio PC. */
 @Composable
 fun DownloadsScreen() {
-    var soulseek by remember { mutableStateOf(false) }
+    var source by remember { mutableStateOf(DownloadSource.Telegram) }
     Column(Modifier.fillMaxSize()) {
         SectionTitle(
             "Descargar",
-            if (soulseek) "Red Soulseek · se descarga en el PC y se envía al teléfono"
-            else "Con el bot de Telegram del teléfono · se guarda en su carpeta de música"
+            when (source) {
+                DownloadSource.Telegram -> "Con el bot de Telegram del teléfono · se guarda en su carpeta de música"
+                DownloadSource.Soulseek -> "Red Soulseek · se descarga en el PC y se envía al teléfono"
+                DownloadSource.YouTube -> "YouTube Music · se descarga en el PC y se envía al teléfono"
+                DownloadSource.Albums -> "Discos que no están en Deezer · datos de MusicBrainz y audio de SoundCloud"
+            }
         ) {
-            FilterChip(selected = !soulseek, onClick = { soulseek = false }, label = { Text("Telegram") }, leadingIcon = { Icon(Icons.Rounded.Send, null, Modifier.size(16.dp)) })
+            FilterChip(selected = source == DownloadSource.Telegram, onClick = { source = DownloadSource.Telegram }, label = { Text("Telegram") }, leadingIcon = { Icon(Icons.Rounded.Send, null, Modifier.size(16.dp)) })
             Spacer(Modifier.width(8.dp))
-            FilterChip(selected = soulseek, onClick = { soulseek = true }, label = { Text("Soulseek") }, leadingIcon = { Icon(Icons.Rounded.Hub, null, Modifier.size(16.dp)) })
+            FilterChip(selected = source == DownloadSource.Soulseek, onClick = { source = DownloadSource.Soulseek }, label = { Text("Soulseek") }, leadingIcon = { Icon(Icons.Rounded.Hub, null, Modifier.size(16.dp)) })
+            Spacer(Modifier.width(8.dp))
+            FilterChip(selected = source == DownloadSource.YouTube, onClick = { source = DownloadSource.YouTube }, label = { Text("YouTube Music") }, leadingIcon = { Icon(Icons.Rounded.PlayCircle, null, Modifier.size(16.dp)) })
+            Spacer(Modifier.width(8.dp))
+            FilterChip(selected = source == DownloadSource.Albums, onClick = { source = DownloadSource.Albums }, label = { Text("Discos") }, leadingIcon = { Icon(Icons.Rounded.Album, null, Modifier.size(16.dp)) })
         }
-        if (soulseek) SoulseekScreen() else TelegramDownloads()
+        when (source) {
+            DownloadSource.Telegram -> TelegramDownloads()
+            DownloadSource.Soulseek -> SoulseekScreen()
+            DownloadSource.YouTube -> YtMusicScreen()
+            DownloadSource.Albums -> AlbumBuilderScreen()
+        }
     }
 }
 
@@ -83,7 +98,9 @@ private fun TelegramDownloads() {
         pages.clear()
         loading = true
         scope.launch {
-            result = client.tgSearch(q, mode.key)
+            result = if (mode == DzMode.SoundCloud && client.phoneProtocol < 6)
+                DzResult(emptyList(), emptyList(), emptyList(), "Actualiza KevMusic en el teléfono para buscar en SoundCloud.")
+            else client.tgSearch(q, mode.key)
             loading = false
         }
     }
@@ -124,6 +141,10 @@ private fun TelegramDownloads() {
                 leadingIcon = { if (active > 0) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.Download, null, Modifier.size(16.dp)) }
             )
         }
+        if (mode == DzMode.SoundCloud && !showQueue) {
+            Spacer(Modifier.height(6.dp))
+            Text("Lo que no está en Deezer. Suele ser MP3 de 128 kbps y la búsqueda queda escrita en tu chat con el bot. Para armar un disco completo, usa Discos.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(Modifier.height(12.dp))
 
         when {
@@ -142,6 +163,7 @@ private fun TelegramDownloads() {
                             if (r.tracks.isNotEmpty()) item { DownloadAllButton(r.tracks, statusById) }
                             items(r.tracks, key = { it.id }) { TrackRow(it, statusById[it.id]) }
                         }
+                        DzMode.SoundCloud -> items(r.tracks, key = { it.id }) { TrackRow(it, statusById[it.id]) }
                         DzMode.Albums -> items(r.albums, key = { it.id }) { a -> AlbumRow(a) { pages.add(DzPage.AlbumPage(a)) } }
                         DzMode.Artists -> items(r.artists, key = { it.id }) { a -> ArtistRow(a) { pages.add(DzPage.ArtistPage(a)) } }
                     }
@@ -200,7 +222,9 @@ internal fun TrackRow(track: DzTrack, item: DownloadItem?) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Reproducir: desde la biblioteca si ya la tienes; si no, bajo demanda en el teléfono
-        Box(Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)).clickable {
+        // Bajo demanda pide por enlace de Deezer: una fila de SoundCloud solo se puede descargar
+        val fromSoundCloud = track.link.startsWith("soundcloud:")
+        Box(Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)).clickable(enabled = !fromSoundCloud || track.localId > 0) {
             if (track.localId > 0) client.playSongs(listOf(track.localId)) else client.playOnDemand(track)
         }, contentAlignment = Alignment.Center) {
             UrlImage(track.cover, 44.dp)
@@ -210,11 +234,11 @@ internal fun TrackRow(track: DzTrack, item: DownloadItem?) {
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(track.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("${track.artist} · ${track.album}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(listOf(track.artist, track.album).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (item?.status == DlStatus.Failed) Text(item.reason, fontSize = 11.sp, color = MaterialTheme.colorScheme.error, maxLines = 1)
         }
-        Text(formatTime(track.durationSec * 1000L), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (track.localId == 0L && !track.owned) {
+        if (track.durationSec > 0) Text(formatTime(track.durationSec * 1000L), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (track.localId == 0L && !track.owned && !fromSoundCloud) {
             IconButton(onClick = { client.queueOnDemand(track, next = false) }) { Icon(Icons.Rounded.QueueMusic, "Añadir a la cola (bajo demanda)") }
         }
         Spacer(Modifier.width(4.dp))

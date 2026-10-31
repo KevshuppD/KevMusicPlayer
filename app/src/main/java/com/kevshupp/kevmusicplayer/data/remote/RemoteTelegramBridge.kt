@@ -29,7 +29,7 @@ import org.json.JSONObject
  * Descargas de Telegram para KevMusic Desktop: el PC busca y pide, pero todo ocurre en el teléfono
  * (Deezer, bot, [TelegramDownloadQueue]) y lo descargado se guarda en la carpeta principal como siempre.
  *
- * Mensajes: `tgSearch` (mode tracks/albums/artists), `tgAlbum`, `tgArtist` → `tgResult` con el mismo `req`;
+ * Mensajes: `tgSearch` (mode tracks/albums/artists/soundcloud), `tgAlbum`, `tgArtist` → `tgResult` con el mismo `req`;
  * `tgDownload`, `tgClearFinished`. El teléfono emite `tgStatus`, `tgQueue` y `libraryChanged`.
  */
 class RemoteTelegramBridge(
@@ -100,6 +100,7 @@ class RemoteTelegramBridge(
                             val q = msg.optString("query").trim()
                             when (msg.optString("mode")) {
                                 "albums" -> result.put("albums", albumsJson(affinity.rank(DeezerTrackSearch.searchAlbums(q)) { it.artist }, matcher))
+                                "soundcloud" -> result.put("tracks", tracksJson(TelegramMusicClient.searchSoundCloud(q).map(TelegramDownloadQueue::registerBotResult), matcher))
                                 "artists" -> result.put("artists", artistsJson(affinity.rank(DeezerTrackSearch.searchArtists(q)) { it.name }))
                                 else -> result.put("tracks", tracksJson(affinity.rank(DeezerTrackSearch.search(q)) { it.artist }, matcher))
                             }

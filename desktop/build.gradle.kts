@@ -8,7 +8,7 @@ plugins {
 
 group = "com.kevshupp.kevmusic"
 // Versión del PC, independiente de la app Android. publicar.sh la sube y crea el tag desktop-v<versión>
-version = "1.5.0"
+version = "1.6.0"
 
 // La app conoce su propia versión (para buscar actualizaciones) mediante un objeto generado
 val generateBuildInfo by tasks.registering {
@@ -65,6 +65,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.json:json:20240303")
+    testImplementation(kotlin("test"))
     implementation("org.jmdns:jmdns:3.6.4")
     implementation("org.slf4j:slf4j-nop:2.0.16")
     // MPRIS (teclas multimedia y applet de sonido de GNOME/Cinnamon) por D-Bus

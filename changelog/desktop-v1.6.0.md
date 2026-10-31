@@ -1,0 +1,7 @@
+- **YouTube Music en Descargar**
+  - Busca canciones, álbumes, artistas y videos, o pega un enlace de YouTube. Se descarga en el PC y se envía al teléfono con etiquetas y carátula.
+  - Usa yt-dlp, que se instala solo la primera vez. Necesita ffmpeg en el PC. Audio de unos 128 kbps.
+- **Discos: arma los que no están en Deezer**
+  - Busca un artista en MusicBrainz, abre un disco y la app propone una subida de SoundCloud para cada pista. Revísalas, cámbialas si hace falta y descarga.
+  - Para lo que MusicBrainz no tiene, usa **Crear disco a mano**.
+- **SoundCloud en Telegram:** nueva opción de búsqueda. Necesita KevMusicPlayer 1.14.0 en el teléfono.
