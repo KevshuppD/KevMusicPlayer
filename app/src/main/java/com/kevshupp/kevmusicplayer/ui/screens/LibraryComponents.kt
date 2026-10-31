@@ -846,11 +846,15 @@ fun rememberPlayerState(player: Player?): PlayerStateInfo {
         }
     }
 
+    // Mientras se transmite, lo que suena es la TV
+    val castState by com.kevshupp.kevmusicplayer.data.cast.CastController.state.collectAsState()
+    LaunchedEffect(player, castState) { player?.let { state.syncFrom(it) } }
+
     val isPlaying = state.isPlaying
     LaunchedEffect(player, isPlaying) {
         if (player == null || !isPlaying) return@LaunchedEffect
         while (true) {
-            state.position = player.currentPosition
+            state.position = com.kevshupp.kevmusicplayer.data.cast.CastController.remotePosition() ?: player.currentPosition
             state.duration = playerDurationOrKnown(player)
             delay(500)
         }
@@ -884,9 +888,10 @@ class PlayerStateInfo(player: Player?) {
         internal set
 
     internal fun syncFrom(player: Player) {
-        isPlaying = player.isPlaying
+        val casting = com.kevshupp.kevmusicplayer.data.cast.CastController
+        isPlaying = if (casting.isCasting) casting.state.value.playing else player.isPlaying
         currentSong = player.currentMediaItem
-        position = player.currentPosition
+        position = casting.remotePosition() ?: player.currentPosition
         duration = playerDurationOrKnown(player)
         shuffleModeEnabled = player.shuffleModeEnabled
         mediaItemCount = player.mediaItemCount

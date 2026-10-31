@@ -185,6 +185,8 @@ fun PlayerScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showTagEditorDialog by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
+    var showCastDialog by remember { mutableStateOf(false) }
+    val castState by com.kevshupp.kevmusicplayer.data.cast.CastController.state.collectAsState()
     var sleepTimerMinutes by remember { mutableIntStateOf(0) }
     var showSaveQueueDialog by remember { mutableStateOf(false) }
     var showAddToPlaylistDialog by remember { mutableStateOf(false) }
@@ -1032,6 +1034,7 @@ fun PlayerScreen(
                                                  )
                                              )
                                              .clickable {
+                                                 if (com.kevshupp.kevmusicplayer.data.cast.CastController.interceptToggle()) return@clickable
                                                  if (playerState.isPlaying) {
                                                      player.pause()
                                                  } else {
@@ -1171,6 +1174,20 @@ fun PlayerScreen(
 
              Spacer(modifier = Modifier.height(18.dp))
 
+             if (showCastDialog) {
+                 com.kevshupp.kevmusicplayer.ui.screens.dialogs.CastDialog(
+                     queue = {
+                         val start = player.currentMediaItemIndex.coerceAtLeast(0)
+                         val songs = (start until player.mediaItemCount).mapNotNull { i ->
+                             viewModel?.audioFileMap?.get(player.getMediaItemAt(i).mediaId)?.takeIf { it.id > 0 }
+                         }
+                         songs to player.currentPosition
+                     },
+                     onStarted = { player.pause() },
+                     onDismiss = { showCastDialog = false }
+                 )
+             }
+
              // Bottom Action Bar (5 Action Icons: Lyrics, Like, Sleep Timer, Queue, 3 Dots)
              Row(
                  modifier = Modifier
@@ -1209,6 +1226,15 @@ fun PlayerScreen(
                          imageVector = if (isFavorite) com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.Favorite) else com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.FavoriteBorder),
                          contentDescription = "Favoritos",
                          tint = if (isFavorite) Color.Red else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                         modifier = Modifier.size(24.dp)
+                     )
+                 }
+
+                 IconButton(onClick = { showCastDialog = true }) {
+                     Icon(
+                         imageVector = if (castState.device != null) Icons.Rounded.CastConnected else Icons.Rounded.Cast,
+                         contentDescription = "Transmitir",
+                         tint = if (castState.device != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                          modifier = Modifier.size(24.dp)
                      )
                  }

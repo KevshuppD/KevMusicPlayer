@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>KevMusic</title>
+<script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+<style>
+html,body{margin:0;height:100%;background:#08090f;color:#fff;font-family:Roboto,Arial,sans-serif;overflow:hidden}
+#bg{position:fixed;inset:-60px;background-size:cover;background-position:center;filter:blur(50px) brightness(.28)}
+#app{position:relative;display:flex;height:100%;padding:6vh 5vw;box-sizing:border-box;gap:5vw;align-items:center}
+#info{flex:0 0 34vw}#art{width:34vw;height:34vw;max-height:68vh;max-width:68vh;object-fit:cover;border-radius:24px;box-shadow:0 24px 70px #000a;background:#222}
+#title{font-size:3.2vw;font-weight:700;margin-top:3vh}#artist{font-size:2vw;opacity:.75;margin-top:1vh}
+#lyrics{flex:1;height:88vh;overflow:hidden;position:relative;mask-image:linear-gradient(transparent,#000 18%,#000 82%,transparent)}
+#lines{position:absolute;width:100%;transition:transform .45s ease}
+.l{font-size:3.2vw;font-weight:700;line-height:1.25;margin:0 0 2.6vh;opacity:.32;transition:opacity .25s}
+.l.on{opacity:1}.t{display:block;font-size:2vw;font-weight:400;opacity:.8;margin-top:.6vh}
+#plain{font-size:2.6vw;font-weight:600;white-space:pre-line;line-height:1.35;opacity:.9}
+cast-media-player{display:none}
+</style></head><body>
+<div id="bg"></div>
+<div id="app"><div id="info"><img id="art" alt=""><div id="title">KevMusic</div><div id="artist"></div></div>
+<div id="lyrics"><div id="lines"></div></div></div>
+<cast-media-player></cast-media-player>
+<script>
+/** Devuelve [{ms,text,tr}] de un LRC; vacío si la letra no está sincronizada. */
+function parseLrc(text, translated){
+  let tr={};try{tr=JSON.parse(translated||'{}')}catch(e){}
+  const out=[];
+  for(const raw of String(text||'').split(/\r?\n/)){
+    const stamps=[...raw.matchAll(/\[(\d+):(\d+(?:[.:]\d+)?)\]/g)];
+    if(!stamps.length)continue;
+    const body=raw.replace(/\[[^\]]*\]/g,'').trim();
+    for(const s of stamps){
+      const ms=Math.round((+s[1]*60+parseFloat(s[2].replace(':','.')))*1000);
+      if(body)out.push({ms,text:body,tr:tr[ms]||''});
+    }
+  }
+  return out.sort((a,b)=>a.ms-b.ms);
+}
+function lineAt(lines,ms){let r=-1;for(let i=0;i<lines.length&&lines[i].ms<=ms;i++)r=i;return r}
+if(typeof cast!=='undefined'){
+  const NS='urn:x-cast:com.kevshupp.kevmusic';
+  const ctx=cast.framework.CastReceiverContext.getInstance(),pm=ctx.getPlayerManager();
+  const $=i=>document.getElementById(i),box=$('lines');
+  let lines=[],current=-1,songId=null,pending=null;
+  function escape(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+  function setLyrics(m){
+    lines=parseLrc(m.lyrics,m.translated);current=-1;box.style.transform='';
+    if(lines.length)box.innerHTML=lines.map(l=>`<p class="l">${escape(l.text)}${l.tr?`<span class="t">${escape(l.tr)}</span>`:''}</p>`).join('');
+    else box.innerHTML=m.lyrics?`<div id="plain">${escape(m.lyrics)}</div>`:'';
+  }
+  ctx.addCustomMessageListener(NS,e=>{
+    const m=typeof e.data==='string'?JSON.parse(e.data):e.data;
+    if(String(m.id)===String(songId))setLyrics(m);else pending=m;
+  });
+  pm.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE,()=>{
+    const info=pm.getMediaInformation();if(!info)return;
+    const md=info.metadata||{};
+    songId=(info.contentId||'').split('/').pop().split('.')[0];
+    $('title').textContent=md.title||'';$('artist').textContent=md.artist||'';
+    const img=(md.images&&md.images[0]&&md.images[0].url)||'';
+    $('art').src=img;$('bg').style.backgroundImage=img?`url("${img}")`:'none';
+    if(pending&&String(pending.id)===songId)setLyrics(pending);else setLyrics({});
+    pending=null;
+  });
+  setInterval(()=>{
+    if(!lines.length)return;
+    const i=lineAt(lines,pm.getCurrentTimeSec()*1000+150);
+    if(i===current)return;
+    const els=box.children;if(els[current])els[current].classList.remove('on');
+    current=i;
+    if(els[i]){els[i].classList.add('on');box.style.transform=`translateY(${$('lyrics').clientHeight*.4-els[i].offsetTop}px)`}
+  },200);
+  ctx.start({disableIdleTimeout:false});
+}
+</script></body></html>

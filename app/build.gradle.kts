@@ -129,6 +129,8 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.session)
+    implementation("com.google.android.gms:play-services-cast-framework:22.1.0")
+    implementation("androidx.mediarouter:mediarouter:1.7.0")
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.compose.adaptive)
     implementation(libs.androidx.compose.adaptive.navigation3)

@@ -108,6 +108,16 @@ import android.app.Activity
 import com.kevshupp.kevmusicplayer.ui.screens.settings.getPhysicalPathFromTreeUri
 
 class MainActivity : ComponentActivity() {
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val up = event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP
+        val down = event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN
+        if ((up || down) && com.kevshupp.kevmusicplayer.data.cast.CastController.isCasting) {
+            if (event.action == android.view.KeyEvent.ACTION_DOWN) com.kevshupp.kevmusicplayer.data.cast.CastController.adjustVolume(up)
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     private val refreshRateListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
         if (key == "refresh_rate") {
             runOnUiThread {
