@@ -67,7 +67,7 @@ fun SoulseekSettingsCard(
                     is SlskStatus.Online -> getLocalized("Conectado como ", "Connected as ") + s.username
                     SlskStatus.Connecting -> getLocalized("Conectando…", "Connecting…")
                     is SlskStatus.Failed -> s.message
-                    SlskStatus.Off -> getLocalized("Sin conectar: abre Soulseek para iniciar sesión", "Not connected: open Soulseek to sign in")
+                    SlskStatus.Off -> getLocalized("Se conecta al abrir Soulseek", "Connects when you open Soulseek")
                 },
                 fontSize = 12.sp, color = if (status is SlskStatus.Failed) MaterialTheme.colorScheme.error else settingsTextMutedColor()
             )

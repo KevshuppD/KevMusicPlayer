@@ -61,8 +61,8 @@ fun HomeScreen(
     }
     val favorites = lib.playlists.firstOrNull { it.name == FAVORITES }
     // "Hecho para ti": las mismas mezclas que el teléfono, calculadas fuera de la interfaz
-    val mixes by produceState(emptyList<com.kevshupp.kevmusic.desktop.HomeMix>(), lib.songs) {
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { com.kevshupp.kevmusic.desktop.HomeMixes.build(lib.songs) }
+    val mixes by produceState(com.kevshupp.kevmusic.desktop.HomeMixes.peek(), lib.songs) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { com.kevshupp.kevmusic.desktop.HomeMixes.forToday(lib.songs) }
     }
     val smart = lib.playlists.filter { it.smart && it.songIds.isNotEmpty() }
     val greeting = when (LocalTime.now().hour) {

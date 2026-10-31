@@ -1,5 +1,8 @@
 package com.kevshupp.kevmusicplayer.ui.screens
 
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -123,18 +126,23 @@ internal class OnDemandOffline(val inLibrary: Boolean, val cached: Boolean, val 
 @Composable
 internal fun rememberOnDemandOffline(track: DeezerTrack): OnDemandOffline {
     val context = LocalContext.current
-    val onDemand by OnDemandTracks.statuses.collectAsState()
-    val downloads by TelegramDownloadQueue.statuses.collectAsState()
-    val od = onDemand[track.id]
-    val dl = downloads[track.id]
-    return remember(track.id, od, dl) {
-        OnDemandOffline(
-            inLibrary = OnDemandTracks.localIdFor(context, track.id) != null || dl is DownloadStatus.Done,
-            cached = OnDemandTracks.isCached(context, track.id),
-            libraryDownload = dl
-        )
+    // Cada fila observa solo su canción: el progreso de una descarga no redibuja las demás
+    val od by remember(track.id) { OnDemandTracks.statuses.map { it[track.id] }.distinctUntilChanged() }
+        .collectAsState(OnDemandTracks.statuses.value[track.id])
+    val dl by remember(track.id) { TelegramDownloadQueue.statuses.map { it[track.id] }.distinctUntilChanged() }
+        .collectAsState(TelegramDownloadQueue.statuses.value[track.id])
+    // Mira el disco fuera del hilo principal, y solo cuando cambia el tipo de estado (no con cada % de progreso)
+    val files by produceState(offlineFilesSeen[track.id] ?: (false to false), track.id, od?.javaClass, dl?.javaClass) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            Pair(OnDemandTracks.localIdFor(context, track.id) != null, OnDemandTracks.isCached(context, track.id))
+                .also { offlineFilesSeen[track.id] = it }
+        }
     }
+    return OnDemandOffline(inLibrary = files.first || dl is DownloadStatus.Done, cached = files.second, libraryDownload = dl)
 }
+
+/** Lo último visto de cada canción (en biblioteca, en caché), para no parpadear al volver a entrar en pantalla con el scroll. */
+private val offlineFilesSeen = java.util.concurrent.ConcurrentHashMap<Long, Pair<Boolean, Boolean>>()
 
 /**
  * Fila de una canción de Deezer en modo bajo demanda: tocar la reproduce; el botón la pone a continuación y

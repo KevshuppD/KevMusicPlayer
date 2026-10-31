@@ -49,6 +49,9 @@ private enum class SlskTab { Search, Transfers }
  */
 @Composable
 fun SoulseekDialog(librarySongs: List<AudioFile>, onDismiss: () -> Unit) {
+    // Antes de leer el estado: si no, el primer cuadro vería "desconectado" y mostraría el inicio de sesión
+    remember { SoulseekManager.openScreen() }
+    DisposableEffect(Unit) { onDispose { SoulseekManager.closeScreen() } }
     val client = SoulseekManager.client
     val status by client.status.collectAsState()
     val downloads by client.downloads.collectAsState()

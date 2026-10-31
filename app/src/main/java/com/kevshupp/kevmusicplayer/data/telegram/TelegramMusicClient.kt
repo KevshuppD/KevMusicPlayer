@@ -49,6 +49,19 @@ object TelegramMusicClient {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var client: TdlClient? = null
+    private var authJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * TDLib recibe la actividad de toda la cuenta aunque solo se use el chat del bot, así que se cierra tras
+     * [IDLE_CLOSE_MS] sin uso. La sesión sigue en disco: para la interfaz sigue "lista" ([_authState] = Ready) y la
+     * siguiente petición lo vuelve a abrir ([readyClientLocked]). [realState] es el estado real del cliente.
+     */
+    private val realState = MutableStateFlow<TelegramAuthState>(TelegramAuthState.Loading)
+    @Volatile private var asleep = false
+    @Volatile private var sleepRequested = false
+    @Volatile private var waking = false
+    @Volatile private var lastUseMs = 0L
+    private var idleWatch: kotlinx.coroutines.Job? = null
     private lateinit var appContext: Context
 
     private val _authState = MutableStateFlow<TelegramAuthState>(TelegramAuthState.Loading)
@@ -88,7 +101,7 @@ object TelegramMusicClient {
         if (!on) edit.putBoolean(OnDemandTracks.KEY_ENABLED, false)
         edit.apply()
         _enabled.value = on
-        if (on) start(context)
+        if (on) start(context) else scope.launch { closeIfIdle(force = true) }
     }
 
     /** Silencia una vez por sesión el chat del bot: cada canción enviada generaba una notificación. */
@@ -108,13 +121,14 @@ object TelegramMusicClient {
      * en cuanto se confirma, o muestra el error sin cambiar de paso.
      */
     fun setBotUsername(username: String, onSaved: () -> Unit = {}) {
-        val c = client ?: return
+        if (client == null && !asleep) return
         val clean = normalizeUsername(username)
         if (clean.isBlank()) return
         _lastError.value = null
         _busy.value = true
         scope.launch {
             try {
+                val c = botMutex.withLock { readyClientLocked() }
                 val chat = c.searchPublicChat(username = clean).getOrThrow()
                 val userId = (chat.type as? ChatTypePrivate)?.userId
                 val isBot = userId != null && (c.getUser(userId = userId) as? TdlResult.Success)?.result?.type is UserTypeBot
@@ -144,24 +158,85 @@ object TelegramMusicClient {
     @Synchronized
     fun start(context: Context) {
         if (!loadEnabled(context)) return
-        if (client != null) return
+        // Dormido no se abre por mostrar una pantalla: solo cuando de verdad se le pide algo
+        if (client != null || asleep) return
         appContext = context.applicationContext
         _bot.value = botUsername(appContext)
         if (!isConfigured) {
             _authState.value = TelegramAuthState.NotConfigured
             return
         }
+        createClient()
+    }
+
+    private fun createClient() {
         val c = TdlClient.create()
         client = c
-        scope.launch {
+        lastUseMs = System.currentTimeMillis()
+        authJob = scope.launch {
             c.authorizationStateUpdates.collect { update -> onAuthState(c, update.authorizationState) }
         }
-        scope.launch { c.getAuthorizationState() }
+        scope.launch {
+            // Sin esto TDLib registra con mucho detalle cada actualización de la cuenta
+            c.setLogVerbosityLevel(newVerbosityLevel = 1)
+            c.getAuthorizationState()
+        }
+        if (idleWatch?.isActive != true) idleWatch = scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(IDLE_CHECK_MS)
+                closeIfIdle(force = false)
+            }
+        }
+    }
+
+    /** El cliente abierto y con sesión, reabriéndolo si estaba dormido. Se llama con [botMutex] tomado. */
+    private suspend fun readyClientLocked(): TdlClient {
+        lastUseMs = System.currentTimeMillis()
+        if (asleep) synchronized(this) {
+            if (asleep) {
+                asleep = false
+                waking = true
+                createClient()
+            }
+        }
+        val state = withTimeout(WAKE_TIMEOUT_MS) { realState.first { it !is TelegramAuthState.Loading } }
+        if (state != TelegramAuthState.Ready) throw IllegalStateException("Inicia sesión en Telegram")
+        lastUseMs = System.currentTimeMillis()
+        return client ?: throw IllegalStateException("Telegram no está iniciado")
+    }
+
+    /** Cierra TDLib si lleva un rato sin uso; con el candado, nunca durante una petición al bot. */
+    private suspend fun closeIfIdle(force: Boolean) {
+        if (!force && System.currentTimeMillis() - lastUseMs < IDLE_CLOSE_MS) return
+        if (realState.value != TelegramAuthState.Ready || _busy.value || !botMutex.tryLock()) return
+        try {
+            val c = client ?: return
+            sleepRequested = true
+            c.close()
+            // Con el candado hasta terminar de cerrar: una petición que llegue ahora espera y reabre
+            kotlinx.coroutines.withTimeoutOrNull(WAKE_TIMEOUT_MS) { while (!asleep) kotlinx.coroutines.delay(50) }
+            if (!asleep) sleepRequested = false
+        } finally {
+            botMutex.unlock()
+        }
     }
 
     private suspend fun onAuthState(c: TdlClient, state: AuthorizationState) {
+        if (state is AuthorizationStateClosed && sleepRequested) {
+            synchronized(this) {
+                client = null
+                // El id del chat no vale en un cliente nuevo hasta volver a buscarlo
+                botChatId = 0L
+                sleepRequested = false
+                realState.value = TelegramAuthState.Loading
+                asleep = true
+            }
+            TelemetryLogger.logInfo(appContext, "Telegram", "TDLib cerrado por inactividad")
+            authJob?.cancel()
+            return
+        }
         if (state !is AuthorizationStateWaitTdlibParameters) _lastError.value = null
-        _authState.value = when (state) {
+        val next = when (state) {
             is AuthorizationStateWaitTdlibParameters -> {
                 val dir = java.io.File(appContext.filesDir, "tdlib")
                 c.setTdlibParameters(
@@ -201,6 +276,10 @@ object TelegramMusicClient {
             is AuthorizationStateLoggingOut, is AuthorizationStateClosing -> TelegramAuthState.Loading
             else -> TelegramAuthState.Unsupported(state::class.simpleName.orEmpty())
         }
+        realState.value = next
+        // Al dormirse o despertar, la interfaz sigue viendo la sesión lista
+        if (!((waking || sleepRequested) && next == TelegramAuthState.Loading)) _authState.value = next
+        if (next != TelegramAuthState.Loading) waking = false
     }
 
     fun submitPhone(phone: String) = authCall { it.setAuthenticationPhoneNumber(phoneNumber = phone.filter { ch -> ch.isDigit() || ch == '+' }) }
@@ -225,13 +304,17 @@ object TelegramMusicClient {
     fun logOut() = authCall { it.logOut() }
 
     private fun authCall(block: suspend (TdlClient) -> TdlResult<*>) {
-        val c = client ?: return
+        if (client == null && !asleep) return
         if (_busy.value) return
         _lastError.value = null
         _busy.value = true
         scope.launch {
             try {
+                val c = client ?: botMutex.withLock { readyClientLocked() }
+                lastUseMs = System.currentTimeMillis()
                 block(c).failureMessage()?.let { _lastError.value = friendlyError(it) }
+            } catch (e: Exception) {
+                _lastError.value = e.message
             } finally {
                 _busy.value = false
             }
@@ -288,8 +371,7 @@ object TelegramMusicClient {
         botMutex.withLock { requestTrackLocked(track, onProgress) }
 
     private suspend fun requestTrackLocked(track: DeezerTrack, onProgress: (Float) -> Unit): TelegramAudio {
-        val c = client ?: throw IllegalStateException("Telegram no está iniciado")
-        if (_authState.value != TelegramAuthState.Ready) throw IllegalStateException("Inicia sesión en Telegram")
+        val c = readyClientLocked()
         val chatId = resolveBotChat(c)
         val received = coroutineScope {
             // Se escucha antes de enviar para no perder una respuesta inmediata
@@ -325,8 +407,7 @@ object TelegramMusicClient {
         botMutex.withLock { requestByTextLocked(query, choose, onProgress) }
 
     private suspend fun requestByTextLocked(query: String, choose: (List<String>) -> Int?, onProgress: (Float) -> Unit): TelegramAudio {
-        val c = client ?: throw IllegalStateException("Telegram no está iniciado")
-        if (_authState.value != TelegramAuthState.Ready) throw IllegalStateException("Inicia sesión en Telegram")
+        val c = readyClientLocked()
         val chatId = resolveBotChat(c)
         val results = coroutineScope {
             val reply = async(start = CoroutineStart.UNDISPATCHED) {
@@ -400,6 +481,7 @@ object TelegramMusicClient {
 
     /** Borra la copia de la caché de TDLib una vez guardada en la carpeta de música. */
     fun deleteCachedFile(fileId: Int) {
+        lastUseMs = System.currentTimeMillis()
         val c = client ?: return
         scope.launch { c.deleteFile(fileId = fileId) }
     }
@@ -433,5 +515,8 @@ object TelegramMusicClient {
     private fun TdlResult<*>.failureMessage(): String? = (this as? TdlResult.Failure)?.message
 
     private const val REPLY_TIMEOUT_MS = 90_000L
+    private const val IDLE_CLOSE_MS = 5 * 60_000L
+    private const val IDLE_CHECK_MS = 30_000L
+    private const val WAKE_TIMEOUT_MS = 30_000L
     private val RESULT_BUTTON = Regex("^\\s*\\d+\\.\\s+\\S")
 }

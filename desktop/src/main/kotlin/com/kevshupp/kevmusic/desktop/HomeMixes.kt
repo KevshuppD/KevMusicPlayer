@@ -17,6 +17,55 @@ object HomeMixes {
 
     private fun isUnknown(genre: String) = genre.trim().lowercase() in unknownGenres || genre.trim().matches(Regex("\\(?\\d+\\)?"))
 
+    private val broadGenres = setOf(
+        "pop", "rock", "alternative", "alternativo", "dance", "electro", "electronic", "electronica", "electrónica",
+        "latin", "latino", "latina", "international", "internacional", "world", "world music", "music", "música", "musica",
+        "soundtrack", "soundtracks", "bandas sonoras", "films/games", "film scores", "asian music", "música asiática",
+    )
+
+    private fun genreKey(genre: String) = genre.trim().lowercase()
+
+    private fun mainGenre(songs: List<Song>): String? =
+        songs.map { genreKey(it.genre) }.filterNot(::isUnknown).groupingBy { it }.eachCount().entries
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .firstOrNull()?.key
+
+    /** Igual que el teléfono: solo artistas cuyo género principal sea un género núcleo y no muy amplio del artista. */
+    private fun fillerFor(artist: String, byArtist: Map<String, List<Song>>): List<Song> {
+        val own = byArtist.getValue(artist)
+        val known = own.map { genreKey(it.genre) }.filterNot(::isUnknown)
+        val core = known.groupingBy { it }.eachCount()
+            .filter { (genre, n) -> n >= known.size * 0.3 && genre !in broadGenres }.keys
+        if (core.isEmpty()) return emptyList()
+        val ownIds = own.mapTo(HashSet()) { it.id }
+        val order = compareByDescending<Song> { it.plays }.thenBy { it.id }
+        return byArtist.filter { (name, list) -> name != artist && mainGenre(list) in core }.keys.sorted()
+            .flatMap { name ->
+                byArtist.getValue(name).filter { it.id !in ownIds && genreKey(it.genre) in core }.sortedWith(order).take(4)
+            }
+            .distinctBy { it.id }.sortedWith(order)
+    }
+
+    private var cachedDay = -1L
+    private var cached: List<HomeMix> = emptyList()
+
+    /** Lo ya calculado hoy, para que volver a Inicio no deje la sección vacía un instante. */
+    @Synchronized fun peek(): List<HomeMix> = cached
+
+    /** Las mezclas se conservan todo el día en esta sesión; contar una reproducción no las cambia. */
+    @Synchronized fun forToday(songs: List<Song>, now: Long = System.currentTimeMillis()): List<HomeMix> {
+        val day = (now + java.util.TimeZone.getDefault().getOffset(now)) / DAY_MS
+        if (day == cachedDay && cached.isNotEmpty()) {
+            val byId = songs.associateBy { it.id }
+            val total = cached.sumOf { it.songs.size }
+            val updated = cached.map { m -> m.copy(songs = m.songs.mapNotNull { byId[it.id] }) }.filter { it.songs.size >= 3 }
+            if (updated.sumOf { it.songs.size } * 2 >= total) { cached = updated; return updated }
+        }
+        cachedDay = day
+        cached = build(songs, now)
+        return cached
+    }
+
     fun build(songs: List<Song>, now: Long = System.currentTimeMillis()): List<HomeMix> {
         if (songs.isEmpty()) return emptyList()
         val random = Random(now / DAY_MS)
@@ -29,11 +78,9 @@ object HomeMixes {
             .sortedByDescending { (_, list) -> list.sumOf { it.plays } }
             .take(3)
             .forEach { (artist, own) ->
-                val genres = own.map { it.genre }.filterNot(::isUnknown).toSet()
-                val ownIds = own.mapTo(HashSet()) { it.id }
-                val similar = songs.filter { it.id !in ownIds && it.genre in genres }
-                    .sortedByDescending { it.plays }.take(MIX_SIZE).shuffled(random)
-                val picked = (own.shuffled(random).take(MIX_SIZE * 2 / 3) + similar).take(MIX_SIZE).shuffled(random)
+                val filler = fillerFor(artist, byArtist)
+                    .take(MIX_SIZE / 3).take(minOf(own.size, MIX_SIZE)).shuffled(random)
+                val picked = (own.shuffled(random).take(MIX_SIZE - filler.size) + filler).shuffled(random)
                 mixes += HomeMix("artist:$artist", "Mix de $artist", "$artist y más", picked)
             }
 

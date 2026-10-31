@@ -86,6 +86,19 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         if (playStatsOverrides.isEmpty()) localAudioFiles.toList() else localAudioFiles.map { withStats(it) }
     }
 
+    // Mezclas de "Hecho para ti": se conservan al navegar y se renuevan una vez al día
+    val homeMixes = androidx.compose.runtime.mutableStateOf<List<com.kevshupp.kevmusicplayer.data.HomeMix>>(emptyList())
+
+    fun refreshHomeMixes() {
+        val songs = audioFilesWithStats.toList()
+        if (songs.isEmpty()) return
+        viewModelScope.launch {
+            homeMixes.value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                com.kevshupp.kevmusicplayer.data.HomeMixes.forToday(getApplication(), songs)
+            }
+        }
+    }
+
     // Lyrics of the songs played this session, loaded on demand from SQLite
     val loadedLyrics = androidx.compose.runtime.mutableStateMapOf<Long, SongLyrics>()
 

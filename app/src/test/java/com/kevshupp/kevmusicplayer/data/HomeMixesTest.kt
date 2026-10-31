@@ -46,4 +46,65 @@ class HomeMixesTest {
         val mixes = HomeMixes.build(library.map { it.copy(genre = "Unknown Genre") }, now)
         assertTrue(mixes.none { it.id.startsWith("genre:") })
     }
+
+    @Test
+    fun strayGenreSongDoesNotBringForeignArtists() {
+        val lib = (1L..10).map { song(it, "BTS", "K-Pop", plays = 20) } +
+            song(11, "BTS", "Reggaeton", plays = 1) +
+            (12L..20).map { song(it, "Bad Bunny", "Reggaeton", plays = 50) } +
+            (21L..25).map { song(it, "Twice", "K-Pop", plays = 3) }
+        val mix = HomeMixes.build(lib, now).first { it.id == "artist:BTS" }
+        assertTrue(mix.songs.none { it.artist == "Bad Bunny" })
+        assertTrue(mix.songs.any { it.artist == "Twice" })
+    }
+
+    @Test
+    fun oneMatchingSongFromForeignArtistIsNotEnough() {
+        val lib = (1L..10).map { song(it, "BTS", "K-Pop", plays = 20) } +
+            song(11, "Metallica", "K-Pop", plays = 90) +
+            (12L..20).map { song(it, "Metallica", "Metal", plays = 90) }
+        val mix = HomeMixes.build(lib, now).first { it.id == "artist:BTS" }
+        assertTrue(mix.songs.all { it.artist == "BTS" })
+    }
+
+    @Test
+    fun broadGenreDoesNotBringOtherArtists() {
+        val lib = (1L..10).map { song(it, "BTS", "Pop", plays = 20) } +
+            (11L..20).map { song(it, "Taylor Swift", "Pop", plays = 5) }
+        val mix = HomeMixes.build(lib, now).first { it.id == "artist:BTS" }
+        assertTrue(mix.songs.all { it.artist == "BTS" })
+    }
+
+    @Test
+    fun otherArtistsNeverOutnumberTheMixArtist() {
+        val lib = (1L..5).map { song(it, "BTS", "K-Pop", plays = 20) } +
+            (6L..50).map { song(it, "Artist ${it / 2}", "K-Pop", plays = 3) }
+        val songs = HomeMixes.build(lib, now).first { it.id == "artist:BTS" }.songs
+        assertEquals(5, songs.count { it.artist == "BTS" })
+        assertEquals(10, songs.size)
+    }
+
+    @Test
+    fun storedMixesSurvivePlaysAndKeepTheirSongs() {
+        val mixes = HomeMixes.build(library, now)
+        val played = library.map { it.copy(playCount = it.playCount + 7) }
+        val restored = HomeMixes.resolve(HomeMixes.encode(mixes), played)!!
+        assertEquals(mixes.map { it.id }, restored.map { it.id })
+        assertEquals(mixes.map { m -> m.songs.map { it.id } }, restored.map { m -> m.songs.map { it.id } })
+        assertEquals(mixes[0].songs[0].playCount + 7, restored[0].songs[0].playCount)
+    }
+
+    @Test
+    fun storedMixesDropDeletedSongsAndRebuildWhenIdsChanged() {
+        val stored = HomeMixes.encode(HomeMixes.build(library, now))
+        val restored = HomeMixes.resolve(stored, library.filter { it.id != 1L })!!
+        assertTrue(restored.flatMap { it.songs }.none { it.id == 1L })
+        assertEquals(null, HomeMixes.resolve(stored, library.map { it.copy(id = it.id + 1000) }))
+    }
+
+    @Test
+    fun mixesSavedWithoutHistoryAreRebuiltOnceThereIsHistory() {
+        val stored = HomeMixes.encode(HomeMixes.build(library.map { it.copy(playCount = 0, lastPlayed = 0) }, now))
+        assertEquals(null, HomeMixes.resolve(stored, library))
+    }
 }

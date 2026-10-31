@@ -99,14 +99,12 @@ fun HomeScreen(
         }
     }
 
-    // "Hecho para ti": mezclas automáticas (artistas, géneros, Redescubre, Sin escuchar), calculadas fuera del
-    // hilo principal y de nuevo solo cuando cambian la biblioteca o las reproducciones
-    val statsVersion = viewModel?.statsVersion?.intValue ?: 0
-    val homeMixes by produceState(emptyList<com.kevshupp.kevmusicplayer.data.HomeMix>(), audioFiles.size, statsVersion) {
-        val songs = (viewModel?.audioFilesWithStats ?: audioFiles).toList()
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            com.kevshupp.kevmusicplayer.data.HomeMixes.build(songs)
-        }
+    // "Hecho para ti": viven en el ViewModel, así volver a Inicio no las vacía ni las recalcula. Al entrar o volver
+    // a la app solo se comprueba si cambió el día.
+    val homeMixes = viewModel?.homeMixes?.value.orEmpty()
+    androidx.lifecycle.compose.LifecycleResumeEffect(audioFiles.size) {
+        viewModel?.refreshHomeMixes()
+        onPauseOrDispose { }
     }
 
     // 3. Recently Added

@@ -15,9 +15,12 @@ import com.kevshupp.soulseek.PhoneTarget
 import com.kevshupp.soulseek.SlskLabels
 import com.kevshupp.soulseek.SlskSettings
 import com.kevshupp.soulseek.SoulseekClient
+import com.kevshupp.soulseek.TransferState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +39,7 @@ object SoulseekManager {
     const val KEY_SHARE = "soulseek_share"
     const val KEY_SHARE_MOBILE = "soulseek_share_mobile"
     const val KEY_UPLOAD_SLOTS = "soulseek_upload_slots"
+    private const val IDLE_STOP_MS = 5 * 60_000L
 
     private lateinit var app: Context
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -68,6 +72,7 @@ object SoulseekManager {
         override val uploadLimit get() = 0
         override val sendToPhone get() = true
         override val keepOnPc get() = false
+        override val cacheShareIndex get() = true
     }
 
     /** Compartir activado y permitido en la red actual. */
@@ -106,17 +111,64 @@ object SoulseekManager {
     fun init(context: Context) {
         app = context.applicationContext
         _enabled.value = prefs.getBoolean(KEY_ENABLED, false)
-        watchNetwork()
         // La cuenta llega también desde el PC o al restaurar una copia
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        // Corre al abrir la app: nada de disco ni de red en el hilo principal
+        scope.launch {
+            watchNetwork()
+            if (!_enabled.value || !hasAccount) return@launch
+            // Sin compartir ni descargas pendientes no se conecta hasta abrir Soulseek
+            val queue = File(app.filesDir, "soulseek/soulseek_queue.json")
+            if (sharing || queue.isFile) {
+                val c = client
+                if (sharing || needsConnection(c)) { touch(); c.start() }
+            }
+            watchIdle()
+        }
+    }
+
+    @Volatile private var dialogsOpen = 0
+    @Volatile private var lastUseMs = 0L
+    private var idleJob: Job? = null
+
+    private fun touch() { lastUseMs = System.currentTimeMillis() }
+
+    /** Hay algo que necesita a la red de Soulseek: subidas, o descargas que no solo esperan a guardarse. */
+    private fun needsConnection(c: SoulseekClient) =
+        c.uploads.value.any { !it.finished } || c.downloads.value.any { !it.finished && it.state != TransferState.Sending }
+
+    /** La pantalla de Soulseek se abre: conecta si hacía falta. Devolver con [closeScreen]. */
+    fun openScreen() {
+        dialogsOpen++
+        touch()
         if (_enabled.value && hasAccount) client.start()
+        watchIdle()
+    }
+
+    fun closeScreen() {
+        dialogsOpen = (dialogsOpen - 1).coerceAtLeast(0)
+        touch()
+    }
+
+    /** Sin compartir, desconecta tras [IDLE_STOP_MS] sin pantalla abierta ni transferencias. */
+    private fun watchIdle() = synchronized(this) {
+        if (idleJob?.isActive == true) return@synchronized
+        idleJob = scope.launch {
+            while (true) {
+                delay(30_000)
+                val c = clientInstance ?: continue
+                if (!c.isRunning) continue
+                if (dialogsOpen > 0 || sharing || needsConnection(c)) touch()
+                else if (System.currentTimeMillis() - lastUseMs >= IDLE_STOP_MS) c.stop()
+            }
+        }
     }
 
     // Referencia fuerte: SharedPreferences guarda los oyentes con referencias débiles
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             SoulseekAccount.KEY_USER, SoulseekAccount.KEY_PASS -> if (_enabled.value) {
-                if (hasAccount) client.restart() else clientInstance?.stop()
+                if (hasAccount) { touch(); client.restart() } else clientInstance?.stop()
             }
             KEY_SHARE, KEY_SHARE_MOBILE, MusicFolders.KEY_MAIN, MusicFolders.KEY_EXTRA -> sharingChanged()
         }
@@ -125,13 +177,13 @@ object SoulseekManager {
     fun setEnabled(on: Boolean) {
         prefs.edit().putBoolean(KEY_ENABLED, on).apply()
         _enabled.value = on
-        if (on) { if (hasAccount) client.start() } else clientInstance?.stop()
+        if (on) { touch(); watchIdle(); if (hasAccount) client.start() } else clientInstance?.stop()
     }
 
     fun login(user: String, pass: String) {
         SoulseekAccount.set(app, user.trim(), pass)
         // Si la cuenta no cambió no salta el oyente: conectar igualmente
-        if (_enabled.value) client.restart()
+        if (_enabled.value) { touch(); client.restart() }
     }
 
     fun logout() {
@@ -141,12 +193,22 @@ object SoulseekManager {
 
     /** Vuelve a indexar lo compartido (o lo vacía) y avisa al servidor. */
     private fun sharingChanged() {
-        val c = clientInstance ?: return
-        scope.launch { c.rescanShares() }
+        scope.launch {
+            // Empezar a compartir necesita conexión aunque nadie haya abierto Soulseek
+            if (sharing && _enabled.value && hasAccount && clientInstance?.isRunning != true) {
+                touch()
+                watchIdle()
+                client.start() // escanea al arrancar
+            } else {
+                clientInstance?.rescanShares()
+            }
+        }
     }
 
     private fun watchNetwork() {
         val cm = app.getSystemService(ConnectivityManager::class.java) ?: return
+        // Saber ya la red actual: si no, compartir arrancaría creyendo estar en Wi‑Fi
+        cm.getNetworkCapabilities(cm.activeNetwork)?.let { _unmetered.value = it.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) }
         cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 val unmetered = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)

@@ -140,13 +140,18 @@ class SoulseekClient(
     private val _shareStats = MutableStateFlow(0 to 0)
     val shareStats: StateFlow<Pair<Int, Int>> = _shareStats
 
-    val shares = Shares()
+    val shares = Shares(if (config.cacheShareIndex) File(stateDir, "shares_index.txt") else null)
     var phone: PhoneTarget? = null
 
     private val daemon = ThreadFactory { r -> Thread(r, "soulseek").apply { isDaemon = true } }
     private val pool = Executors.newCachedThreadPool(daemon)
     // Las búsquedas de otros llegan en ráfagas; las que no caben se descartan
-    private val searchPool = ThreadPoolExecutor(3, 3, 30, TimeUnit.SECONDS, ArrayBlockingQueue(150), daemon, ThreadPoolExecutor.DiscardPolicy())
+    private val searchPool = ThreadPoolExecutor(
+        3, 3, 30, TimeUnit.SECONDS, ArrayBlockingQueue(150),
+        // Responder a otros nunca debe competir con la interfaz ni con el audio
+        ThreadFactory { r -> Thread(r, "soulseek-search").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } },
+        ThreadPoolExecutor.DiscardPolicy()
+    )
 
     @Volatile private var running = false
     val isRunning get() = running

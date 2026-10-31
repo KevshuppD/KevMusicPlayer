@@ -81,6 +81,8 @@ interface SlskSettings {
      * en el teléfono gasta datos y batería.
      */
     val joinDistributed: Boolean get() = sharedFolders.isNotEmpty()
+    /** Guardar en disco el índice de lo compartido, para no releer cada carpeta en cada escaneo. */
+    val cacheShareIndex: Boolean get() = false
 
     val hasAccount get() = username.isNotBlank() && password.isNotBlank()
 }
