@@ -83,3 +83,30 @@ fun CastDialog(queue: () -> Pair<List<AudioFile>, Long>, onStarted: () -> Unit, 
         }
     )
 }
+
+/** El sistema solo dibuja su barra para el volumen del teléfono; la del Chromecast la pone la app. */
+@Composable
+fun CastVolumeIndicator() {
+    val change by CastController.volumeChange.collectAsState()
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(change) {
+        if (change == null) return@LaunchedEffect
+        visible = true
+        kotlinx.coroutines.delay(1500)
+        visible = false
+    }
+    val level = change?.level ?: 0f
+    androidx.compose.animation.AnimatedVisibility(visible, enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+        Box(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 16.dp), contentAlignment = Alignment.TopCenter) {
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceVariant, tonalElevation = 6.dp, shadowElevation = 6.dp) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.CastConnected, "Volumen de la TV", Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    LinearProgressIndicator(progress = { level }, modifier = Modifier.width(150.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("${(level * 100).toInt()} %", fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}

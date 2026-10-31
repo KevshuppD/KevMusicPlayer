@@ -147,7 +147,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             KevMusicPlayerTheme {
-                AppNavigation()
+                androidx.compose.foundation.layout.Box {
+                    AppNavigation()
+                    com.kevshupp.kevmusicplayer.ui.screens.dialogs.CastVolumeIndicator()
+                }
             }
         }
     }

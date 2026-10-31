@@ -26,7 +26,13 @@ object CastController {
     data class CastState(val device: String? = null, val connecting: Boolean = false, val title: String = "", val playing: Boolean = false, val error: String? = null)
     data class Device(val id: String, val name: String, val route: MediaRouter.RouteInfo)
 
+    data class VolumeChange(val level: Float, val at: Long)
+
     private const val MAX_QUEUE = 50
+
+    /** Último cambio con los botones físicos, para mostrarlo en pantalla. */
+    private val _volumeChange = MutableStateFlow<VolumeChange?>(null)
+    val volumeChange: StateFlow<VolumeChange?> = _volumeChange
 
     private val _state = MutableStateFlow(CastState())
     val state: StateFlow<CastState> = _state
@@ -87,7 +93,11 @@ object CastController {
     /** Botones físicos de volumen; true si se usaron para el Chromecast. */
     fun adjustVolume(up: Boolean): Boolean {
         if (!isCasting) return false
-        setVolume(volume() + if (up) 0.05f else -0.05f)
+        // La sesión tarda en confirmar el valor: con pulsaciones seguidas se parte del último pedido
+        val from = _volumeChange.value?.takeIf { System.currentTimeMillis() - it.at < 2000 }?.level ?: volume()
+        val level = (from + if (up) 0.05f else -0.05f).coerceIn(0f, 1f)
+        setVolume(level)
+        _volumeChange.value = VolumeChange(level, System.currentTimeMillis())
         return true
     }
 
