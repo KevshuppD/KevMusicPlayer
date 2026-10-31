@@ -1,5 +1,6 @@
 package com.kevshupp.kevmusicplayer.data.telegram
 
+import com.kevshupp.kevmusicplayer.data.LibraryNormalizer
 import android.content.Context
 import android.media.MediaScannerConnection
 import android.os.Environment
@@ -155,6 +156,15 @@ object TelegramDownloadQueue {
             }
             TelegramMusicClient.deleteCachedFile(audio.fileId)
             val newUri = scanFile(context, saved)
+            if (song == null && track != null && request.botResult == null && newUri != null) {
+                try {
+                    LibraryNormalizer.tagDownloaded(context, newUri, saved, track)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    TelemetryLogger.logError(context, "Telegram", "No se pudieron poner las etiquetas de ${track.link}", e)
+                }
+            }
             if (song != null) {
                 // El escaneo hereda estadísticas, letras y listas de la canción antigua
                 newUri?.lastPathSegment?.toLongOrNull()?.takeIf { it != song.id }?.let { SongIdentity.addReplacement(context, it, song.id) }

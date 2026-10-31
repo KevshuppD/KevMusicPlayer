@@ -446,6 +446,7 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     LazyRow(
+                        state = rememberRowFromStart(homeMixes.firstOrNull()?.id ?: smartLists.keys.firstOrNull()),
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         contentPadding = PaddingValues(horizontal = 20.dp)
@@ -604,6 +605,17 @@ fun QuickActionCard(
     }
 }
 
+/**
+ * Una fila con claves se ancla a su primer elemento visible: si llega otro delante (las mezclas tras las listas
+ * inteligentes, la última canción escuchada), lo nuevo queda fuera por la izquierda y la fila se ve corrida.
+ */
+@Composable
+private fun rememberRowFromStart(firstKey: Any?): androidx.compose.foundation.lazy.LazyListState {
+    val state = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(firstKey) { state.scrollToItem(0) }
+    return state
+}
+
 @Composable
 fun HomeHorizontalSection(
     title: String,
@@ -652,6 +664,7 @@ fun HomeHorizontalSection(
             }
         } else {
             LazyRow(
+                state = rememberRowFromStart(items.firstOrNull()?.id),
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 contentPadding = PaddingValues(horizontal = 20.dp)
@@ -773,6 +786,7 @@ private fun HomeClipsSection(isEs: Boolean) {
             )
         }
         androidx.compose.foundation.lazy.LazyRow(
+            state = rememberRowFromStart(entries.firstOrNull()?.id),
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {

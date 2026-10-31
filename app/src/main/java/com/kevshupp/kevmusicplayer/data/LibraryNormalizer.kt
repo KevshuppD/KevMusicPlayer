@@ -42,7 +42,7 @@ object LibraryNormalizer {
     enum class Field(val label: String) { Title("Título"), Artist("Artista"), Album("Álbum"), Genre("Género"), Year("Año"), Track("Pista") }
 
     /** Cambios propuestos para una canción: campo → valor nuevo (solo los que difieren). */
-    data class Proposal(val song: AudioFile, val changes: Map<Field, String>) {
+    data class Proposal(val song: AudioFile, val changes: Map<Field, String>, val doubt: String? = null) {
         fun oldValue(field: Field): String = when (field) {
             Field.Title -> song.title
             Field.Artist -> song.artist
@@ -56,7 +56,13 @@ object LibraryNormalizer {
     sealed interface State {
         data object Idle : State
         data class Scanning(val done: Int, val total: Int, val found: Int) : State
-        data class Review(val proposals: List<Proposal>, val notFound: Int, val unchanged: Int, val total: Int, val skipped: Int = 0) : State
+        data class Review(val proposals: List<Proposal>, val notFound: Int, val unchanged: Int, val total: Int, val skipped: Int = 0,
+            /** Sin coincidencia segura, para poder ver cuáles son. */
+            val notFoundSongs: List<AudioFile> = emptyList(),
+            /** La búsqueda falló (red, límite de Deezer): no se sabe si están, y se revisan en la próxima rápida. */
+            val errorSongs: List<AudioFile> = emptyList(),
+            /** Las que pediste no volver a revisar. */
+            val ignoredSongs: List<AudioFile> = emptyList()) : State
         data class Applying(val done: Int, val total: Int) : State
         data class Done(val updated: Int, val failed: List<Pair<AudioFile, String>>) : State
     }
@@ -131,7 +137,8 @@ object LibraryNormalizer {
     fun scan(context: Context, songs: List<AudioFile>, full: Boolean) {
         job?.cancel()
         val app = context.applicationContext
-        val all = songs.filter { it.id > 0 && it.title.isNotBlank() }
+        val ignoredKeys = ignoredKeys(app)
+        val (ignoredSongs, all) = songs.filter { it.id > 0 && it.title.isNotBlank() }.partition { ignoreKey(it) in ignoredKeys }
         val targets = if (full) all else pendingForQuick(app, all)
         val skipped = all.size - targets.size
         _state.value = State.Scanning(0, targets.size, 0)
@@ -142,15 +149,25 @@ object LibraryNormalizer {
             var done = 0
             var found = 0
             var notFound = 0
+            val errorIds = java.util.Collections.synchronizedSet(HashSet<Long>())
             val counter = Mutex()
             val results = targets.map { song ->
                 async {
                     gate.withPermit {
                         ensureActive()
-                        val proposal = runCatching { propose(song, albums, albumLock) }.getOrNull()
+                        val proposal = try {
+                            propose(song, albums, albumLock)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // Un error no es "Deezer no la tiene": sin marca, para que no espere 30 días
+                            errorIds.add(song.id)
+                            null
+                        }
                         counter.withLock {
                             done++
                             when {
+                                song.id in errorIds -> Unit
                                 proposal == null -> notFound++
                                 else -> found++
                             }
@@ -160,15 +177,20 @@ object LibraryNormalizer {
                     }
                 }
             }.awaitAll()
-            val matched = results.filterNotNull()
+            val deezerFound = results.filterNotNull().map { it.song.id }.toHashSet()
+            val backup = musicBrainzBackup(targets.filter { it.id !in deezerFound && it.id !in errorIds }.take(MB_BACKUP_MAX)) { _, _ -> }
+            notFound -= backup.size
+            val matched = results.filterNotNull() + backup
             val withChanges = matched.filter { it.changes.isNotEmpty() }
             // Correctas y no encontradas quedan recordadas; las que tienen cambios, cuando se apliquen
             val marks = HashMap<Long, Pair<AudioFile, String>>()
             matched.filter { it.changes.isEmpty() }.forEach { marks[it.song.id] = it.song to STATUS_OK }
             val matchedIds = matched.map { it.song.id }.toHashSet()
-            targets.filter { it.id !in matchedIds }.forEach { marks[it.id] = it to STATUS_NOT_FOUND }
+            val notFoundSongs = targets.filter { it.id !in matchedIds && it.id !in errorIds }
+            val errorSongs = targets.filter { it.id in errorIds }
+            notFoundSongs.forEach { marks[it.id] = it to STATUS_NOT_FOUND }
             if (isActive) runCatching { saveMarks(app, marks) }
-            _state.value = State.Review(withChanges, notFound, matched.size - withChanges.size, targets.size, skipped)
+            _state.value = State.Review(withChanges, notFound, matched.size - withChanges.size, targets.size, skipped, notFoundSongs, errorSongs, ignoredSongs)
         }
     }
 
@@ -185,9 +207,71 @@ object LibraryNormalizer {
         }
     }
 
+    // ---------- Ignoradas ----------
+
+    private const val PREF_IGNORED = "normalize_ignored"
+    private const val MB_BACKUP_MAX = 100
+
+    /** Por artista y título, no por id: el `_id` de MediaStore cambia al reindexar. Viaja en la copia con los ajustes. */
+    private fun ignoreKey(song: AudioFile) = LibraryMatcher.normalize(song.artist) + "|" + LibraryMatcher.normalize(song.title)
+
+    private fun ignoredKeys(context: Context): Set<String> =
+        context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE).getStringSet(PREF_IGNORED, emptySet()).orEmpty()
+
+    /** Normalizar deja de revisar esta canción; se puede deshacer con [setIgnored] en `false`. */
+    fun setIgnored(context: Context, song: AudioFile, ignored: Boolean) {
+        val keys = ignoredKeys(context).toMutableSet()
+        if (ignored) keys += ignoreKey(song) else keys -= ignoreKey(song)
+        context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE).edit().putStringSet(PREF_IGNORED, keys).apply()
+        val review = _state.value as? State.Review ?: return
+        fun without(list: List<AudioFile>) = list.filter { it.id != song.id }
+        _state.value = review.copy(
+            proposals = review.proposals.filter { it.song.id != song.id },
+            notFoundSongs = without(review.notFoundSongs),
+            errorSongs = without(review.errorSongs),
+            ignoredSongs = if (ignored) without(review.ignoredSongs) + song else without(review.ignoredSongs),
+            notFound = review.notFound - review.notFoundSongs.count { it.id == song.id }
+        )
+    }
+
+    /** Mismo artista, título parecido y ±3 s; la más cercana, primero la del mismo disco. */
+    internal fun pickRecording(song: AudioFile, recordings: List<MbRecording>): MbRecording? {
+        val artist = LibraryMatcher.normalize(song.artist)
+        val durationSec = (song.duration / 1000).toInt()
+        val album = LibraryMatcher.normalizeTitle(song.album)
+        return recordings.filter {
+            LibraryMatcher.normalize(it.artist) == artist && it.lengthSec > 0 && kotlin.math.abs(it.lengthSec - durationSec) <= 3 &&
+                SongRepair.isSimilarTitle(song.title, it.title)
+        }.minByOrNull { kotlin.math.abs(it.lengthSec - durationSec) + if (LibraryMatcher.normalizeTitle(it.album) == album) -10 else 0 }
+    }
+
+    /**
+     * Lo que Deezer no tiene, una consulta por segundo. MusicBrainz guarda ediciones sueltas y títulos originales,
+     * así que solo completa lo que falta: nunca cambia título, artista ni un álbum ya puesto. Un error no cuenta.
+     */
+    private suspend fun musicBrainzBackup(songs: List<AudioFile>, onProgress: (Int, Int) -> Unit = { _, _ -> }): List<Proposal> {
+        val out = ArrayList<Proposal>()
+        songs.forEachIndexed { i, song ->
+            coroutineContext.ensureActive()
+            onProgress(i, songs.size)
+            val recording = runCatching {
+                pickRecording(song, MetadataSearch.musicBrainzRecordings(LibraryMatcher.fixMojibake(song.title), LibraryMatcher.fixMojibake(song.artist)))
+            }.getOrNull()
+            if (recording != null) {
+                val changes = LinkedHashMap<Field, String>()
+                if (isUnknown(song.album) && recording.album.isNotBlank()) changes[Field.Album] = recording.album
+                if (song.year.isBlank() && recording.year.length == 4) changes[Field.Year] = recording.year
+                out += Proposal(song, changes, "Desde MusicBrainz")
+            }
+            delay(1100)
+        }
+        return out
+    }
+
     /** Propuesta para la canción, o null si Deezer no la tiene (o no con seguridad). Sin cambios = mapa vacío. */
     private suspend fun propose(song: AudioFile, albums: HashMap<Long, JSONObject?>, albumLock: Mutex): Proposal? {
-        val match = deezer { SongRepair.findMatch(song) } ?: return null
+        val found = deezer { SongRepair.findMatchForTags(song) } ?: return null
+        val match = found.track
         coroutineContext.ensureActive()
         val track = deezer { DeezerTrackSearch.trackDetails(match.id) }
         val albumId = track.optJSONObject("album")?.optLong("id") ?: 0L
@@ -204,8 +288,12 @@ object LibraryNormalizer {
         // esa; si no, el completo (con "(feat. …)" o la versión, como lo publica el sello)
         val dzTitle = track.optString("title").ifBlank { match.title }
         val dzShort = track.optString("title_short")
-        val localNorm = LibraryMatcher.normalize(song.title)
-        offer(Field.Title, listOf(dzTitle, dzShort).firstOrNull { it.isNotBlank() && LibraryMatcher.normalize(it) == localNorm } ?: dzTitle)
+        val localTitle = LibraryMatcher.fixMojibake(song.title)
+        val localNorm = LibraryMatcher.normalize(localTitle)
+        // Hallada por duración (피 땀 눈물 = Blood Sweat & Tears): un título en otro idioma se queda como está
+        if (SongRepair.isLatin(localTitle) || LibraryMatcher.normalizeTitle(dzTitle) == LibraryMatcher.normalizeTitle(localTitle)) {
+            offer(Field.Title, listOf(dzTitle, dzShort).firstOrNull { it.isNotBlank() && LibraryMatcher.normalize(it) == localNorm } ?: dzTitle)
+        }
 
         // Artista: si el local ya trae colaboradores ("A, B") y el de Deezer es solo el principal, se conserva el local
         val dzArtist = track.optJSONObject("artist")?.optString("name").orEmpty().ifBlank { match.artist }
@@ -217,6 +305,8 @@ object LibraryNormalizer {
             localArtist == LibraryMatcher.normalize(dzArtist) -> dzArtist
             contributors.size > 1 && localArtist == LibraryMatcher.normalize(joined) -> joined
             localArtist.contains(LibraryMatcher.normalize(dzArtist)) -> null
+            // La etiqueta solo nombra a un invitado: se propone el principal con los demás ("Milo j, Silvio Rodríguez")
+            contributors.any { LibraryMatcher.normalize(it) == localArtist } -> joined
             else -> dzArtist
         }
         offer(Field.Artist, artist)
@@ -237,7 +327,7 @@ object LibraryNormalizer {
             val genre = album?.optJSONObject("genres")?.optJSONArray("data")?.optJSONObject(0)?.optString("name")
             offer(Field.Genre, genre)
         }
-        return Proposal(song, changes)
+        return Proposal(song, changes, found.doubt)
     }
 
     /**
@@ -313,6 +403,45 @@ object LibraryNormalizer {
     }
 
     /** null si se escribió; si no, el motivo. */
+    /**
+     * Tras una descarga del bot, deja las etiquetas oficiales de Deezer en el archivo: el bot a veces las manda
+     * incompletas o distintas. Solo escribe si algo cambia; si falla, la canción se queda como llegó.
+     */
+    suspend fun tagDownloaded(context: Context, uri: Uri, file: File, track: com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack) {
+        val id = uri.lastPathSegment?.toLongOrNull() ?: return
+        val r = android.media.MediaMetadataRetriever()
+        fun tag(key: Int) = r.extractMetadata(key).orEmpty().trim()
+        val current = try {
+            r.setDataSource(file.absolutePath)
+            listOf(
+                tag(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE),
+                tag(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST),
+                tag(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM),
+                tag(android.media.MediaMetadataRetriever.METADATA_KEY_GENRE),
+                tag(android.media.MediaMetadataRetriever.METADATA_KEY_YEAR),
+                tag(android.media.MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER).substringBefore('/')
+            )
+        } finally {
+            runCatching { r.release() }
+        }
+        val details = deezer { DeezerTrackSearch.trackDetails(track.id) }
+        val albumId = details.optJSONObject("album")?.optLong("id") ?: 0L
+        val album = if (albumId > 0) runCatching { deezer { DeezerTrackSearch.albumDetails(albumId) } }.getOrNull() else null
+        val title = details.optString("title").ifBlank { track.title }
+        val main = details.optJSONObject("artist")?.optString("name").orEmpty().ifBlank { track.artist }
+        // Si el archivo ya trae a los colaboradores ("A, B") se conservan
+        val artist = current[1].takeIf { LibraryMatcher.normalize(it).contains(LibraryMatcher.normalize(main)) } ?: main
+        val albumName = details.optJSONObject("album")?.optString("title").orEmpty().ifBlank { track.album }
+        val genre = current[3].takeUnless { isUnknown(it) }
+            ?: album?.optJSONObject("genres")?.optJSONArray("data")?.optJSONObject(0)?.optString("name").orEmpty()
+        val year = details.optString("release_date").take(4).takeIf { it.length == 4 } ?: current[4]
+        val position = details.optInt("track_position").takeIf { it > 0 } ?: current[5].toIntOrNull() ?: 0
+        val wanted = listOf(title, artist, albumName, genre, year, if (position > 0) position.toString() else "")
+        if (wanted == current) return
+        val stub = AudioFile(id, current[0].ifBlank { title }, current[1].ifBlank { artist }, current[2], current[3], 0, uri.toString())
+        writeTags(context, stub, title, artist, albumName, genre, year, position)?.let { throw java.io.IOException(it) }
+    }
+
     private fun writeTags(context: Context, s: AudioFile, title: String, artist: String, album: String, genre: String, year: String, track: Int): String? {
         val path = getPhysicalPath(context, s.id, s.uriString) ?: return "No se encontró el archivo"
         val ok = if (path.endsWith(".mp3", ignoreCase = true)) {

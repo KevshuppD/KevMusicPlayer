@@ -65,9 +65,13 @@ object DeezerTrackSearch {
             }
     }
 
-    suspend fun search(query: String, limit: Int = 30): List<DeezerTrack> =
+    /**
+     * [includeUnavailable]: incluye las de `readable: false` (BAE BAE de BIGBANG, Catch Catch de YENA). Sus datos
+     * son válidos, así que sirven para etiquetar; las descargas siguen sin verlas.
+     */
+    suspend fun search(query: String, limit: Int = 30, includeUnavailable: Boolean = false): List<DeezerTrack> =
         if (query.isBlank()) emptyList()
-        else getData("$API/search", "q" to query.trim(), "limit" to "$limit").let { parseTracks(it) }
+        else getData("$API/search", "q" to query.trim(), "limit" to "$limit").let { parseTracks(it, includeUnavailable) }
 
     suspend fun searchAlbums(query: String, limit: Int = 30): List<DeezerAlbum> {
         if (query.isBlank()) return emptyList()
@@ -126,9 +130,9 @@ object DeezerTrackSearch {
         year = a.optString("release_date").take(4)
     )
 
-    private fun parseTracks(data: JSONArray): List<DeezerTrack> = (0 until data.length()).mapNotNull { i ->
+    private fun parseTracks(data: JSONArray, includeUnavailable: Boolean = false): List<DeezerTrack> = (0 until data.length()).mapNotNull { i ->
         val t = data.optJSONObject(i) ?: return@mapNotNull null
-        if (t.optString("type", "track") != "track" || !t.optBoolean("readable", true)) return@mapNotNull null
+        if (t.optString("type", "track") != "track" || (!includeUnavailable && !t.optBoolean("readable", true))) return@mapNotNull null
         val album = t.optJSONObject("album")
         DeezerTrack(
             id = t.optLong("id"),

@@ -70,7 +70,7 @@ class LibraryMatcher(songs: List<AudioFile>) {
         private val marks = Regex("\\p{Mn}+")
         private val nonAlnum = Regex("[^\\p{L}\\p{N}]+")
         private val extras = Regex(
-            "\\s*[(\\[]\\s*(feat|ft|with|remaster|remastered|deluxe|explicit|clean|radio edit|bonus|version|live|en vivo)\\b[^)\\]]*[)\\]]" +
+            "\\s*[(\\[]\\s*(feat|ft|with|w\\.|from|\\d{4}\\s+remaster|remaster|remastered|deluxe|explicit|clean|radio edit|bonus|version|live|en vivo)(\\b|\\s)[^)\\]]*[)\\]]" +
                 "|\\s+-\\s+(remaster|remastered|radio edit|live|en vivo|bonus)\\b.*$" +
                 "|\\s+(feat|ft)\\.?\\s+.*$",
             RegexOption.IGNORE_CASE
@@ -78,6 +78,31 @@ class LibraryMatcher(songs: List<AudioFile>) {
 
         fun normalize(text: String): String =
             Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD).replace(marks, "").replace(nonAlnum, "")
+
+        /**
+         * Repara etiquetas guardadas con la codificación equivocada: "FrÃ­a" → "Fría", "ï»¿Miño" sin el BOM.
+         * Solo si el texto vuelve a ser UTF-8 válido, para no tocar nada escrito bien.
+         */
+        fun fixMojibake(text: String): String {
+            val clean = text.removePrefix("\uFEFF")
+            if (clean.none { it == 'Ã' || it == 'Â' || it == 'â' || it == 'ï' || it == 'Ì' || it == 'Ë' }) return clean.trim()
+            val cp1252 = java.nio.charset.Charset.forName("windows-1252")
+            val bytes = java.io.ByteArrayOutputStream()
+            for (c in clean) {
+                if (c.code <= 0xFF) bytes.write(c.code)
+                else {
+                    val encoded = c.toString().toByteArray(cp1252)
+                    if (encoded.size != 1 || encoded[0] == '?'.code.toByte()) return clean.trim()
+                    bytes.write(encoded[0].toInt())
+                }
+            }
+            val decoded = try {
+                Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes.toByteArray())).toString()
+            } catch (e: java.nio.charset.CharacterCodingException) {
+                return clean.trim()
+            }
+            return Normalizer.normalize(decoded.removePrefix("\uFEFF"), Normalizer.Form.NFC).trim()
+        }
 
         fun normalizeTitle(text: String): String = normalize(text.replace(extras, ""))
     }

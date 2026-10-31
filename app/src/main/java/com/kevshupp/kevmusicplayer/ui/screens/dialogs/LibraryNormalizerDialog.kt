@@ -117,13 +117,43 @@ fun LibraryNormalizerDialog(viewModel: MediaBrowserViewModel, onDismiss: () -> U
 
                     is State.Review -> {
                         val activeFields = fields.filterValues { it }.keys
-                        val visible = remember(s, activeFields.toSet()) { s.proposals.filter { p -> p.changes.keys.any { it in activeFields } } }
+                        // Las dudosas van primero y sin marcar: aplicarlas tiene que ser una decisión
+                        LaunchedEffect(s) { s.proposals.filter { it.doubt != null }.forEach { unselected[it.song.id] = true } }
+                        val visible = remember(s, activeFields.toSet()) {
+                            s.proposals.filter { p -> p.changes.keys.any { it in activeFields } }.sortedBy { it.doubt == null }
+                        }
+                        val doubtful = s.proposals.count { it.doubt != null }
                         val selected = visible.filter { unselected[it.song.id] != true }
                         Text(
-                            "${s.proposals.size} con cambios · ${s.unchanged} ya correctas · ${s.notFound} no encontradas en Deezer" +
+                            "${s.proposals.size} con cambios · ${s.unchanged} ya correctas · ${s.notFound} sin coincidencia en Deezer" +
+                                (if (doubtful > 0) " · $doubtful por revisar" else "") +
+                                (if (s.errorSongs.isNotEmpty()) " · ${s.errorSongs.size} con error de conexión" else "") +
                                 if (s.skipped > 0) " · ${s.skipped} ya revisadas antes" else "",
                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        var showMissing by remember { mutableStateOf(false) }
+                        if (s.notFoundSongs.isNotEmpty() || s.errorSongs.isNotEmpty() || s.ignoredSongs.isNotEmpty()) {
+                            TextButton(onClick = { showMissing = !showMissing }) {
+                                Text(if (showMissing) "Volver a los cambios" else "Ver sin resultado (${s.notFoundSongs.size + s.errorSongs.size}) e ignoradas (${s.ignoredSongs.size})")
+                            }
+                        }
+                        if (showMissing) {
+                            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (s.errorSongs.isNotEmpty()) item(key = "errors") {
+                                    Text("Error de conexión: se revisarán en la próxima normalización rápida", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
+                                }
+                                items(s.errorSongs, key = { "e${it.id}" }) { MissingRow(it, "Ignorar") { LibraryNormalizer.setIgnored(context, it, true) } }
+                                if (s.notFoundSongs.isNotEmpty()) item(key = "missing") {
+                                    Text("Sin coincidencia segura (título y artista distintos, u otra versión)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                }
+                                items(s.notFoundSongs, key = { "m${it.id}" }) { MissingRow(it, "Ignorar") { LibraryNormalizer.setIgnored(context, it, true) } }
+                                if (s.ignoredSongs.isNotEmpty()) item(key = "ignored") {
+                                    Text("Ignoradas: Normalizar no las revisa", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                }
+                                items(s.ignoredSongs, key = { "i${it.id}" }) { MissingRow(it, "Revisar otra vez") { LibraryNormalizer.setIgnored(context, it, false) } }
+                            }
+                            return@Column
+                        }
                         Spacer(Modifier.height(8.dp))
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(Field.entries) { f ->
@@ -143,7 +173,7 @@ fun LibraryNormalizerDialog(viewModel: MediaBrowserViewModel, onDismiss: () -> U
                         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(visible, key = { it.song.id }) { p ->
                                 val checked = unselected[p.song.id] != true
-                                ProposalRow(p, activeFields, checked) { unselected[p.song.id] = checked }
+                                ProposalRow(p, activeFields, checked, onIgnore = { LibraryNormalizer.setIgnored(context, p.song, true) }) { unselected[p.song.id] = checked }
                             }
                         }
                         Spacer(Modifier.height(10.dp))
@@ -190,7 +220,18 @@ fun LibraryNormalizerDialog(viewModel: MediaBrowserViewModel, onDismiss: () -> U
 }
 
 @Composable
-private fun ProposalRow(p: LibraryNormalizer.Proposal, fields: Set<Field>, checked: Boolean, onToggle: () -> Unit) {
+private fun MissingRow(song: com.kevshupp.kevmusicplayer.data.AudioFile, action: String, onAction: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(song.title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(listOf(song.artist, song.album).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        TextButton(onClick = onAction) { Text(action, fontSize = 12.sp) }
+    }
+}
+
+@Composable
+private fun ProposalRow(p: LibraryNormalizer.Proposal, fields: Set<Field>, checked: Boolean, onIgnore: () -> Unit, onToggle: () -> Unit) {
     val art = rememberAlbumArt(p.song.uriString, thumbnail = true)
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
@@ -206,6 +247,14 @@ private fun ProposalRow(p: LibraryNormalizer.Proposal, fields: Set<Field>, check
         Column(Modifier.weight(1f)) {
             Text(p.song.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(p.song.artist, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            p.doubt?.let { reason ->
+                Text(
+                    "Revisar · $reason", fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
             Spacer(Modifier.height(4.dp))
             p.changes.filterKeys { it in fields }.forEach { (field, value) ->
                 val old = p.oldValue(field).takeUnless { LibraryNormalizer.isUnknown(it) } ?: "—"
@@ -214,6 +263,7 @@ private fun ProposalRow(p: LibraryNormalizer.Proposal, fields: Set<Field>, check
                     color = MaterialTheme.colorScheme.primary, maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
             }
+            TextButton(onClick = onIgnore, contentPadding = PaddingValues(0.dp)) { Text("Ignorar esta canción", fontSize = 12.sp) }
         }
     }
 }

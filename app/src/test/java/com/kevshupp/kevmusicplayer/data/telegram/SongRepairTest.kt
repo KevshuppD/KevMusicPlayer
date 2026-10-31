@@ -28,3 +28,19 @@ class SongRepairTest {
         assertEquals(1, SongRepair.chooseBotResult(song("hasta que te conoci", "Mana"), buttons))
     }
 }
+
+class SimilarTitleTest {
+    @org.junit.Test
+    fun acceptsSameSongWithExtras() {
+        org.junit.Assert.assertTrue(SongRepair.isSimilarTitle("Tear", "Outro: Tear"))
+        org.junit.Assert.assertTrue(SongRepair.isSimilarTitle("Dracula (JENNIE Remix)", "Dracula (with JENNIE)"))
+        org.junit.Assert.assertTrue(SongRepair.isSimilarTitle("Yet to Come (The Most Beautiful Moment)", "Yet To Come"))
+    }
+
+    @org.junit.Test
+    fun rejectsOtherVersionsAndSongs() {
+        org.junit.Assert.assertFalse(SongRepair.isSimilarTitle("Dracula (JENNIE Remix)", "Dracula (with JENNIE) (Instrumental)"))
+        org.junit.Assert.assertFalse(SongRepair.isSimilarTitle("Yet to Come", "Yet To Come - Live"))
+        org.junit.Assert.assertFalse(SongRepair.isSimilarTitle("Tear", "Fake Love"))
+    }
+}

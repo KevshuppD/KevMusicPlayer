@@ -13,6 +13,8 @@ import java.io.IOException
 
 data class MetadataResult(val title: String, val artist: String, val album: String)
 
+data class MbRecording(val title: String, val artist: String, val album: String, val lengthSec: Int, val year: String)
+
 /** De dónde saca el editor de etiquetas título, artista y álbum (`settings_prefs/metadata_provider`). */
 enum class MetadataProvider(val key: String, val label: String) {
     Deezer("deezer", "Deezer"),
@@ -31,7 +33,7 @@ enum class MetadataProvider(val key: String, val label: String) {
 object MetadataSearch {
     /** [artistHint] es el artista del editor: si la búsqueda empieza por él, MusicBrainz puede buscar por campos. */
     suspend fun search(provider: MetadataProvider, query: String, artistHint: String, durationMs: Long = 0L): List<MetadataResult> = when (provider) {
-        MetadataProvider.Deezer -> DeezerTrackSearch.search(query, 15).map { MetadataResult(it.title, it.artist, it.album) }
+        MetadataProvider.Deezer -> DeezerTrackSearch.search(query, 15, includeUnavailable = true).map { MetadataResult(it.title, it.artist, it.album) }
         MetadataProvider.MusicBrainz -> musicBrainz(query, artistHint, durationMs)
         MetadataProvider.LrcLib -> {
             val failed = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -73,6 +75,23 @@ object MetadataSearch {
         }.distinct()
     }
 
+    /** Grabaciones con duración y año, para el respaldo de Normalizar. */
+    suspend fun musicBrainzRecordings(title: String, artist: String): List<MbRecording> =
+        parseRecordings(musicBrainzBody(musicBrainzQuery("$artist $title", artist)))
+
+    internal fun parseRecordings(json: String): List<MbRecording> {
+        val recordings = JSONObject(json).optJSONArray("recordings") ?: return emptyList()
+        return (0 until recordings.length()).mapNotNull { recordings.optJSONObject(it) }.map { r ->
+            val credits = r.optJSONArray("artist-credit")
+            val artist = (0 until (credits?.length() ?: 0)).mapNotNull { credits?.optJSONObject(it) }
+                .joinToString("") { it.optString("name") + it.optString("joinphrase") }
+            MbRecording(
+                r.optString("title"), artist, r.optJSONArray("releases")?.optJSONObject(0)?.optString("title").orEmpty(),
+                r.optInt("length") / 1000, r.optString("first-release-date").take(4)
+            )
+        }
+    }
+
     /** ~1 consulta por segundo y User-Agent propio; responde 503 si está saturado, de ahí los reintentos. */
     private suspend fun musicBrainz(query: String, artistHint: String, durationMs: Long): List<MetadataResult> {
         val found = musicBrainzRequest(musicBrainzQuery(query, artistHint))
@@ -83,7 +102,9 @@ object MetadataSearch {
         return musicBrainzRequest(byDuration).filter { it.artist.trim().equals(artistHint.trim(), ignoreCase = true) }
     }
 
-    private suspend fun musicBrainzRequest(lucene: String): List<MetadataResult> = withContext(Dispatchers.IO) {
+    private suspend fun musicBrainzRequest(lucene: String): List<MetadataResult> = parseMusicBrainz(musicBrainzBody(lucene))
+
+    private suspend fun musicBrainzBody(lucene: String): String = withContext(Dispatchers.IO) {
         val url = "https://musicbrainz.org/ws/2/recording".toHttpUrl().newBuilder()
             .addQueryParameter("query", lucene)
             .addQueryParameter("limit", "15").addQueryParameter("fmt", "json").build()
@@ -93,7 +114,7 @@ object MetadataSearch {
         for (wait in listOf(0L, 2000L, 5000L)) {
             delay(wait)
             HttpClients.shared.newCall(request).execute().use { r ->
-                if (r.isSuccessful) return@withContext parseMusicBrainz(r.body!!.string())
+                if (r.isSuccessful) return@withContext r.body!!.string()
                 if (r.code != 503) throw IOException("MusicBrainz respondió ${r.code}")
             }
         }
