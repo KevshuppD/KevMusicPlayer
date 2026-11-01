@@ -501,6 +501,9 @@ sequenceDiagram
 ### Reglas de R8 (`app/proguard-rules.pro`)
 - **Nunca usar `-keep class * { ... }`:** con `class *` R8 conserva todas las clases de la app y de las librerías aunque el bloque de miembros no coincida, y el shrinking queda anulado (APK release de 39 MB, con `material-icons-extended` entero). Las clases de Room se conservan con `-keep @androidx.room.Entity class *` (y lo mismo para `Database`/`Dao`); Room, OkHttp y Firebase ya traen sus propias reglas. Con el cambio el APK bajó a 16 MB.
 
+### Al subir un tag
+- **No esperar a que termine la release:** tras empujar el tag, avisar que quedó subido y terminar, sin vigilar la compilación. El dueño la vigila y avisa si pasa algo.
+
 ### Script de Publicación Local
 Ubicado en `/home/kevshupp/Escritorio/publicar_release.sh` (con alias `release` en `~/.bashrc`):
 1. Solicita el mensaje del cambio y el tipo de versión (*patch*, *minor* o *major*).
