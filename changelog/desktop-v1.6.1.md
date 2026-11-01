@@ -1,0 +1,3 @@
+- **ffmpeg se instala solo**
+  - YouTube Music y Discos ya no piden instalar ffmpeg a mano. Si falta, la app lo descarga una sola vez (unos 160–200 MB), sin pedir permisos.
+  - Si ya lo tienes en el sistema, usa ese.

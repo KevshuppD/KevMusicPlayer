@@ -235,6 +235,7 @@ private fun YtRow(track: YtTrack, job: YtJob?, have: Boolean, onDownload: () -> 
 
 private fun stageText(j: YtJob) = when (j.stage) {
     YtStage.Queued -> "En espera"
+    YtStage.Installing -> "Instalando ffmpeg, solo esta vez · ${j.percent} %"
     YtStage.Downloading -> "Descargando · ${j.percent} %"
     YtStage.Tagging -> "Poniendo etiquetas y carátula"
     YtStage.WaitingPhone -> j.message

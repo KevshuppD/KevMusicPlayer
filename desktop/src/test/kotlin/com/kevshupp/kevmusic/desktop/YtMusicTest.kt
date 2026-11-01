@@ -3,6 +3,7 @@ package com.kevshupp.kevmusic.desktop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -69,6 +70,27 @@ class YtMusicTest {
         val cjk = MbRelease("a", "RM", "2015", true, listOf(MbTrack(1, "冗談", 199), MbTrack(2, "Do You", 181)))
         val latin = MbRelease("b", "RM", "2016", false, listOf(MbTrack(1, "Joke", 199), MbTrack(2, "Do You", 181)))
         assertEquals("b", MusicBrainz.chooseRelease(listOf(cjk, latin))!!.id)
+    }
+
+    /** Instala una copia aparte y la usa de verdad: KEV_FFMPEG_E2E=1 ./gradlew test */
+    @Test
+    fun installsFfmpegWhenMissing() {
+        if (System.getenv("KEV_FFMPEG_E2E") != "1") return
+        val dir = kotlin.io.path.createTempDirectory("kevffmpeg").toFile()
+        YtMusic.ffmpegDir = dir
+        YtMusic.ignoreSystemFfmpeg = true
+        try {
+            runBlocking {
+                val t = YtMusic.search("gorillaz feel good inc", 1).first()
+                val audio = YtMusic.download(t) {}
+                val out = YtMusic.tagged(t, audio)
+                println("E2E ffmpeg ${dir.list()?.toList()} ${out.name} ${out.length()}")
+                assertTrue(File(dir, "ffmpeg").canExecute() && File(dir, "ffprobe").canExecute() && out.length() > 0)
+                audio.delete(); out.delete()
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     /** Red real, sin enviar nada al teléfono: KEV_YT_E2E=1 ./gradlew test */

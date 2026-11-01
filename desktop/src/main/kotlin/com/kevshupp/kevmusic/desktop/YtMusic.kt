@@ -51,7 +51,7 @@ data class YtAlbum(val id: String, val title: String, val artist: String, val ki
 
 data class YtArtist(val id: String, val name: String, val songs: List<YtTrack>)
 
-enum class YtStage { Queued, Downloading, Tagging, WaitingPhone, Sending, Done, Failed }
+enum class YtStage { Queued, Installing, Downloading, Tagging, WaitingPhone, Sending, Done, Failed }
 
 data class YtJob(val track: YtTrack, val stage: YtStage, val percent: Int = 0, val message: String = "")
 
@@ -76,12 +76,94 @@ object YtMusic {
     private val _jobs = MutableStateFlow<List<YtJob>>(emptyList())
     val jobs: StateFlow<List<YtJob>> = _jobs
 
-    /** Null si ffmpeg está disponible; yt-dlp lo necesita para el contenedor y nosotros para las etiquetas. */
-    fun missingFfmpeg(): String? = runCatching {
-        val p = ProcessBuilder("ffmpeg", "-version").redirectErrorStream(true).start()
+    private val ffmpegLock = Mutex()
+    internal var ffmpegDir = File(Platform.configDir, "bin")
+    internal var ignoreSystemFfmpeg = false
+    /** Lo que se ejecuta: "ffmpeg" del sistema o la copia propia, tras [ensureFfmpeg]. */
+    private var ffmpeg = "ffmpeg"
+    private var ffmpegChecked = false
+    private val exe = if (Platform.isWindows) ".exe" else ""
+
+    private fun works(command: String) = runCatching {
+        val p = ProcessBuilder(command, "-version").redirectErrorStream(true).start()
         p.inputStream.readAllBytes()
-        if (p.waitFor() == 0) null else "ffmpeg no funciona"
-    }.getOrElse { "Falta ffmpeg en el PC" + if (Platform.isWindows) ": instálalo y añádelo al PATH." else ": sudo apt install ffmpeg" }
+        p.waitFor() == 0
+    }.getOrDefault(false)
+
+    /**
+     * Usa el ffmpeg del sistema si hay; si no, instala una vez la compilación que publica yt-dlp para este uso
+     * (ffmpeg y ffprobe, ~160–200 MB de descarga, verificada con SHA-256) junto a yt-dlp, sin pedir permisos.
+     */
+    internal suspend fun ensureFfmpeg(onPercent: (Int) -> Unit = {}) = ffmpegLock.withLock {
+        if (ffmpegChecked) return@withLock
+        val own = File(ffmpegDir, "ffmpeg$exe")
+        ffmpeg = when {
+            !ignoreSystemFfmpeg && works("ffmpeg") -> "ffmpeg"
+            own.exists() && File(ffmpegDir, "ffprobe$exe").exists() && works(own.path) -> own.path
+            else -> { installFfmpeg(onPercent); own.path }
+        }
+        ffmpegChecked = true
+    }
+
+    private fun installFfmpeg(onPercent: (Int) -> Unit) {
+        ffmpegDir.mkdirs()
+        val asset = if (Platform.isWindows) "ffmpeg-master-latest-win64-gpl.zip" else "ffmpeg-master-latest-linux64-gpl.tar.xz"
+        val base = "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/"
+        val expected = get(base + "checksums.sha256").use { it.body!!.string() }.lineSequence().map { it.trim().split(Regex("\\s+")) }
+            .firstOrNull { it.size == 2 && it[1] == asset }?.get(0) ?: throw IOException("No se encontró ffmpeg para este sistema")
+        val archive = File(ffmpegDir, "$asset.part")
+        val work = File(ffmpegDir, ".ffmpeg_install")
+        try {
+            val md = MessageDigest.getInstance("SHA-256")
+            get(base + asset).use { resp ->
+                val total = resp.body!!.contentLength().coerceAtLeast(1)
+                var done = 0L
+                archive.outputStream().use { out ->
+                    val input = resp.body!!.byteStream()
+                    val buf = ByteArray(256 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        md.update(buf, 0, n)
+                        out.write(buf, 0, n)
+                        done += n
+                        onPercent((done * 100 / total).toInt())
+                    }
+                }
+            }
+            if (md.digest().joinToString("") { "%02x".format(it) } != expected.lowercase()) throw IOException("La descarga de ffmpeg no coincide con su SHA-256")
+            work.deleteRecursively()
+            work.mkdirs()
+            extractFfmpeg(archive, work)
+            for (name in listOf("ffmpeg$exe", "ffprobe$exe")) {
+                val found = work.walkTopDown().firstOrNull { it.isFile && it.name == name } ?: throw IOException("El paquete de ffmpeg no trae $name")
+                found.setExecutable(true, true)
+                val target = File(ffmpegDir, name)
+                target.delete()
+                if (!found.renameTo(target)) throw IOException("No se pudo instalar $name")
+            }
+            if (!works(File(ffmpegDir, "ffmpeg$exe").path)) throw IOException("ffmpeg se instaló, pero no funciona en este sistema")
+        } finally {
+            archive.delete()
+            work.deleteRecursively()
+        }
+    }
+
+    private fun extractFfmpeg(archive: File, into: File) {
+        if (Platform.isWindows) {
+            java.util.zip.ZipInputStream(archive.inputStream().buffered()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    val name = entry.name.substringAfterLast('/')
+                    if (name == "ffmpeg.exe" || name == "ffprobe.exe") File(into, name).outputStream().use { zip.copyTo(it) }
+                }
+            }
+            return
+        }
+        val p = ProcessBuilder("tar", "-xJf", archive.path, "-C", into.path, "--wildcards", "*/bin/ffmpeg", "*/bin/ffprobe").redirectErrorStream(true).start()
+        val log = p.inputStream.bufferedReader().readText()
+        if (p.waitFor() != 0) throw IOException("No se pudo descomprimir ffmpeg: ${log.take(200)}")
+    }
 
     /** Descarga yt-dlp la primera vez (verificando su SHA-256) y lo actualiza cada 3 días como mucho. */
     private suspend fun ensureTool(): File = toolLock.withLock {
@@ -317,7 +399,7 @@ object YtMusic {
             workDir.mkdirs()
             set(id, YtStage.Downloading)
             val track = withDetails(queued)
-            val audio = download(track) { set(id, YtStage.Downloading, it) }
+            val audio = download(track, { set(id, YtStage.Installing, it) }) { set(id, YtStage.Downloading, it) }
             set(id, YtStage.Tagging)
             file = tagged(track, audio)
             audio.delete()
@@ -384,12 +466,12 @@ object YtMusic {
         .replace(Regex("\\p{M}+"), "").lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), "")
 
     /** Pide AAC, el formato que el teléfono etiqueta y reproduce sin recodificar. */
-    internal suspend fun download(track: YtTrack, onPercent: (Int) -> Unit): File {
+    internal suspend fun download(track: YtTrack, onInstalling: (Int) -> Unit = {}, onPercent: (Int) -> Unit): File {
         val bin = ensureTool()
-        missingFfmpeg()?.let { throw IOException(it) }
+        ensureFfmpeg(onInstalling)
         val out = File(workDir.apply { mkdirs() }, "${track.id}.m4a")
         val p = ProcessBuilder(
-            bin.path, "-f", "bestaudio[ext=m4a]/bestaudio", "-x", "--audio-format", "m4a", "--no-playlist", "--no-warnings",
+            bin.path, *(if (ffmpeg == "ffmpeg") emptyArray() else arrayOf("--ffmpeg-location", File(ffmpeg).parent)), "-f", "bestaudio[ext=m4a]/bestaudio", "-x", "--audio-format", "m4a", "--no-playlist", "--no-warnings",
             "--newline", "--progress-template", "download:%(progress._percent_str)s", "--force-overwrites",
             "-o", File(workDir, "${track.id}.%(ext)s").path, track.url.ifBlank { "https://music.youtube.com/watch?v=${track.id}" }
         ).redirectErrorStream(true).start()
@@ -411,7 +493,7 @@ object YtMusic {
         val hasCover = listOf(coverUrl, track.altCover).filter { it.isNotBlank() }.any { runCatching { fetchSquareCover(it, cover) }.getOrDefault(false) }
         val name = safeName("${track.artist} - ${track.title}") + ".m4a"
         val out = File(workDir, name)
-        val args = mutableListOf("ffmpeg", "-y", "-v", "error", "-i", audio.path)
+        val args = mutableListOf(ffmpeg, "-y", "-v", "error", "-i", audio.path)
         if (hasCover) args += listOf("-i", cover.path, "-map", "0:a", "-map", "1:v", "-disposition:v:0", "attached_pic")
         args += listOf("-c", "copy", "-map_metadata", "-1", "-metadata", "title=${track.title}", "-metadata", "artist=${track.artist}")
         val albumName = track.album.ifBlank { album?.optString("title").orEmpty() }
@@ -432,7 +514,7 @@ object YtMusic {
             get(url).use { resp -> raw.outputStream().use { resp.body!!.byteStream().copyTo(it) } }
             // Las miniaturas de YouTube suelen ser 16:9 con la portada cuadrada en el centro
             val p = ProcessBuilder(
-                "ffmpeg", "-y", "-v", "error", "-i", raw.path, "-vf", "crop='min(iw,ih)':'min(iw,ih)'", "-q:v", "2", dest.path
+                ffmpeg, "-y", "-v", "error", "-i", raw.path, "-vf", "crop='min(iw,ih)':'min(iw,ih)'", "-q:v", "2", dest.path
             ).redirectErrorStream(true).start()
             p.inputStream.readAllBytes()
             return p.waitFor() == 0 && dest.length() > 0
