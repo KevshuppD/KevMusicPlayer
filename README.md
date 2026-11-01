@@ -130,6 +130,12 @@ cd desktop
 
 GitHub Actions publica las versiones: los tags `v*` generan el APK, y los tags `desktop-v*`, los paquetes de escritorio.
 
+## ⚖️ Aviso legal
+
+KevMusicPlayer es un reproductor y una herramienta de gestión de música. No aloja, distribuye ni vende contenido, y no está afiliado a Deezer, Telegram, Soulseek, YouTube, SoundCloud, MusicBrainz, LRCLIB ni Google.
+
+Las funciones de descarga son opcionales y se conectan a servicios y redes de terceros, que son quienes ponen el contenido a disposición. Cada usuario es el único responsable de lo que descarga, comparte y reproduce, y de cumplir los derechos de autor, las leyes de su país y las condiciones de esos servicios. El autor no se hace responsable del uso que se le dé a la aplicación. Apoya a los artistas siempre que puedas.
+
 ## 🤝 Contribuir
 
 ¡Las contribuciones son bienvenidas! Abre un issue o envía un Pull Request.
