@@ -28,8 +28,38 @@ data class LrcLibSearchResult(
 )
 
 object LyricsRepository {
-    private val connectionPool = ConnectionPool(5, 5, TimeUnit.MINUTES)
-    
+    // Una conexión guardada mucho rato puede estar muerta sin saberlo (cambio de red, cierre del servidor)
+    private val connectionPool = ConnectionPool(5, 1, TimeUnit.MINUTES)
+
+    /**
+     * LRCLIB responde muchas veces 503 con `Retry-After: 1` cuando está saturado, también en su propia web, y a
+     * veces varias seguidas (medido el 03/11/2026): por eso volver a pulsar funcionaba. Se reintenta esperando lo
+     * que pide; si el último intento falla, queda en el log.
+     */
+    private fun proceedRetrying(chain: okhttp3.Interceptor.Chain, request: Request): okhttp3.Response {
+        val delaysMs = longArrayOf(1000, 1000, 2000, 2000)
+        for (delayMs in delaysMs) {
+            var wait = delayMs
+            try {
+                val response = chain.proceed(request)
+                if (response.code < 500) return response
+                response.header("Retry-After")?.toLongOrNull()?.let { wait = maxOf(wait, (it * 1000).coerceAtMost(5000)) }
+                response.close()
+            } catch (e: java.io.IOException) {
+                if (chain.call().isCanceled()) throw e
+            }
+            Thread.sleep(wait)
+        }
+        return try {
+            chain.proceed(request).also {
+                if (it.code >= 500) com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(KevMusicPlayerApplication.instance, "LyricsSearch", "LRCLIB respondió ${it.code} tras 5 intentos")
+            }
+        } catch (e: java.io.IOException) {
+            com.kevshupp.kevmusicplayer.data.TelemetryLogger.logInfo(KevMusicPlayerApplication.instance, "LyricsSearch", "LRCLIB sin conexión tras 5 intentos: ${e.message}")
+            throw e
+        }
+    }
+
     private val client = OkHttpClient.Builder()
         .connectionPool(connectionPool)
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -42,13 +72,15 @@ object LyricsRepository {
                 // Id público de la app registrada en LRCLIB (no es secreto); uno inválido responde 401. Este cliente también baja carátulas de otros sitios
                 .build()
             if (original.url.host != "lrclib.net") return@addInterceptor chain.proceed(request)
-            val response = chain.proceed(request.newBuilder().header("Lrclib-App-Id", "yfTA27oLM2hOELk1nTMAEqbsEHWUQDPfggeMye1fpCw").build())
-            // Un id rechazado no debe dejar a nadie sin letras: el acceso anónimo sigue permitido
-            if (response.code == 401) {
-                response.close()
-                chain.proceed(request)
-            } else {
-                response
+            val withId = request.newBuilder().header("Lrclib-App-Id", "yfTA27oLM2hOELk1nTMAEqbsEHWUQDPfggeMye1fpCw").build()
+            proceedRetrying(chain, withId).let { response ->
+                // Un id rechazado no debe dejar a nadie sin letras: el acceso anónimo sigue permitido
+                if (response.code == 401) {
+                    response.close()
+                    proceedRetrying(chain, request)
+                } else {
+                    response
+                }
             }
         }
         .build()
