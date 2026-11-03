@@ -158,7 +158,6 @@ fun LibrarySettingsSection(
         listOf(
             "library" to getLocalized("Biblioteca", "Library"),
             "tools" to getLocalized("Herramientas", "Tools"),
-            "downloads" to getLocalized("Descargas", "Downloads"),
             "backup" to getLocalized("Copias", "Backups"),
             "design" to getLocalized("Diseño", "Layout")
         ).forEach { (key, label) ->
@@ -171,20 +170,6 @@ fun LibrarySettingsSection(
         }
     }
 
-    if (libTab == "downloads") {
-    OnDemandSettingsCard(context, getLocalized)
-    Spacer(modifier = Modifier.height(4.dp))
-
-    var showSoulseek by remember { mutableStateOf(false) }
-    SoulseekSettingsCard(context, getLocalized) { showSoulseek = true }
-    if (showSoulseek) {
-        com.kevshupp.kevmusicplayer.ui.screens.dialogs.SoulseekDialog(
-            librarySongs = viewModel.localAudioFiles,
-            onDismiss = { showSoulseek = false }
-        )
-    }
-    Spacer(modifier = Modifier.height(4.dp))
-    }
     if (libTab == "library") {
     Card(
         shape = RoundedCornerShape(24.dp),

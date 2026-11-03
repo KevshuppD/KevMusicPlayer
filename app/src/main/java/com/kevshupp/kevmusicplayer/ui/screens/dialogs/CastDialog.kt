@@ -1,6 +1,11 @@
 package com.kevshupp.kevmusicplayer.ui.screens.dialogs
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -31,10 +36,21 @@ fun CastDialog(queue: () -> Pair<List<AudioFile>, Long>, onStarted: () -> Unit, 
         icon = { Icon(Icons.Rounded.Cast, null) },
         title = { Text(state.device ?: "Transmitir a") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // El diálogo es otra ventana: los botones de volumen le llegan a él y no a MainActivity
+            val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+            LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+            Column(
+                Modifier.focusRequester(focus).focusable().onPreviewKeyEvent { event ->
+                    val up = event.key == androidx.compose.ui.input.key.Key.VolumeUp
+                    if (!up && event.key != androidx.compose.ui.input.key.Key.VolumeDown || !CastController.isCasting) return@onPreviewKeyEvent false
+                    if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown) CastController.adjustVolume(up)
+                    true
+                },
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 when {
-                    !available -> Text("Este teléfono no tiene los servicios de Google que Cast necesita.")
+                    !available -> Text("No se pudo iniciar la búsqueda de dispositivos.")
                     state.connecting -> Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(12.dp))
@@ -42,12 +58,20 @@ fun CastDialog(queue: () -> Pair<List<AudioFile>, Long>, onStarted: () -> Unit, 
                     }
                     state.device != null -> {
                         Text(state.title.ifBlank { "Cargando…" }, fontWeight = FontWeight.SemiBold)
-                        Text("El ecualizador y el crossfade no se aplican al transmitir.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (CastController.supportsLyrics) "El ecualizador y el crossfade no se aplican al transmitir." else "El ecualizador, el crossfade y la letra en pantalla no se aplican al transmitir.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         var volume by remember { mutableStateOf(CastController.volume()) }
+                        var dragging by remember { mutableStateOf(false) }
+                        // Sigue a los botones físicos, al mando de la tele y al valor inicial, que llega por la red
+                        LaunchedEffect(Unit) {
+                            while (true) {
+                                if (!dragging) volume = CastController.volume()
+                                kotlinx.coroutines.delay(200)
+                            }
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Rounded.VolumeUp, "Volumen de la TV")
                             Spacer(Modifier.width(8.dp))
-                            Slider(value = volume, onValueChange = { volume = it; CastController.setVolume(it) })
+                            Slider(value = volume, onValueChange = { dragging = true; volume = it; CastController.setVolume(it) }, onValueChangeFinished = { dragging = false })
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                             IconButton(onClick = CastController::previous) { Icon(Icons.Rounded.SkipPrevious, "Anterior") }
@@ -71,7 +95,11 @@ fun CastDialog(queue: () -> Pair<List<AudioFile>, Long>, onStarted: () -> Unit, 
                         ) {
                             Icon(Icons.Rounded.Tv, null)
                             Spacer(Modifier.width(12.dp))
-                            Text(device.name)
+                            Column {
+                                Text(device.name)
+                                val kind = if (device.dlna != null) "DLNA" else "Chromecast"
+                                Text(if (device.id == CastController.lastDeviceId()) "$kind · Último usado" else kind, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }

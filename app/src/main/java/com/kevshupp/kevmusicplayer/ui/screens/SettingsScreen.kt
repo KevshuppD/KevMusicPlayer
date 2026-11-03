@@ -172,6 +172,7 @@ fun SettingsScreen(
         listOf(
             Triple("general", getLocalized("Apariencia y Tema", "Appearance & Theme"), Icons.Rounded.Palette),
             Triple("library", getLocalized("Biblioteca y Música", "Library & Music"), Icons.Rounded.LibraryMusic),
+            Triple("addons", getLocalized("Complementos", "Add-ons"), Icons.Rounded.Extension),
             Triple("audio", getLocalized("Audio y Sonido", "Audio & Sound"), Icons.Rounded.Equalizer),
             Triple("performance", getLocalized("Rendimiento y Memoria", "Performance & Memory"), Icons.Rounded.Speed),
             Triple("system", getLocalized("Sistema y Permisos", "System & Permissions"), Icons.Rounded.Tune),
@@ -538,6 +539,12 @@ fun SettingsScreen(
                 icon = Icons.Rounded.Save
             ),
             SettingSearchItem(
+                title = getLocalized("Complementos", "Add-ons"),
+                description = getLocalized("Telegram, bajo demanda, Soulseek, control desde el PC, Chromecast y DLNA", "Telegram, on demand, Soulseek, PC control, Chromecast and DLNA"),
+                categoryKey = "addons",
+                icon = Icons.Rounded.Extension
+            ),
+            SettingSearchItem(
                 title = getLocalized("Acerca de KevMusic Player", "About KevMusic Player"),
                 description = getLocalized("Versión, novedades, licencias y código abierto en GitHub", "Version, changelog, licenses, and GitHub open source"),
                 categoryKey = "about",
@@ -815,6 +822,14 @@ fun SettingsScreen(
                             onClick = { activeCategory = "library" }
                         )
 
+                        SettingsCategoryHubCard(
+                            icon = Icons.Rounded.Extension,
+                            iconColor = Color(0xFF69F0AE),
+                            title = getLocalized("Complementos", "Add-ons"),
+                            subtitle = getLocalized("Telegram, Soulseek, control desde el PC y TV", "Telegram, Soulseek, PC control and TV"),
+                            onClick = { activeCategory = "addons" }
+                        )
+
                         // --- 3. AUDIO Y EFECTOS ---
                         SettingsCategoryHubCard(
                             icon = Icons.Rounded.Equalizer,
@@ -1008,6 +1023,9 @@ fun SettingsScreen(
                                     onFindMissingCovers = { showMissingCoverFinder = true },
                                     onNormalizeLibrary = { showLibraryNormalizer = true }
                                 )
+                            }
+                            "addons" -> {
+                                AddonsSettingsSection(viewModel = viewModel, context = context, getLocalized = getLocalized)
                             }
                             "cloud" -> {
                                 CloudSyncCard(

@@ -57,9 +57,6 @@ fun SystemSettingsSection(
     settingsPrefs: android.content.SharedPreferences,
     context: android.content.Context,
 ) {
-    RemoteControlSettingsCard(context, getLocalized)
-    Spacer(modifier = Modifier.height(4.dp))
-
     // 1. Diagnóstico y Servicios (Diagnostics & Services Card)
     Column {
         Text(

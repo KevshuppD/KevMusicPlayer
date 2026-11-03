@@ -38,7 +38,7 @@ class CastMediaServer(private val context: Context) : NanoHTTPD(0) {
         val song = runBlocking(Dispatchers.IO) { AppDatabase.getDatabase(context).audioDao().getAudioFileById(id) } ?: return notFound()
         return try {
             when (parts[1]) {
-                "song" -> serveFile(File(getPhysicalPath(context, song.id, song.uriString) ?: return notFound()), session.headers["range"])
+                "song" -> serveFile(File(getPhysicalPath(context, song.id, song.uriString) ?: return notFound()), session.headers["range"], session.method)
                 "art" -> serveArt(song.uriString)
                 else -> notFound()
             }
@@ -47,7 +47,7 @@ class CastMediaServer(private val context: Context) : NanoHTTPD(0) {
         }
     }
 
-    private fun serveFile(file: File, range: String?): Response {
+    private fun serveFile(file: File, range: String?, method: Method): Response {
         if (!file.isFile) return notFound()
         val mime = mimeOf(file.name) ?: "application/octet-stream"
         val length = file.length()
@@ -56,7 +56,11 @@ class CastMediaServer(private val context: Context) : NanoHTTPD(0) {
         input.channel.position(start)
         val size = end - start + 1
         val status = if (range != null) Response.Status.PARTIAL_CONTENT else Response.Status.OK
-        return newFixedLengthResponse(status, mime, input, size).apply {
+        // Las teles DLNA suelen preguntar con HEAD antes de pedir el audio
+        val body = if (method == Method.HEAD) ByteArrayInputStream(ByteArray(0)).also { input.close() } else input
+        return newFixedLengthResponse(status, mime, body, size).apply {
+            addHeader("transferMode.dlna.org", "Streaming")
+            addHeader("contentFeatures.dlna.org", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
             addHeader("Accept-Ranges", "bytes")
             addHeader("Access-Control-Allow-Origin", "*")
             if (range != null) addHeader("Content-Range", "bytes $start-$end/$length")

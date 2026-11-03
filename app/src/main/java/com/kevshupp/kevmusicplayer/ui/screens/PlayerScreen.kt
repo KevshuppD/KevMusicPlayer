@@ -187,6 +187,8 @@ fun PlayerScreen(
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var showCastDialog by remember { mutableStateOf(false) }
     val castState by com.kevshupp.kevmusicplayer.data.cast.CastController.state.collectAsState()
+    val castAppContext = androidx.compose.ui.platform.LocalContext.current
+    val castEnabled by remember { com.kevshupp.kevmusicplayer.data.cast.CastController.enabled(castAppContext) }.collectAsState()
     var sleepTimerMinutes by remember { mutableIntStateOf(0) }
     var showSaveQueueDialog by remember { mutableStateOf(false) }
     var showAddToPlaylistDialog by remember { mutableStateOf(false) }
@@ -1230,7 +1232,7 @@ fun PlayerScreen(
                      )
                  }
 
-                 IconButton(onClick = { showCastDialog = true }) {
+                 if (castEnabled) IconButton(onClick = { showCastDialog = true }) {
                      Icon(
                          imageVector = if (castState.device != null) Icons.Rounded.CastConnected else Icons.Rounded.Cast,
                          contentDescription = "Transmitir",

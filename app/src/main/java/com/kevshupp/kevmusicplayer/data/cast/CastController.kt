@@ -21,14 +21,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-/** Primera versión de Cast: envía la cola al Chromecast, aparte del reproductor local, que queda en pausa. */
+/** Transmite la cola a un Chromecast o a un dispositivo DLNA (ver [DlnaSession]); el reproductor local queda en pausa. */
 object CastController {
     data class CastState(val device: String? = null, val connecting: Boolean = false, val title: String = "", val playing: Boolean = false, val error: String? = null)
-    data class Device(val id: String, val name: String, val route: MediaRouter.RouteInfo)
+    data class Device(val id: String, val name: String, val route: MediaRouter.RouteInfo? = null, val dlna: DlnaRenderer? = null)
 
     data class VolumeChange(val level: Float, val at: Long)
 
     private const val MAX_QUEUE = 50
+    private const val CONNECT_TIMEOUT_MS = 20_000L
 
     /** Último cambio con los botones físicos, para mostrarlo en pantalla. */
     private val _volumeChange = MutableStateFlow<VolumeChange?>(null)
@@ -56,9 +57,64 @@ object CastController {
         override fun onRouteChanged(router: MediaRouter, route: MediaRouter.RouteInfo) = refreshDevices(router)
     }
 
+    private var castDevices: List<Device> = emptyList()
+    private var dlnaDevices: List<Device> = emptyList()
+    private var dlnaDiscovery: kotlinx.coroutines.Job? = null
+    private var dlna: DlnaSession? = null
+    private var connectTimeout: kotlinx.coroutines.Job? = null
+
     private fun refreshDevices(router: MediaRouter) {
-        _devices.value = router.routes.filter { !it.isDefault && it.isEnabled && it.matchesSelector(selector) }
+        castDevices = router.routes.filter { !it.isDefault && it.isEnabled && it.matchesSelector(selector) }
             .map { Device(it.id, it.name, it) }
+        publishDevices()
+    }
+
+    private fun lastPrefs() = app.getSharedPreferences("cast_prefs", Context.MODE_PRIVATE)
+
+    /** El último dispositivo usado (id de la ruta o UDN de DLNA), que la lista muestra primero. */
+    fun lastDeviceId(): String? = if (::app.isInitialized) lastPrefs().getString("last_device", null) else null
+
+    private fun publishDevices() {
+        val last = lastDeviceId()
+        _devices.value = (castDevices + dlnaDevices).sortedByDescending { it.id == last }
+    }
+
+    private var enabledFlow: MutableStateFlow<Boolean>? = null
+
+    /** Interruptor de Ajustes › Complementos; apagado, el reproductor no muestra el botón. */
+    fun enabled(context: Context): StateFlow<Boolean> = enabledFlow ?: MutableStateFlow(
+        context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE).getBoolean("cast_enabled", true)
+    ).also { enabledFlow = it }
+
+    fun setEnabled(context: Context, value: Boolean) {
+        context.getSharedPreferences("settings_prefs", Context.MODE_PRIVATE).edit().putBoolean("cast_enabled", value).apply()
+        enabled(context)
+        enabledFlow?.value = value
+        if (!value && isCasting) disconnect()
+    }
+
+    /** Busca mientras el diálogo está abierto. El bloqueo hace que Android no descarte el multicast de las respuestas. */
+    private fun startDlnaDiscovery() {
+        if (dlnaDiscovery?.isActive == true) return
+        dlnaDiscovery = scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val wifi = app.getSystemService(android.net.wifi.WifiManager::class.java)
+            val lock = runCatching { wifi?.createMulticastLock("kevmusic-dlna")?.apply { acquire() } }.getOrNull()
+            try {
+                while (true) {
+                    val found = runCatching { DlnaClient.discover() }.getOrElse {
+                        TelemetryLogger.logInfo(app, "Cast", "Búsqueda DLNA falló: ${it.message}")
+                        emptyList()
+                    }
+                    if (found.isNotEmpty() || dlnaDevices.isNotEmpty()) {
+                        dlnaDevices = found.map { Device(it.id, it.name, dlna = it) }
+                        publishDevices()
+                    }
+                    kotlinx.coroutines.delay(4000)
+                }
+            } finally {
+                runCatching { lock?.release() }
+            }
+        }
     }
 
     private val clientCallback = object : RemoteMediaClient.Callback() {
@@ -72,9 +128,10 @@ object CastController {
     private var followingMediaId: String? = null
 
     val isCasting get() = _state.value.device != null
+    val supportsLyrics get() = dlna == null && CastOptionsProvider.CUSTOM_RECEIVER_ID.isNotBlank()
 
     /** Posición real mientras se transmite: la del teléfono está parada. */
-    fun remotePosition(): Long? = if (isCasting) client()?.approximateStreamPosition else null
+    fun remotePosition(): Long? = if (!isCasting) null else dlna?.positionMs ?: client()?.approximateStreamPosition
 
     /** Para el botón de reproducir: el teléfono está en pausa, así que `player.pause()` no llegaría a la TV. */
     fun interceptToggle(): Boolean {
@@ -84,9 +141,10 @@ object CastController {
     }
 
     /** El volumen del Chromecast, de 0 a 1. */
-    fun volume(): Float = runCatching { CastContext.getSharedInstance(app).sessionManager.currentCastSession?.volume?.toFloat() }.getOrNull() ?: 0f
+    fun volume(): Float = dlna?.volume ?: runCatching { CastContext.getSharedInstance(app).sessionManager.currentCastSession?.volume?.toFloat() }.getOrNull() ?: 0f
 
     fun setVolume(value: Float) {
+        dlna?.let { return it.changeVolume(value) }
         runCatching { CastContext.getSharedInstance(app).sessionManager.currentCastSession?.volume = value.toDouble().coerceIn(0.0, 1.0) }
     }
 
@@ -95,7 +153,9 @@ object CastController {
         if (!isCasting) return false
         // La sesión tarda en confirmar el valor: con pulsaciones seguidas se parte del último pedido
         val from = _volumeChange.value?.takeIf { System.currentTimeMillis() - it.at < 2000 }?.level ?: volume()
-        val level = (from + if (up) 0.05f else -0.05f).coerceIn(0f, 1f)
+        // En DLNA la escala real es 0-100 y las teles ya suenan fuerte en 20: un 5 % por pulsación es demasiado
+        val step = if (dlna != null) 0.02f else 0.05f
+        val level = (from + if (up) step else -step).coerceIn(0f, 1f)
         setVolume(level)
         _volumeChange.value = VolumeChange(level, System.currentTimeMillis())
         return true
@@ -151,6 +211,7 @@ object CastController {
             ) {
                 if (!isCasting || reason != androidx.media3.common.Player.DISCONTINUITY_REASON_SEEK) return
                 if (oldPosition.mediaItemIndex != newPosition.mediaItemIndex) return
+                dlna?.let { return it.seek(newPosition.positionMs) }
                 client()?.seek(com.google.android.gms.cast.MediaSeekOptions.Builder().setPosition(newPosition.positionMs).build())
             }
         })
@@ -170,6 +231,11 @@ object CastController {
     private fun followRemote(c: RemoteMediaClient) {
         val player = localPlayer ?: return
         val id = c.mediaInfo?.contentId?.substringAfterLast('/')?.substringBefore('.') ?: return
+        followSong(id)
+    }
+
+    private fun followSong(id: String) {
+        val player = localPlayer ?: return
         if (player.currentMediaItem?.mediaId == id) return
         val index = (0 until player.mediaItemCount).firstOrNull { player.getMediaItemAt(it).mediaId == id } ?: return
         followingMediaId = id
@@ -211,6 +277,7 @@ object CastController {
     }
 
     private fun onConnected(session: CastSession) {
+        connectTimeout?.cancel()
         _state.value = _state.value.copy(device = session.castDevice?.friendlyName ?: "Chromecast", connecting = false, error = null)
         localPlayer?.pause()
         session.remoteMediaClient?.registerCallback(clientCallback)
@@ -235,34 +302,73 @@ object CastController {
             refreshDevices(router)
             true
         } catch (e: Exception) {
+            // Sin Google Play Services, DLNA sigue funcionando
             TelemetryLogger.logError(app, "Cast", "No se pudo iniciar Cast", e)
-            false
-        }
+            true
+        }.also { startDlnaDiscovery() }
     }
 
     fun stopDiscovery() {
         runCatching { MediaRouter.getInstance(app).removeCallback(routeCallback) }
+        dlnaDiscovery?.cancel()
     }
 
     fun castTo(device: Device, songs: List<AudioFile>, positionMs: Long) {
+        lastPrefs().edit().putString("last_device", device.id).apply()
+        publishDevices()
+        device.dlna?.let { return castToDlna(it, songs, positionMs) }
         pending = songs to positionMs
         _state.value = CastState(connecting = true)
         val session = runCatching { CastContext.getSharedInstance(app).sessionManager.currentCastSession }.getOrNull()
-        if (session?.isConnected == true) onConnected(session) else device.route.select()
+        if (session?.isConnected == true) return onConnected(session)
+        device.route?.select()
+        // Google Cast no siempre avisa si el dispositivo no responde: sin esto, "Conectando…" no termina nunca
+        connectTimeout?.cancel()
+        connectTimeout = scope.launch {
+            kotlinx.coroutines.delay(CONNECT_TIMEOUT_MS)
+            if (_state.value.connecting) {
+                TelemetryLogger.logInfo(app, "Cast", "Sin respuesta de ${device.name}")
+                runCatching { CastContext.getSharedInstance(app).sessionManager.endCurrentSession(true) }
+                runCatching { MediaRouter.getInstance(app).let { it.unselect(MediaRouter.UNSELECT_REASON_STOPPED) } }
+                fail("${device.name} no respondió. Si es una tele sin Chromecast, prueba con su entrada DLNA.")
+            }
+        }
+    }
+
+    private fun castToDlna(renderer: DlnaRenderer, songs: List<AudioFile>, positionMs: Long) {
+        dlna?.stop {}
+        val base = ensureServer() ?: return fail("No hay red local: conecta el teléfono al mismo Wi-Fi que el dispositivo")
+        val session = DlnaSession(
+            app, renderer, base,
+            onStatus = { title, playing, error ->
+                _state.value = _state.value.copy(title = title, playing = playing, error = error)
+            },
+            onSongChanged = { id -> scope.launch { followSong(id.toString()) } },
+            onLost = { message -> scope.launch { fail(message) } }
+        )
+        dlna = session
+        _state.value = CastState(device = renderer.name)
+        localPlayer?.pause()
+        session.load(songs.filter { getPhysicalPath(app, it.id, it.uriString)?.let(CastMediaServer::mimeOf) != null }, positionMs)
+    }
+
+    private fun ensureServer(): String? {
+        val media = server ?: CastMediaServer(app).also {
+            it.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, true)
+            server = it
+        }
+        return media.baseUrl()
     }
 
     /** Vuelve a enviar la cola con la sesión ya abierta (al cambiar de canción en el teléfono). */
     fun send(songs: List<AudioFile>, positionMs: Long) {
+        dlna?.let { return it.load(songs, positionMs) }
         val session = runCatching { CastContext.getSharedInstance(app).sessionManager.currentCastSession }.getOrNull() ?: return
         load(session, songs, positionMs)
     }
 
     private fun load(session: CastSession, songs: List<AudioFile>, positionMs: Long) {
-        val media = server ?: CastMediaServer(app).also {
-            it.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, true)
-            server = it
-        }
-        val base = media.baseUrl() ?: return fail("No hay red local: conecta el teléfono al mismo Wi-Fi que el dispositivo")
+        val base = ensureServer() ?: return fail("No hay red local: conecta el teléfono al mismo Wi-Fi que el dispositivo")
         val current = songs.firstOrNull()
         val items = songs.take(MAX_QUEUE).mapNotNull { queueItem(it, base) }.toTypedArray()
         if (items.isEmpty()) return fail("El Chromecast no admite el formato de esta canción")
@@ -294,21 +400,25 @@ object CastController {
         return MediaQueueItem.Builder(info).setAutoplay(true).setPreloadTime(15.0).build()
     }
 
-    fun togglePlay() { client()?.togglePlayback() }
-    fun next() { client()?.queueNext(null) }
-    fun previous() { client()?.queuePrev(null) }
+    fun togglePlay() { dlna?.let { return it.togglePlay() }; client()?.togglePlayback() }
+    fun next() { dlna?.let { return it.next() }; client()?.queueNext(null) }
+    fun previous() { dlna?.let { return it.previous() }; client()?.queuePrev(null) }
 
     fun disconnect() {
-        runCatching { CastContext.getSharedInstance(app).sessionManager.endCurrentSession(true) }
+        if (dlna == null) runCatching { CastContext.getSharedInstance(app).sessionManager.endCurrentSession(true) }
         cleanUp()
     }
 
     private fun cleanUp() {
+        connectTimeout?.cancel()
         runCatching { client()?.unregisterCallback(clientCallback) }
         pending = null
         lyricsSentFor = null
-        server?.stop()
+        val media = server
         server = null
+        // El servidor sigue hasta que el dispositivo DLNA haya parado
+        dlna?.stop { media?.stop() } ?: media?.stop()
+        dlna = null
         _state.value = CastState()
     }
 }
