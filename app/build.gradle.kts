@@ -19,8 +19,8 @@ android {
         applicationId = "com.kevshupp.kevmusicplayer"
         minSdk = 33
         targetSdk = 37
-        versionCode = 89
-        versionName = "1.17.1"
+        versionCode = 90
+        versionName = "1.18.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -131,6 +131,7 @@ dependencies {
     implementation(libs.androidx.media3.session)
     implementation("com.google.android.gms:play-services-cast-framework:22.1.0")
     implementation("androidx.mediarouter:mediarouter:1.7.0")
+    implementation("com.google.android.gms:play-services-nearby:19.3.0")
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.compose.adaptive)
     implementation(libs.androidx.compose.adaptive.navigation3)

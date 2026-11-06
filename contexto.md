@@ -46,3 +46,8 @@ Punto de entrada de la documentación del proyecto. Lo común a todo el reposito
 ## 4. Publicación (reglas comunes)
 - **No esperar a que termine la release:** tras empujar el tag, avisar que quedó subido y terminar, sin vigilar la compilación. El dueño la vigila y avisa si pasa algo.
 - **Límite de la API de GitHub:** sin sesión, `api.github.com` permite 60 consultas por hora **por IP pública**, y el PC y el teléfono comparten la del router. No vigilar las compilaciones consultando la API en bucle: el 23/10/2026 se agotó y "Buscar actualizaciones" del teléfono (`AppUpdater.checkUpdate()`, que con cualquier respuesta distinta de 200 devuelve `null`) decía que no había versión nueva durante 15 min. Para comprobar una release, una o dos consultas espaciadas, o sin la API: `git ls-remote --tags origin`, la redirección de `github.com/<repo>/releases/latest` o `github.com/<repo>/releases.atom`.
+
+---
+
+## 5. Pendientes
+- **Escuchar juntos: calibrar con el micrófono (app, `data/together/TogetherController.kt`).** En el modo juntos el reloj ya queda a ~5–20 ms; lo que falta es el retraso de salida de audio de cada teléfono (altavoz 20–80 ms, Bluetooth +150–300 ms), que hoy se compensa a mano con "Ajuste fino". Idea: botón "Calibrar" con ambos teléfonos juntos; cada uno emite un pitido corto en un instante acordado por el reloj común, el micrófono de uno graba ambos y la distancia entre pitidos se guarda en `settings_prefs/together_offset_ms`. Meta: ±10–20 ms. Necesita permiso de micrófono (ya lo usa el visualizador).

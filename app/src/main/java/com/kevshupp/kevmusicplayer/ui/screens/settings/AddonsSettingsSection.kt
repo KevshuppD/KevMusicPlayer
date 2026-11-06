@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cast
+import androidx.compose.material.icons.rounded.Groups
+import com.kevshupp.kevmusicplayer.data.together.TogetherController
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -33,7 +35,7 @@ import com.kevshupp.kevmusicplayer.data.cast.CastController
 import com.kevshupp.kevmusicplayer.playback.MediaBrowserViewModel
 import com.kevshupp.kevmusicplayer.ui.screens.dialogs.SoulseekDialog
 
-/** Funciones opcionales que se pueden apagar: Telegram y bajo demanda, Soulseek, control desde el PC y transmitir a la TV. */
+/** Funciones opcionales que se pueden apagar: Telegram y bajo demanda, Soulseek, control desde el PC, transmitir a la TV y escuchar juntos. */
 @Composable
 fun AddonsSettingsSection(
     viewModel: MediaBrowserViewModel,
@@ -71,6 +73,29 @@ fun AddonsSettingsSection(
                 )
             }
             Switch(checked = castEnabled, onCheckedChange = { CastController.setEnabled(context, it) })
+        }
+    }
+    Spacer(modifier = Modifier.height(4.dp))
+
+    val togetherEnabled by remember { TogetherController.enabled(context) }.collectAsState()
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = settingsCardContainerColor()),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Groups, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(getLocalized("Escuchar juntos", "Listen together"), fontWeight = FontWeight.Bold, color = settingsTextColor())
+                Text(
+                    getLocalized("Dos teléfonos con la misma música: juntos por Bluetooth o a distancia con un código. Apagado, se quita el botón del reproductor",
+                        "Two phones, same music: together via Bluetooth or remotely with a code. When off, the player button is removed"),
+                    fontSize = 12.sp,
+                    color = settingsTextMutedColor()
+                )
+            }
+            Switch(checked = togetherEnabled, onCheckedChange = { TogetherController.setEnabled(context, it) })
         }
     }
 }

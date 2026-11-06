@@ -186,9 +186,12 @@ fun PlayerScreen(
     var showTagEditorDialog by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var showCastDialog by remember { mutableStateOf(false) }
+    var showTogetherDialog by remember { mutableStateOf(false) }
+    val togetherState by com.kevshupp.kevmusicplayer.data.together.TogetherController.state.collectAsState()
     val castState by com.kevshupp.kevmusicplayer.data.cast.CastController.state.collectAsState()
     val castAppContext = androidx.compose.ui.platform.LocalContext.current
     val castEnabled by remember { com.kevshupp.kevmusicplayer.data.cast.CastController.enabled(castAppContext) }.collectAsState()
+    val togetherEnabled by remember { com.kevshupp.kevmusicplayer.data.together.TogetherController.enabled(castAppContext) }.collectAsState()
     var sleepTimerMinutes by remember { mutableIntStateOf(0) }
     var showSaveQueueDialog by remember { mutableStateOf(false) }
     var showAddToPlaylistDialog by remember { mutableStateOf(false) }
@@ -1176,6 +1179,10 @@ fun PlayerScreen(
 
              Spacer(modifier = Modifier.height(18.dp))
 
+             if (showTogetherDialog) {
+                 com.kevshupp.kevmusicplayer.ui.screens.dialogs.TogetherDialog(onDismiss = { showTogetherDialog = false })
+             }
+
              if (showCastDialog) {
                  com.kevshupp.kevmusicplayer.ui.screens.dialogs.CastDialog(
                      queue = {
@@ -1237,6 +1244,15 @@ fun PlayerScreen(
                          imageVector = if (castState.device != null) Icons.Rounded.CastConnected else Icons.Rounded.Cast,
                          contentDescription = "Transmitir",
                          tint = if (castState.device != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                         modifier = Modifier.size(24.dp)
+                     )
+                 }
+
+                 if (togetherEnabled || togetherState.active) IconButton(onClick = { showTogetherDialog = true }) {
+                     Icon(
+                         imageVector = Icons.Rounded.Groups,
+                         contentDescription = "Escuchar juntos",
+                         tint = if (togetherState.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                          modifier = Modifier.size(24.dp)
                      )
                  }

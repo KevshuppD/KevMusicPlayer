@@ -333,6 +333,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                 }
                 
                 browser.value = connectedBrowser
+                com.kevshupp.kevmusicplayer.data.together.TogetherController.attach(getApplication(), connectedBrowser, togetherLibrary)
                 if (playCountJob == null) {
                     // El servicio decide qué cuenta como reproducción; aquí solo se refleja
                     playCountJob = viewModelScope.launch {
@@ -1937,7 +1938,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     // Queue system
     val queueManager = com.kevshupp.kevmusicplayer.playback.managers.QueueManager(browser, localAudioFiles) { savePlaybackState() }
 
-    fun addToQueue(file: AudioFile) = queueManager.addToQueue(file)
+    /** En Escuchar juntos como invitado, la cola es la del anfitrión: la canción se le envía a él. */
+    fun addToQueue(file: AudioFile) {
+        if (com.kevshupp.kevmusicplayer.data.together.TogetherController.isGuest) com.kevshupp.kevmusicplayer.data.together.TogetherController.requestQueue(file, next = false) else queueManager.addToQueue(file)
+    }
 
     /** La canción local si ya se descargó a la biblioteca; si no, la remota. */
     private fun onDemandFile(track: com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack): AudioFile {
@@ -1947,6 +1951,21 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /** Modo bajo demanda: reproduce ya una canción de Deezer (la pide al bot si no está descargada). */
+    /** Lo que "Escuchar juntos" usa de la biblioteca para seguir al otro teléfono. */
+    private val togetherLibrary = object : com.kevshupp.kevmusicplayer.data.together.TogetherController.Library {
+        override fun fileForMediaId(mediaId: String): AudioFile? = audioFileMap[mediaId]
+        override fun findLocal(title: String, artist: String, durationMs: Long): AudioFile? =
+            localAudioFiles.firstOrNull { com.kevshupp.kevmusicplayer.data.SongIdentity.sameSong(title, artist, durationMs, it.title, it.artist, it.duration) }
+        override fun playSong(file: AudioFile) = playFile(file, listOf(file))
+        override fun playOnDemand(track: com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack) = this@MediaBrowserViewModel.playOnDemand(track)
+        // Directo al gestor: las versiones públicas desvían al anfitrión cuando somos invitados
+        override fun queueSong(file: AudioFile, next: Boolean) = if (next) queueManager.playNext(file) else queueManager.addToQueue(file)
+        override fun queueOnDemand(track: com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack, next: Boolean) {
+            val file = onDemandFile(track)
+            if (next) queueManager.playNext(file) else queueManager.addToQueue(file)
+        }
+    }
+
     fun playOnDemand(track: com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack) {
         val b = browser.value ?: return
         val file = onDemandFile(track)
@@ -1966,7 +1985,9 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
         val file = onDemandFile(track)
         if (next) queueManager.playNext(file) else queueManager.addToQueue(file)
     }
-    fun playNext(file: AudioFile) = queueManager.playNext(file)
+    fun playNext(file: AudioFile) {
+        if (com.kevshupp.kevmusicplayer.data.together.TogetherController.isGuest) com.kevshupp.kevmusicplayer.data.together.TogetherController.requestQueue(file, next = true) else queueManager.playNext(file)
+    }
     fun getPlayerQueue(): List<AudioFile> = queueManager.getPlayerQueue()
     fun removeFromQueue(index: Int) = queueManager.removeFromQueue(index)
     fun clearQueue() = queueManager.clearQueue()
