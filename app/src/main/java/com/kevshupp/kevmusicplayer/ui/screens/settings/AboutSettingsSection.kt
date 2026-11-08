@@ -286,91 +286,36 @@ fun AboutSettingsSection(
                         if (!isCheckingUpdates) {
                             scope.launch {
                                 isCheckingUpdates = true
-                                withContext(Dispatchers.IO) {
-                                    try {
-                                        val client = com.kevshupp.kevmusicplayer.data.HttpClients.shared
-                                        val request = okhttp3.Request.Builder()
-                                            .url("https://api.github.com/repos/KevshuppD/KevMusicPlayer/releases/latest")
-                                            .header("User-Agent", "KevMusicPlayer")
-                                            .build()
-                                        client.newCall(request).execute().use { response ->
-                                            val body = response.body?.string() ?: ""
-                                            val json = org.json.JSONObject(body)
-                                            val latestTag = json.optString("tag_name", "1.0")
-                                            val htmlUrl = json.optString("html_url", "https://github.com/KevshuppD/KevMusicPlayer")
-                                            
-                                            val assets = json.optJSONArray("assets")
-                                            var apkUrl: String? = null
-                                            if (assets != null) {
-                                                for (i in 0 until assets.length()) {
-                                                    val asset = assets.optJSONObject(i)
-                                                    if (asset != null) {
-                                                        val name = asset.optString("name", "")
-                                                        if (name.endsWith(".apk")) {
-                                                            val browserUrl = asset.optString("browser_download_url")
-                                                            if (browserUrl.isNotEmpty()) {
-                                                                apkUrl = browserUrl
-                                                                break
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            val downloadUrl = apkUrl ?: htmlUrl
-
-                                            withContext(Dispatchers.Main) {
-                                                val cleanLatest = latestTag.replace(Regex("[^0-9.]"), "")
-                                                val cleanCurrent = versionName.replace(Regex("[^0-9.]"), "")
-                                                val latestParts = cleanLatest.split(".")
-                                                val currentParts = cleanCurrent.split(".")
-                                                var isNewer = false
-                                                for (i in 0 until minOf(latestParts.size, currentParts.size)) {
-                                                    val l = latestParts[i].toIntOrNull() ?: 0
-                                                    val c = currentParts[i].toIntOrNull() ?: 0
-                                                    if (l > c) {
-                                                        isNewer = true
-                                                        break
-                                                    } else if (l < c) {
-                                                        break
-                                                    }
-                                                }
-                                                if (!isNewer && latestParts.size > currentParts.size) {
-                                                    isNewer = true
-                                                }
-
-                                                if (isNewer) {
-                                                    updateDialogTitle = getLocalized("¡Nueva versión disponible!", "Update Available!")
-                                                    updateDialogMessage = getLocalized(
-                                                        "Una versión más reciente (${latestTag}) está disponible en GitHub. ¿Deseas descargarla?",
-                                                        "A newer version (${latestTag}) is available on GitHub. Do you want to download it?"
-                                                    )
-                                                    updateDownloadUrl = downloadUrl
-                                                } else {
-                                                    updateDialogTitle = getLocalized("Aplicación al Día", "App Up to Date")
-                                                    updateDialogMessage = getLocalized(
-                                                        "¡Felicidades! Ya estás usando la versión más reciente (v$versionName).",
-                                                        "Congratulations! You are already running the newest version (v$versionName)."
-                                                    )
-                                                    updateDownloadUrl = null
-                                                }
-                                                showUpdateDialog = true
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                        withContext(Dispatchers.Main) {
-                                            updateDialogTitle = getLocalized("Buscar Actualizaciones", "Check for Updates")
-                                            updateDialogMessage = getLocalized(
-                                                "No se pudo conectar a GitHub Releases. Si es la primera versión, estás al día (v$versionName).",
-                                                "Could not connect to GitHub Releases. If this is the initial version, you are up to date (v$versionName)."
-                                            )
-                                            updateDownloadUrl = null
-                                            showUpdateDialog = true
-                                        }
-                                    } finally {
-                                        isCheckingUpdates = false
+                                // Misma comprobación que al abrir (API y, si GitHub limita las consultas, el feed de releases)
+                                val latest = com.kevshupp.kevmusicplayer.data.AppUpdater.latestRelease(context)
+                                isCheckingUpdates = false
+                                when {
+                                    latest == null -> {
+                                        updateDialogTitle = getLocalized("Buscar Actualizaciones", "Check for Updates")
+                                        updateDialogMessage = getLocalized(
+                                            "No se pudo comprobar en GitHub. Revisa la conexión e inténtalo de nuevo.",
+                                            "Could not check GitHub. Check your connection and try again."
+                                        )
+                                        updateDownloadUrl = null
+                                    }
+                                    com.kevshupp.kevmusicplayer.data.AppUpdater.isNewerVersion(versionName, latest.version) -> {
+                                        updateDialogTitle = getLocalized("¡Nueva versión disponible!", "Update Available!")
+                                        updateDialogMessage = getLocalized(
+                                            "Una versión más reciente (${latest.version}) está disponible en GitHub. ¿Deseas descargarla?",
+                                            "A newer version (${latest.version}) is available on GitHub. Do you want to download it?"
+                                        )
+                                        updateDownloadUrl = latest.downloadUrl
+                                    }
+                                    else -> {
+                                        updateDialogTitle = getLocalized("Aplicación al Día", "App Up to Date")
+                                        updateDialogMessage = getLocalized(
+                                            "¡Felicidades! Ya estás usando la versión más reciente (v$versionName).",
+                                            "Congratulations! You are already running the newest version (v$versionName)."
+                                        )
+                                        updateDownloadUrl = null
                                     }
                                 }
+                                showUpdateDialog = true
                             }
                         }
                     },

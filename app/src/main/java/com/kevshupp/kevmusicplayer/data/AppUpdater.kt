@@ -76,54 +76,71 @@ object AppUpdater {
         return false
     }
 
-    suspend fun checkUpdate(context: Context): UpdateInfo? {
-        return withContext(Dispatchers.IO) {
-            try {
-                val url = URL("https://api.github.com/repos/KevshuppD/KevMusicPlayer/releases/latest")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.connectTimeout = 8000
-                conn.readTimeout = 8000
-                conn.requestMethod = "GET"
-                conn.setRequestProperty("Accept", "application/vnd.github+json")
-                conn.setRequestProperty("User-Agent", "KevMusicPlayer-Updater")
-                
-                if (conn.responseCode == 200) {
-                    val response = conn.inputStream.bufferedReader().use { it.readText() }
-                    
-                    val tagMatch = "\"tag_name\"\\s*:\\s*\"([^\"]+)\"".toRegex().find(response)
-                    val tagName = tagMatch?.groups?.get(1)?.value ?: return@withContext null
-                    
-                    val apkMatch = "\"browser_download_url\"\\s*:\\s*\"([^\"]+\\.apk)\"".toRegex().find(response)
-                    val downloadUrl = apkMatch?.groups?.get(1)?.value ?: return@withContext null
-                    
-                    // Notas de la versión (Markdown). Con una regex se cortaban en la primera comilla
-                    val body = try {
-                        org.json.JSONObject(response).optString("body", "")
-                    } catch (e: Exception) {
-                        ""
-                    }
+    private const val REPO = "KevshuppD/KevMusicPlayer"
 
-                    val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        context.packageManager.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
-                    } else {
-                        context.packageManager.getPackageInfo(context.packageName, 0)
-                    }
-                    val currentVersion = packageInfo.versionName ?: "1.0.0"
-                    
-                    if (isNewerVersion(currentVersion, tagName)) {
-                        UpdateInfo(tagName, downloadUrl, body)
-                    } else {
-                        null
-                    }
-                } else {
-                    null
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                TelemetryLogger.logError(context, "Updater_Check", "Failed to check update", e)
-                null
-            }
+    /**
+     * La release más reciente de la app (tag `vX.Y.Z`), o null si no se pudo comprobar (sin red). Primero la API;
+     * si falla (sin sesión permite 60 consultas por hora por IP pública, compartidas con el PC y su app: el
+     * 23/10/2026 y el 08/11/2026 se agotó y la app decía que no había versión nueva, y el botón de Acerca de leía el
+     * error como "1.0" y decía "al día"), el feed `releases.atom`, que no tiene ese límite: la versión más alta, el
+     * APK por su dirección fija (`KevMusicPlayer-vX.Y.Z.apk`, release.yml) y las notas de `changelog/vX.Y.Z.md`.
+     */
+    suspend fun latestRelease(context: Context): UpdateInfo? = withContext(Dispatchers.IO) {
+        runCatching { fromApi() }.getOrNull()
+            ?: runCatching { fromFeed() }.onFailure {
+                TelemetryLogger.logError(context, "Updater_Check", "No se pudo comprobar la versión", it)
+            }.getOrNull()
+    }
+
+    private fun get(url: String, accept: String? = null): Pair<Int, String> {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
+        conn.setRequestProperty("User-Agent", "KevMusicPlayer-Updater")
+        accept?.let { conn.setRequestProperty("Accept", it) }
+        return try {
+            val code = conn.responseCode
+            code to (if (code == 200) conn.inputStream.bufferedReader().use { it.readText() } else "")
+        } finally {
+            conn.disconnect()
         }
+    }
+
+    private fun fromApi(): UpdateInfo? {
+        val (code, response) = get("https://api.github.com/repos/$REPO/releases/latest", "application/vnd.github+json")
+        if (code != 200) return null
+        val json = org.json.JSONObject(response)
+        val tag = json.optString("tag_name").takeIf { it.isNotBlank() } ?: return null
+        val assets = json.optJSONArray("assets") ?: return null
+        val apk = (0 until assets.length()).mapNotNull { assets.optJSONObject(it) }
+            .firstOrNull { it.optString("name").endsWith(".apk") }?.optString("browser_download_url") ?: return null
+        // Notas de la versión (Markdown). Con una regex se cortaban en la primera comilla
+        return UpdateInfo(tag, apk, json.optString("body", ""))
+    }
+
+    private fun fromFeed(): UpdateInfo? {
+        val (code, feed) = get("https://github.com/$REPO/releases.atom")
+        if (code != 200) error("releases.atom respondió $code")
+        // Solo las de Android (vX.Y.Z); las del PC son desktop-vX.Y.Z
+        val tag = Regex("""/releases/tag/(v\d+\.\d+\.\d+)"""").findAll(feed).map { it.groupValues[1] }.distinct()
+            .reduceOrNull { a, b -> if (isNewerVersion(a, b)) b else a } ?: return null
+        val notes = runCatching { get("https://raw.githubusercontent.com/$REPO/main/changelog/$tag.md").second }.getOrDefault("")
+        return UpdateInfo(tag, "https://github.com/$REPO/releases/download/$tag/KevMusicPlayer-$tag.apk", notes)
+    }
+
+    fun currentVersion(context: Context): String {
+        val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            context.packageManager.getPackageInfo(context.packageName, 0)
+        }
+        return packageInfo.versionName ?: "1.0.0"
+    }
+
+    /** La release si es más nueva que la instalada; null si no hay o no se pudo comprobar. */
+    suspend fun checkUpdate(context: Context): UpdateInfo? {
+        val latest = latestRelease(context) ?: return null
+        return latest.takeIf { isNewerVersion(currentVersion(context), it.version) }
     }
 
     suspend fun downloadApk(
