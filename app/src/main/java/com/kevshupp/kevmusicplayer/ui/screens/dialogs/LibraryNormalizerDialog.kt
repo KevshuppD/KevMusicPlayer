@@ -34,7 +34,7 @@ import com.kevshupp.kevmusicplayer.ui.screens.rememberAlbumArt
  * elegidos. El análisis sigue aunque se cierre el diálogo (vive en [LibraryNormalizer]).
  */
 @Composable
-fun LibraryNormalizerDialog(viewModel: MediaBrowserViewModel, onDismiss: () -> Unit) {
+fun LibraryNormalizerDialog(viewModel: MediaBrowserViewModel, title: String = "Normalizar biblioteca", onDismiss: () -> Unit) {
     val context = LocalContext.current
     val state by LibraryNormalizer.state.collectAsState()
     val fields = remember { mutableStateMapOf<Field, Boolean>().apply { Field.entries.forEach { put(it, true) } } }
@@ -50,7 +50,7 @@ fun LibraryNormalizerDialog(viewModel: MediaBrowserViewModel, onDismiss: () -> U
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.AutoFixHigh, null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(10.dp))
-                    Text("Normalizar biblioteca", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, "Cerrar") }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -66,7 +66,7 @@ fun LibraryNormalizerDialog(viewModel: MediaBrowserViewModel, onDismiss: () -> U
                         )
                         Spacer(Modifier.height(10.dp))
                         Text(
-                            "El género solo se completa si falta: Deezer usa géneros amplios (Pop, Rock…) y uno puesto a mano suele ser más preciso. " +
+                            "El género siempre se propone el de Deezer (es del álbum y amplio: Pop, Rock…); si prefieres el tuyo, desmarca el campo Género. " +
                                 "Álbum, año y pista solo se corrigen si es el mismo disco.",
                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

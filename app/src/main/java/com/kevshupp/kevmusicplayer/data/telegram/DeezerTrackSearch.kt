@@ -16,7 +16,8 @@ data class DeezerTrack(
     val durationSec: Int,
     val coverSmall: String,
     val coverXl: String,
-    val link: String
+    val link: String,
+    val albumId: Long = 0
 )
 
 data class DeezerAlbum(
@@ -142,7 +143,8 @@ object DeezerTrackSearch {
             durationSec = t.optInt("duration"),
             coverSmall = album?.optString("cover_medium").orEmpty(),
             coverXl = album?.optString("cover_xl").orEmpty(),
-            link = t.optString("link").ifBlank { "https://www.deezer.com/track/${t.optLong("id")}" }
+            link = t.optString("link").ifBlank { "https://www.deezer.com/track/${t.optLong("id")}" },
+            albumId = album?.optLong("id") ?: 0L
         )
     }
 
@@ -157,7 +159,7 @@ object DeezerTrackSearch {
         val builder = url.toHttpUrl().newBuilder()
         params.forEach { (k, v) -> builder.addQueryParameter(k, v) }
         val httpUrl = builder.build()
-        val cacheFile = if (cacheTtlMs > 0) cacheDir?.let { dir -> java.io.File(dir, "deezer_cache/${sha1(httpUrl.toString())}.json") } else null
+        val cacheFile = if (cacheTtlMs > 0) cacheDir?.let { dir -> java.io.File(dir, "deezer_cache/${sha1(java.util.Locale.getDefault().language + "|" + httpUrl)}.json") } else null
         if (cacheFile != null && cacheFile.length() > 0 && System.currentTimeMillis() - cacheFile.lastModified() < cacheTtlMs) {
             runCatching { return@withContext JSONObject(cacheFile.readText()) }
         }

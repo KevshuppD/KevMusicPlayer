@@ -93,7 +93,7 @@ class BatchLyricsManager(
                     val dbLyrics = song.lyrics ?: audioDao.getLyricsById(song.id)
                     val dbHasSynced = !dbLyrics.isNullOrBlank() && LyricsRepository.isLrcSynced(dbLyrics)
 
-                    if (dbHasSynced) {
+                    if (dbHasSynced || dbLyrics == LyricsRepository.INSTRUMENTAL) {
                         skippedCount++
                     } else {
                         val localLyrics = readLocalLrcOrEmbedded(context, song)
@@ -112,7 +112,8 @@ class BatchLyricsManager(
                                     if (fetchedIsSynced || dbLyrics.isNullOrBlank()) {
                                         audioDao.updateLyrics(song.id, fetched)
                                         pendingListUpdates[song.id] = fetched
-                                        saveLyricsPhysical(context, song.id, song.title, song.folderPath, fetched)
+                                        // La marca de instrumental no es una letra: no se escribe un .lrc con ella
+                                        if (fetched != LyricsRepository.INSTRUMENTAL) saveLyricsPhysical(context, song.id, song.title, song.folderPath, fetched)
                                         downloadedSuccessCount++
                                     } else {
                                         notFoundCount++

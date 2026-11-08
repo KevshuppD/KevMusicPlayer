@@ -24,10 +24,18 @@ data class LrcLibSearchResult(
     val albumName: String,
     val durationSeconds: Int,
     val syncedLyrics: String?,
-    val plainLyrics: String?
-)
+    val plainLyrics: String?,
+    /** LRCLIB marca así las pistas sin letra (`instrumental: true`, letras en null). */
+    val instrumental: Boolean = false
+) {
+    /** Lo que se guarda al elegir este resultado: la sincronizada, la estática o la marca de instrumental. */
+    val lyricsToSave: String? get() = syncedLyrics ?: plainLyrics ?: if (instrumental) LyricsRepository.INSTRUMENTAL else null
+}
 
 object LyricsRepository {
+    /** Marca guardada como letra de una pista instrumental (el reproductor la muestra como tal). */
+    const val INSTRUMENTAL = "[[Instrumental]]"
+
     // Una conexión guardada mucho rato puede estar muerta sin saberlo (cambio de red, cierre del servidor)
     private val connectionPool = ConnectionPool(5, 1, TimeUnit.MINUTES)
 
@@ -192,7 +200,8 @@ object LyricsRepository {
                                             albumName = albumName,
                                             durationSeconds = duration,
                                             syncedLyrics = if (synced.isNotEmpty()) synced else null,
-                                            plainLyrics = if (plain.isNotEmpty()) plain else null
+                                            plainLyrics = if (plain.isNotEmpty()) plain else null,
+                                            instrumental = obj.optBoolean("instrumental", false) && synced.isEmpty() && plain.isEmpty()
                                         )
                                     )
                                 }
@@ -244,7 +253,8 @@ object LyricsRepository {
                                             albumName = albumName,
                                             durationSeconds = duration,
                                             syncedLyrics = if (synced.isNotEmpty()) synced else null,
-                                            plainLyrics = if (plain.isNotEmpty()) plain else null
+                                            plainLyrics = if (plain.isNotEmpty()) plain else null,
+                                            instrumental = obj.optBoolean("instrumental", false) && synced.isEmpty() && plain.isEmpty()
                                         )
                                     )
                                 }
@@ -270,6 +280,7 @@ object LyricsRepository {
 
             // Prioritize results that have synced lyrics
             list.sortedWith(compareByDescending<LrcLibSearchResult> { it.syncedLyrics != null }
+                .thenByDescending { it.plainLyrics != null }
                 .thenBy { it.trackName.length })
         }
     }
@@ -339,6 +350,8 @@ object LyricsRepository {
 
             // Plain lyrics from the exact match: only returned if no search result has synced lyrics
             var exactPlain: String? = null
+            // El registro exacto dice que es instrumental: se usa solo si la búsqueda no trae ninguna letra
+            var exactInstrumental = false
 
             // Pass 1: Try direct GET endpoint first (/api/get)
             if (cleanedTitle.isNotBlank() && cleanedArtist.isNotBlank() && !cleanedArtist.contains("Unknown", ignoreCase = true)) {
@@ -360,6 +373,8 @@ object LyricsRepository {
                                 val plainLyrics = obj.optString("plainLyrics")
                                 if (!plainLyrics.isNullOrEmpty() && plainLyrics != "null") {
                                     exactPlain = plainLyrics
+                                } else if (obj.optBoolean("instrumental", false)) {
+                                    exactInstrumental = true
                                 }
                             }
                         } else if (response.code != 404) {
@@ -382,7 +397,7 @@ object LyricsRepository {
                 if (plainMatch != null) return@withContext plainMatch.plainLyrics
             }
 
-            exactPlain
+            exactPlain ?: if (exactInstrumental) INSTRUMENTAL else null
         }
     }
 

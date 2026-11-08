@@ -144,7 +144,7 @@ fun SearchLyricsDialog(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        val lyricsToApply = result.syncedLyrics ?: result.plainLyrics
+                                        val lyricsToApply = result.lyricsToSave
                                         if (!lyricsToApply.isNullOrEmpty()) {
                                             viewModel?.updateSongLyrics(song.id, lyricsToApply)
                                             onDismiss()
@@ -179,7 +179,11 @@ fun SearchLyricsDialog(
                                             .padding(horizontal = 8.dp, vertical = 4.dp)
                                     ) {
                                         Text(
-                                            text = if (isSynced) getLocalized("Sincro", "Synced") else getLocalized("Texto", "Plain"),
+                                            text = when {
+                                                isSynced -> getLocalized("Sincro", "Synced")
+                                                result.instrumental -> getLocalized("Instrumental", "Instrumental")
+                                                else -> getLocalized("Texto", "Plain")
+                                            },
                                             color = if (isSynced) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 10.sp

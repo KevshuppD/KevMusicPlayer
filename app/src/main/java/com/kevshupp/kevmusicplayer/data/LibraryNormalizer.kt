@@ -180,7 +180,7 @@ object LibraryNormalizer {
             val deezerFound = results.filterNotNull().map { it.song.id }.toHashSet()
             val backup = musicBrainzBackup(targets.filter { it.id !in deezerFound && it.id !in errorIds }.take(MB_BACKUP_MAX)) { _, _ -> }
             notFound -= backup.size
-            val matched = results.filterNotNull() + backup
+            val matched = unifyAlbumNames(all, results.filterNotNull() + backup)
             val withChanges = matched.filter { it.changes.isNotEmpty() }
             // Correctas y no encontradas quedan recordadas; las que tienen cambios, cuando se apliquen
             val marks = HashMap<Long, Pair<AudioFile, String>>()
@@ -192,6 +192,33 @@ object LibraryNormalizer {
             if (isActive) runCatching { saveMarks(app, marks) }
             _state.value = State.Review(withChanges, notFound, matched.size - withChanges.size, targets.size, skipped, notFoundSongs, errorSongs, ignoredSongs)
         }
+    }
+
+    /** Clave del álbum sin mayúsculas ni tildes: "WINGS" y "wings" son el mismo. */
+    fun albumKey(album: String): String =
+        java.text.Normalizer.normalize(album.trim(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "").lowercase()
+
+    /**
+     * Un mismo disco escrito de varias formas (3 canciones "WINGS" y 12 "wings") queda con un solo nombre: el que
+     * propone Deezer para alguna de sus canciones o, si no, el más repetido. Se añade a las propuestas (o crea una)
+     * de las canciones que lo tienen escrito distinto, aunque Deezer no las haya encontrado.
+     */
+    private fun unifyAlbumNames(all: List<AudioFile>, proposals: List<Proposal>): List<Proposal> {
+        val byId = proposals.associateBy { it.song.id }.toMutableMap()
+        fun finalAlbum(s: AudioFile) = byId[s.id]?.changes?.get(Field.Album) ?: s.album
+        all.filter { !isUnknown(it.album) }.groupBy { albumKey(it.album) }.values.forEach { group ->
+            val names = group.map { finalAlbum(it) }
+            if (names.distinct().size < 2) return@forEach
+            val canonical = group.mapNotNull { byId[it.id]?.changes?.get(Field.Album) }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+                ?: names.groupingBy { it }.eachCount().maxByOrNull { it.value }!!.key
+            group.filter { finalAlbum(it) != canonical }.forEach { s ->
+                val p = byId[s.id] ?: Proposal(s, emptyMap())
+                val changes = LinkedHashMap(p.changes).apply { put(Field.Album, canonical) }
+                if (s.album == canonical) changes.remove(Field.Album)
+                byId[s.id] = p.copy(changes = changes)
+            }
+        }
+        return byId.values.toList()
     }
 
     /** Llamadas a Deezer con reintento si se pasa del límite de peticiones (50 cada 5 s). */
@@ -290,9 +317,14 @@ object LibraryNormalizer {
         val dzShort = track.optString("title_short")
         val localTitle = LibraryMatcher.fixMojibake(song.title)
         val localNorm = LibraryMatcher.normalize(localTitle)
-        // Hallada por duración (피 땀 눈물 = Blood Sweat & Tears): un título en otro idioma se queda como está
+        var doubt = found.doubt
         if (SongRepair.isLatin(localTitle) || LibraryMatcher.normalizeTitle(dzTitle) == LibraryMatcher.normalizeTitle(localTitle)) {
             offer(Field.Title, listOf(dzTitle, dzShort).firstOrNull { it.isNotBlank() && LibraryMatcher.normalize(it) == localNorm } ?: dzTitle)
+        } else {
+            // Hallada por duración (피 땀 눈물 = Blood Sweat & Tears): el título de Deezer se propone, pero como duda
+            // (sin seleccionar), porque hay quien prefiere el original
+            offer(Field.Title, dzTitle)
+            if (Field.Title in changes) doubt = doubt ?: "Título en otro idioma"
         }
 
         // Artista: si el local ya trae colaboradores ("A, B") y el de Deezer es solo el principal, se conserva el local
@@ -317,20 +349,24 @@ object LibraryNormalizer {
         // Álbum, año y pista solo si es el mismo lanzamiento (o el local no tiene álbum): la misma canción en un
         // recopilatorio o como sencillo no debe recibir el número de pista de otro disco
         val dzAlbum = album?.optString("title").orEmpty().ifBlank { track.optJSONObject("album")?.optString("title").orEmpty() }
-        val sameRelease = dzAlbum.isNotBlank() &&
-            (isUnknown(song.album) || LibraryMatcher.normalizeTitle(song.album) == LibraryMatcher.normalizeTitle(dzAlbum))
+        val localAlbumNorm = LibraryMatcher.normalizeTitle(song.album)
+        val dzAlbumNorm = LibraryMatcher.normalizeTitle(dzAlbum)
+        // Otra edición del mismo disco ("emails i can't send" → "emails i can't send fwd:", "… (Deluxe)"): Deezer solo
+        // la tiene ahí, así que se propone, como duda
+        val otherEdition = dzAlbum.isNotBlank() && !isUnknown(song.album) && localAlbumNorm.length >= 4 &&
+            dzAlbumNorm != localAlbumNorm && dzAlbumNorm.startsWith(localAlbumNorm)
+        val sameRelease = dzAlbum.isNotBlank() && (isUnknown(song.album) || localAlbumNorm == dzAlbumNorm || otherEdition)
+        if (otherEdition) doubt = doubt ?: "Otra edición del disco"
         if (sameRelease) {
             offer(Field.Album, dzAlbum)
             offer(Field.Year, (track.optString("release_date").ifBlank { album?.optString("release_date").orEmpty() }).take(4).takeIf { it.length == 4 && it != "0000" })
             offer(Field.Track, track.optInt("track_position").takeIf { it > 0 }?.toString())
         }
 
-        // Género: es del álbum en Deezer. Se rellena el que falta; uno ya puesto (p. ej. "K-Pop") suele ser más fino que el de Deezer
-        if (isUnknown(song.genre)) {
-            val genre = album?.optJSONObject("genres")?.optJSONArray("data")?.optJSONObject(0)?.optString("name")
-            offer(Field.Genre, genre)
-        }
-        return Proposal(song, changes, found.doubt)
+        // Género: siempre el de Deezer (ya en el idioma del teléfono), porque a menudo viene mal o en otro idioma
+        // ("Aziatische Muziek"). Se revisa antes de aplicar y se puede desmarcar
+        offer(Field.Genre, album?.optJSONObject("genres")?.optJSONArray("data")?.optJSONObject(0)?.optString("name"))
+        return Proposal(song, changes, doubt)
     }
 
     /**
@@ -440,8 +476,9 @@ object LibraryNormalizer {
             c.isNotBlank() && contributorsOf(details).ifEmpty { listOf(main) }.all { currentNorm.contains(LibraryMatcher.normalize(it)) }
         } ?: full
         val albumName = details.optJSONObject("album")?.optString("title").orEmpty().ifBlank { track.album }
-        val genre = current[3].takeUnless { isUnknown(it) }
-            ?: album?.optJSONObject("genres")?.optJSONArray("data")?.optJSONObject(0)?.optString("name").orEmpty()
+        // El género de Deezer manda: el que trae el archivo a veces está mal o en otro idioma
+        val genre = album?.optJSONObject("genres")?.optJSONArray("data")?.optJSONObject(0)?.optString("name")?.takeIf { it.isNotBlank() }
+            ?: current[3]
         val year = details.optString("release_date").take(4).takeIf { it.length == 4 } ?: current[4]
         val position = details.optInt("track_position").takeIf { it > 0 } ?: current[5].toIntOrNull() ?: 0
         val wanted = listOf(title, artist, albumName, genre, year, if (position > 0) position.toString() else "")

@@ -884,6 +884,9 @@ class PlayerStateInfo(player: Player?) {
         internal set
     var playlistVersion by mutableStateOf(0)
         internal set
+    /** Hay una canción después de esta (con repetir todo, siempre). */
+    var hasNext by mutableStateOf(player?.hasNextMediaItem() ?: false)
+        internal set
 
     internal fun syncFrom(player: Player) {
         val casting = com.kevshupp.kevmusicplayer.data.cast.CastController
@@ -894,6 +897,7 @@ class PlayerStateInfo(player: Player?) {
         shuffleModeEnabled = player.shuffleModeEnabled
         mediaItemCount = player.mediaItemCount
         currentMediaItemIndex = player.currentMediaItemIndex
+        hasNext = player.hasNextMediaItem()
     }
 }
 

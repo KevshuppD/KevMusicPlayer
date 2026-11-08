@@ -3,6 +3,12 @@ package com.kevshupp.kevmusicplayer.ui.screens.dialogs
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -64,6 +71,9 @@ fun TagEditorDialog(
     var isSearchingOnline by remember { mutableStateOf(false) }
     var searchResults by remember { mutableStateOf<List<com.kevshupp.kevmusicplayer.data.MetadataResult>>(emptyList()) }
     var searchStatus by remember { mutableStateOf("") }
+    /** Género que pondría este resultado: el de su álbum en Deezer, ya en el idioma del teléfono; null si es el mismo. */
+    fun genreFor(result: com.kevshupp.kevmusicplayer.data.MetadataResult): String? =
+        result.genre.trim().takeIf { it.isNotEmpty() && !it.equals(genre.trim(), ignoreCase = true) }
 
     var isSaving by remember { mutableStateOf(false) }
 
@@ -113,165 +123,157 @@ fun TagEditorDialog(
         }
     }
 
-    AlertDialog(
-        onDismissRequest = { if (!isSaving) onDismiss() },
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Rounded.Edit,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = getLocalized("Editar Etiquetas", "Edit Metadata Tags"),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = Color.White
-                )
+    val listState = rememberLazyListState()
+    val runOnlineSearch: () -> Unit = {
+        scope.launch {
+            isSearchingOnline = true
+            searchStatus = getLocalized("Buscando en ${searchProvider.label}...", "Searching ${searchProvider.label}...")
+            var failed = false
+            val results = try {
+                com.kevshupp.kevmusicplayer.data.MetadataSearch.search(searchProvider, searchQuery.trim(), artist, song.duration.toLong(),
+                    // El disco de la canción y los demás del artista que tienes: Deezer solo muestra una edición
+                    albumHints = listOf(album) + (viewModel?.localAudioFiles?.filter { splitter.matches(it.artist, mainArtist) }
+                        ?.groupingBy { it.album }?.eachCount()?.entries?.sortedByDescending { it.value }?.map { it.key }.orEmpty()),
+                    titleHint = title)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                failed = true
+                emptyList()
             }
-        },
-        text = {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                item {
+            searchResults = results.distinct() // la clave de la lista no admite repetidos
+            isSearchingOnline = false
+            searchStatus = when {
+                failed -> getLocalized("No se pudo conectar con ${searchProvider.label}. Inténtalo más tarde o cambia de proveedor en Ajustes.", "Could not reach ${searchProvider.label}. Try later or change provider in Settings.")
+                results.isEmpty() -> getLocalized("No se encontraron coincidencias.", "No matches found.")
+                else -> getLocalized("Se encontraron ${results.size} coincidencias.", "Found ${results.size} matches.")
+            }
+            // Baja hasta los resultados: el campo de búsqueda queda arriba y las coincidencias debajo
+            val fieldIndex = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "searchField" }?.index
+            if (fieldIndex != null) listState.animateScrollToItem(fieldIndex)
+        }
+    }
+
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = Color.White,
+        unfocusedTextColor = Color.White,
+        focusedBorderColor = MaterialTheme.colorScheme.primary,
+        unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
+        cursorColor = MaterialTheme.colorScheme.primary
+    )
+    val sectionLabel: @Composable (String) -> Unit = { text ->
+        Text(text.uppercase(), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, letterSpacing = 1.sp)
+    }
+    val chipColors = AssistChipDefaults.assistChipColors(
+        labelColor = MaterialTheme.colorScheme.primary,
+        leadingIconContentColor = MaterialTheme.colorScheme.primary
+    )
+
+    // Pantalla completa: los campos cortos van de dos en dos y Guardar queda siempre visible abajo.
+    // La ventana no se mueve con el teclado (si se movía, el asa del cursor quedaba lejos de él): la lista
+    // se encoge por encima del teclado con imePadding.
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = { if (!isSaving) onDismiss() },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Surface(color = Color(0xFF161829), contentColor = Color.White, modifier = Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    IconButton(onClick = { if (!isSaving) onDismiss() }) {
+                        Icon(Icons.Rounded.Close, getLocalized("Cerrar", "Close"), tint = Color.White)
+                    }
                     Text(
-                        text = getLocalized("Información del archivo local", "Local file information"),
+                        text = getLocalized("Editar etiquetas", "Edit tags"),
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontSize = 12.sp,
-                        letterSpacing = 1.sp
+                        fontSize = 18.sp,
+                        color = Color.White
                     )
                 }
 
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Card with current artwork
-                        val initialArtBytes = rememberAlbumArt(song.uriString)
-                        val displayBytes = selectedCoverBytes ?: initialArtBytes
-                        
-                        Card(
-                            shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(12.dp) else androidx.compose.ui.graphics.RectangleShape,
-                            modifier = Modifier.size(90.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f))
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                if (displayBytes != null) {
-                                    androidx.compose.ui.platform.LocalContext.current.let { _ ->
+                LazyColumn(
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f)
+                ) {
+                    // Cabecera: carátula grande, cómo quedará la canción y acciones de portada
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val initialArtBytes = rememberAlbumArt(song.uriString)
+                            val displayBytes = selectedCoverBytes ?: initialArtBytes
+                            Card(
+                                shape = if (com.kevshupp.kevmusicplayer.ui.theme.LocalSongImageRounded.current) RoundedCornerShape(14.dp) else androidx.compose.ui.graphics.RectangleShape,
+                                modifier = Modifier.size(104.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f))
+                            ) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    if (displayBytes != null) {
                                         coil.compose.SubcomposeAsyncImage(
                                             model = displayBytes,
                                             contentDescription = "Cover Art",
                                             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize(),
-                                            loading = {
-                                                CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                                            },
-                                            error = {
-                                                Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = Color.White.copy(alpha = 0.6f))
-                                            }
+                                            loading = { CircularProgressIndicator(modifier = Modifier.size(24.dp)) },
+                                            error = { Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = Color.White.copy(alpha = 0.6f)) }
+                                        )
+                                    } else {
+                                        Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(36.dp))
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(title.ifBlank { "—" }, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    listOf(artist, album).filter { it.isNotBlank() }.joinToString(" · "),
+                                    fontSize = 12.sp, color = Color.White.copy(alpha = 0.6f), maxLines = 2, overflow = TextOverflow.Ellipsis
+                                )
+                                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    AssistChip(
+                                        onClick = { showCoverSearchSection = !showCoverSearchSection },
+                                        label = { Text(if (showCoverSearchSection) getLocalized("Ocultar", "Hide") else getLocalized("Buscar portada", "Find cover"), fontSize = 11.sp) },
+                                        leadingIcon = { Icon(Icons.Rounded.ImageSearch, null, Modifier.size(16.dp)) },
+                                        colors = chipColors
+                                    )
+                                    AssistChip(
+                                        onClick = { coverPickerLauncher.launch("image/*") },
+                                        label = { Text(getLocalized("Galería", "Gallery"), fontSize = 11.sp) },
+                                        leadingIcon = { Icon(Icons.Rounded.PhotoLibrary, null, Modifier.size(16.dp)) },
+                                        colors = chipColors
+                                    )
+                                    if (selectedCoverBytes != null) {
+                                        AssistChip(
+                                            onClick = { selectedCoverBytes = null; selectedCoverUrl = null },
+                                            label = { Text(getLocalized("Restablecer", "Reset"), fontSize = 11.sp, color = MaterialTheme.colorScheme.error) },
+                                            leadingIcon = { Icon(Icons.Rounded.Restore, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error) }
                                         )
                                     }
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Rounded.MusicNote,
-                                        contentDescription = null,
-                                        tint = Color.White.copy(alpha = 0.4f),
-                                        modifier = Modifier.size(32.dp)
-                                    )
-                                }
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.width(16.dp))
-                        
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Button(
-                                onClick = { showCoverSearchSection = !showCoverSearchSection },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                ),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Rounded.ImageSearch, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (showCoverSearchSection) getLocalized("Ocultar Buscador", "Hide Search") else getLocalized("Buscar en Internet", "Search Online"),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            Button(
-                                onClick = { coverPickerLauncher.launch("image/*") },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                ),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = getLocalized("Elegir de Galería", "Select from Gallery"),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            
-                            if (selectedCoverBytes != null) {
-                                TextButton(
-                                    onClick = {
-                                        selectedCoverBytes = null
-                                        selectedCoverUrl = null
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(Icons.Rounded.Restore, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(getLocalized("Restablecer", "Reset"), color = MaterialTheme.colorScheme.error, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                                
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { applyCoverToEntireAlbum = !applyCoverToEntireAlbum }
-                                        .padding(vertical = 4.dp)
-                                ) {
-                                    Checkbox(
-                                        checked = applyCoverToEntireAlbum,
-                                        onCheckedChange = { applyCoverToEntireAlbum = it },
-                                        colors = CheckboxDefaults.colors(
-                                            checkedColor = MaterialTheme.colorScheme.primary,
-                                            uncheckedColor = Color.White.copy(alpha = 0.6f)
-                                        )
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = getLocalized("Aplicar portada al álbum entero", "Apply cover to entire album"),
-                                        color = Color.White,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
                                 }
                             }
                         }
                     }
-                }
+
+                    if (selectedCoverBytes != null) {
+                        item {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().clickable { applyCoverToEntireAlbum = !applyCoverToEntireAlbum }
+                            ) {
+                                Checkbox(
+                                    checked = applyCoverToEntireAlbum,
+                                    onCheckedChange = { applyCoverToEntireAlbum = it },
+                                    colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary, uncheckedColor = Color.White.copy(alpha = 0.6f))
+                                )
+                                Text(getLocalized("Aplicar portada al álbum entero", "Apply cover to entire album"), color = Color.White, fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    if (coverSearchStatus.isNotEmpty() && !showCoverSearchSection) {
+                        item { Text(coverSearchStatus, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp) }
+                    }
 
                 if (showCoverSearchSection) {
                     // Search mode & query suggestions chips
@@ -504,71 +506,84 @@ fun TagEditorDialog(
                     }
                 }
 
-                item {
-                    OutlinedTextField(
-                        value = title,
-                        onValueChange = { title = it },
-                        label = { Text(getLocalized("Título", "Title"), color = Color.White.copy(alpha = 0.5f)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                            cursorColor = MaterialTheme.colorScheme.primary
+                    item {
+                        OutlinedTextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            label = { Text(getLocalized("Título", "Title"), color = Color.White.copy(alpha = 0.5f)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = fieldColors
                         )
-                    )
-                }
+                    }
 
-                item {
-                    OutlinedTextField(
-                        value = mainArtist,
-                        onValueChange = { mainArtist = it },
-                        label = { Text(getLocalized("Artista principal", "Main artist"), color = Color.White.copy(alpha = 0.5f)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                            cursorColor = MaterialTheme.colorScheme.primary
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedTextField(
+                                value = mainArtist,
+                                onValueChange = { mainArtist = it },
+                                label = { Text(getLocalized("Artista", "Artist"), color = Color.White.copy(alpha = 0.5f)) },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                                colors = fieldColors
+                            )
+                            OutlinedTextField(
+                                value = album,
+                                onValueChange = { album = it },
+                                label = { Text(getLocalized("Álbum", "Album"), color = Color.White.copy(alpha = 0.5f)) },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                                colors = fieldColors
+                            )
+                        }
+                    }
+
+                    item {
+                        OutlinedTextField(
+                            value = genre,
+                            onValueChange = { genre = it },
+                            label = { Text(getLocalized("Género", "Genre"), color = Color.White.copy(alpha = 0.5f)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = fieldColors
                         )
-                    )
-                }
+                    }
 
-                item {
-                    Column(Modifier.fillMaxWidth()) {
-                        Text(getLocalized("Colaboradores", "Featured artists"), color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-                        if (guests.isNotEmpty()) {
-                            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                guests.forEach { g ->
-                                    InputChip(
-                                        selected = false, onClick = { guests = guests - g },
-                                        label = { Text(g, color = Color.White) },
-                                        trailingIcon = { Icon(Icons.Rounded.Close, getLocalized("Quitar", "Remove"), Modifier.size(16.dp), tint = Color.White) }
-                                    )
+                    // Colaboradores: etiquetas que se quitan con ✕ y un campo para añadir con sus dos acciones dentro
+                    item {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            sectionLabel(getLocalized("Colaboradores", "Featured artists"))
+                            if (guests.isNotEmpty()) {
+                                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    guests.forEach { g ->
+                                        InputChip(
+                                            selected = true, onClick = { guests = guests - g },
+                                            label = { Text(g) },
+                                            trailingIcon = { Icon(Icons.Rounded.Close, getLocalized("Quitar", "Remove"), Modifier.size(16.dp)) },
+                                            colors = InputChipDefaults.inputChipColors(
+                                                selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                                                selectedLabelColor = Color.White,
+                                                selectedTrailingIconColor = Color.White
+                                            )
+                                        )
+                                    }
                                 }
                             }
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(
-                                value = newGuest, onValueChange = { newGuest = it }, singleLine = true,
-                                label = { Text(getLocalized("Añadir colaborador", "Add featured artist"), color = Color.White.copy(alpha = 0.5f)) },
-                                modifier = Modifier.weight(1f),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                    unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                                    cursorColor = MaterialTheme.colorScheme.primary
-                                )
-                            )
-                            IconButton(onClick = {
+                            val addGuest = {
                                 val g = newGuest.trim()
                                 if (g.isNotEmpty() && guests.none { it.equals(g, true) } && !g.equals(mainArtist.trim(), true)) guests = guests + g
                                 newGuest = ""
-                            }) { Icon(Icons.Rounded.Add, getLocalized("Añadir", "Add"), tint = Color.White) }
+                            }
+                            OutlinedTextField(
+                                value = newGuest, onValueChange = { newGuest = it }, singleLine = true,
+                                placeholder = { Text(getLocalized("Añadir colaborador", "Add featured artist"), color = Color.White.copy(alpha = 0.4f)) },
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { addGuest() }),
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = fieldColors,
+                                trailingIcon = {
+                                    Row {
+                                        IconButton(onClick = addGuest, enabled = newGuest.isNotBlank()) { Icon(Icons.Rounded.Add, getLocalized("Añadir", "Add"), tint = Color.White) }
                             IconButton(enabled = !guestSearching && title.isNotBlank(), onClick = {
                             guestSearching = true; guestStatus = null
                             scope.launch {
@@ -594,142 +609,96 @@ fun TagEditorDialog(
                                 if (guestSearching) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                                 else Icon(Icons.Rounded.Search, getLocalized("Buscar colaboradores en Deezer", "Find featured artists on Deezer"), tint = Color.White)
                             }
+                                    }
+                                }
+                            )
+                            guestStatus?.let { Text(it, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp) }
                         }
-                        guestStatus?.let { Text(it, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp) }
                     }
-                }
 
-                item {
-                    OutlinedTextField(
-                        value = album,
-                        onValueChange = { album = it },
-                        label = { Text(getLocalized("Álbum", "Album"), color = Color.White.copy(alpha = 0.5f)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                            cursorColor = MaterialTheme.colorScheme.primary
+                    item {
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+                        sectionLabel(getLocalized("Rellenar desde internet", "Fill from the internet"))
+                    }
+
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            com.kevshupp.kevmusicplayer.data.MetadataProvider.entries.forEach { provider ->
+                                FilterChip(
+                                    selected = searchProvider == provider,
+                                    onClick = {
+                                        searchProvider = provider
+                                        searchResults = emptyList()
+                                        searchStatus = ""
+                                    },
+                                    label = { Text(provider.label, fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                    }
+
+                    item(key = "searchField") {
+                        // El foco y el teclado se piden aquí dentro: el diálogo es otra ventana
+                        val focusManager = LocalFocusManager.current
+                        val keyboard = LocalSoftwareKeyboardController.current
+                        val search = { keyboard?.hide(); focusManager.clearFocus(); runOnlineSearch() }
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            label = { Text(getLocalized("Término de búsqueda", "Search query"), color = Color.White.copy(alpha = 0.5f)) },
+                            singleLine = false, maxLines = 3, // varias líneas: en una sola el texto no seguía al asa al arrastrarla
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { if (searchQuery.isNotBlank() && !isSearchingOnline) search() }),
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                IconButton(onClick = search, enabled = searchQuery.isNotBlank() && !isSearchingOnline) {
+                                    if (isSearchingOnline) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
+                                    } else {
+                                        Icon(Icons.Rounded.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            },
+                            colors = fieldColors
                         )
-                    )
-                }
+                    }
 
-                item {
-                    OutlinedTextField(
-                        value = genre,
-                        onValueChange = { genre = it },
-                        label = { Text(getLocalized("Género", "Genre"), color = Color.White.copy(alpha = 0.5f)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                            cursorColor = MaterialTheme.colorScheme.primary
-                        )
-                    )
-                }
-
-                item {
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 8.dp))
-                    Text(
-                        text = getLocalized("Buscador de Metadatos En Línea", "Online Metadata Searcher"),
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontSize = 12.sp,
-                        letterSpacing = 1.sp
-                    )
-                }
-
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        com.kevshupp.kevmusicplayer.data.MetadataProvider.entries.forEach { provider ->
-                            FilterChip(
-                                selected = searchProvider == provider,
-                                onClick = {
-                                    searchProvider = provider
-                                    searchResults = emptyList()
-                                    searchStatus = ""
-                                },
-                                label = { Text(provider.label, fontSize = 12.sp) }
+                    if (searchStatus.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = searchStatus,
+                                color = if (searchResults.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
-                }
 
-                item {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        label = { Text(getLocalized("Término de búsqueda", "Search query"), color = Color.White.copy(alpha = 0.5f)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        trailingIcon = {
-                            IconButton(
-                                onClick = {
-                                    scope.launch {
-                                        isSearchingOnline = true
-                                        searchStatus = getLocalized("Buscando en ${searchProvider.label}...", "Searching ${searchProvider.label}...")
-                                        var failed = false
-                                        val results = try {
-                                            com.kevshupp.kevmusicplayer.data.MetadataSearch.search(searchProvider, searchQuery.trim(), artist, song.duration.toLong())
-                                        } catch (e: Exception) {
-                                            if (e is kotlinx.coroutines.CancellationException) throw e
-                                            failed = true
-                                            emptyList()
-                                        }
-                                        searchResults = results.distinct() // la clave de la lista no admite repetidos
-                                        isSearchingOnline = false
-                                        if (failed) {
-                                            searchStatus = getLocalized("No se pudo conectar con ${searchProvider.label}. Inténtalo más tarde o cambia de proveedor en Ajustes.", "Could not reach ${searchProvider.label}. Try later or change provider in Settings.")
-                                        } else if (results.isEmpty()) {
-                                            searchStatus = getLocalized("No se encontraron coincidencias.", "No matches found.")
-                                        } else {
-                                            searchStatus = getLocalized("Se encontraron ${results.size} coincidencias.", "Found ${results.size} matches.")
-                                        }
+                    if (searchResults.isNotEmpty()) {
+                        items(searchResults, key = { "${it.title}|${it.artist}|${it.album}" }) { result ->
+                            // Lo que cambiaría al aplicarlo, en verde; lo que ya coincide, atenuado
+                            val changeColor = Color(0xFF4FB38A)
+                            val diff = androidx.compose.ui.text.buildAnnotatedString {
+                                fun part(label: String, value: String, current: String) {
+                                    if (value.isBlank()) return
+                                    if (length > 0) append("  ·  ")
+                                    val changes = !value.trim().equals(current.trim(), ignoreCase = true)
+                                    append("$label: ")
+                                    withStyle(androidx.compose.ui.text.SpanStyle(color = if (changes) changeColor else Color.White.copy(alpha = 0.45f), fontWeight = if (changes) FontWeight.Bold else FontWeight.Normal)) {
+                                        append(value)
                                     }
-                                },
-                                enabled = searchQuery.isNotBlank() && !isSearchingOnline
-                            ) {
-                                if (isSearchingOnline) {
-                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
-                                } else {
-                                    Icon(Icons.Rounded.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.primary)
                                 }
+                                part(getLocalized("Artista", "Artist"), result.artist, artist)
+                                part(getLocalized("Álbum", "Album"), result.album, album)
+                                part(getLocalized("Género", "Genre"), result.genre, genre)
                             }
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                            cursorColor = MaterialTheme.colorScheme.primary
-                        )
-                    )
-                }
-
-                if (searchStatus.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = searchStatus,
-                            color = if (searchResults.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-
-                if (searchResults.isNotEmpty()) {
-                    items(searchResults, key = { "${it.title}|${it.artist}|${it.album}" }) { result ->
-                        Card(
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
+                            val titleChanges = !result.title.trim().equals(title.trim(), ignoreCase = true)
+                            Card(
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.05f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
                                     title = result.title
                                     setArtist(result.artist)
                                     if (result.deezerId > 0) {
@@ -747,21 +716,30 @@ fun TagEditorDialog(
                                         }
                                     }
                                     if (result.album.isNotBlank()) album = result.album
+                                    genreFor(result)?.let { genre = it }
                                     searchResults = emptyList()
                                     searchStatus = getLocalized("Metadatos aplicados desde la búsqueda en línea", "Metadata applied from online search")
+                                    }
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(text = result.title, fontWeight = FontWeight.Bold, color = if (titleChanges) changeColor else Color.White, fontSize = 13.sp)
+                                    Text(text = diff, color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
                                 }
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text(text = result.title, fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
-                                Text(text = "${result.artist} • ${result.album}", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
                             }
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            Button(
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
+                ) {
+                    TextButton(onClick = onDismiss, enabled = !isSaving) {
+                        Text(getLocalized("Cancelar", "Cancel"), color = Color.White.copy(alpha = 0.6f))
+                    }
+                    Button(
                 onClick = {
                     isSaving = true
                     com.kevshupp.kevmusicplayer.data.KnownArtists.add(listOf(mainArtist) + guests)
@@ -818,26 +796,17 @@ fun TagEditorDialog(
                         }
                     )
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                enabled = !isSaving
-            ) {
-                if (isSaving) {
-                    CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                } else {
-                    Text(getLocalized("Guardar", "Save"), fontWeight = FontWeight.Bold, color = Color.Black)
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        enabled = !isSaving
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text(getLocalized("Guardar", "Save"), fontWeight = FontWeight.Bold, color = Color.Black)
+                        }
+                    }
                 }
             }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                enabled = !isSaving
-            ) {
-                Text(getLocalized("Cancelar", "Cancel"), color = Color.White.copy(alpha = 0.6f))
-            }
-        },
-        containerColor = Color(0xFF161829),
-        titleContentColor = Color.White,
-        textContentColor = Color.White
-    )
+        }
+    }
 }

@@ -602,13 +602,31 @@ fun PlayerScreen(
                     )
                 }
 
-                Text(
-                    text = if (isEs) "REPRODUCIENDO" else "NOW PLAYING",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
-                    letterSpacing = 2.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                // Arriba, de qué álbum viene la canción (sin álbum conocido, el rótulo de siempre)
+                val headerAlbum = currentSongFile?.album?.takeIf { it.isNotBlank() && !it.contains("unknown", ignoreCase = true) && it != "<unknown>" }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                ) {
+                    Text(
+                        text = if (headerAlbum != null) (if (isEs) "DEL ÁLBUM" else "FROM THE ALBUM") else (if (isEs) "REPRODUCIENDO" else "NOW PLAYING"),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = if (headerAlbum != null) 10.sp else 12.sp,
+                        letterSpacing = 2.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (headerAlbum != null) {
+                        Text(
+                            text = headerAlbum,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
 
                 // Spacer to keep NOW PLAYING text perfectly centered without right-side top bar buttons
                 Spacer(modifier = Modifier.size(48.dp))
@@ -1086,17 +1104,21 @@ fun PlayerScreen(
                                          )
                                      }
 
-                                     // Next Button
-                                     IconButton(
-                                         onClick = { onSkipNext() },
-                                         modifier = Modifier.size(54.dp)
-                                     ) {
-                                         Icon(
-                                             imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.SkipNext),
-                                             contentDescription = "Next",
-                                             tint = MaterialTheme.colorScheme.onBackground,
-                                             modifier = Modifier.size(34.dp)
-                                         )
+                                     // Next Button: sin canción siguiente no se muestra (el hueco mantiene el resto en su sitio)
+                                     if (playerState.hasNext) {
+                                         IconButton(
+                                             onClick = { onSkipNext() },
+                                             modifier = Modifier.size(54.dp)
+                                         ) {
+                                             Icon(
+                                                 imageVector = com.kevshupp.kevmusicplayer.ui.theme.px(Icons.Rounded.SkipNext),
+                                                 contentDescription = "Next",
+                                                 tint = MaterialTheme.colorScheme.onBackground,
+                                                 modifier = Modifier.size(34.dp)
+                                             )
+                                         }
+                                     } else {
+                                         Spacer(Modifier.size(54.dp))
                                      }
 
                                       // Shuffle Button (Far Right)

@@ -161,10 +161,13 @@ object SongRepair {
             }
             if (allowSameDuration && sameDuration == null && durationSec > 0 && !isLatin(songTitle)) {
                 // 피 땀 눈물 = Blood Sweat & Tears: mismo artista y casi la misma duración, sin versiones en vivo
-                sameDuration = closestByDuration(found.filter { t ->
+                val byArtist = found.filter { t ->
                     val tArtist = LibraryMatcher.normalize(t.artist)
                     (tArtist == artist || tArtist.contains(artist) || artist.contains(tArtist)) && artist.isNotEmpty() && !isOtherVersion(t.title)
-                }, durationSec)
+                }
+                // Si alguna está en tu mismo disco (WINGS = Wings), solo esas
+                val sameAlbum = if (album.isNotEmpty()) byArtist.filter { LibraryMatcher.normalizeTitle(it.album) == album } else emptyList()
+                sameDuration = closestByDuration(sameAlbum.ifEmpty { byArtist }, durationSec)
             }
         }
         similar?.let { return TagMatch(it, "Título parecido, misma duración") }
@@ -182,7 +185,9 @@ object SongRepair {
     private fun closestByDuration(tracks: List<DeezerTrack>, durationSec: Int, maxDiff: Int = 2): DeezerTrack? {
         val near = tracks.filter { abs(it.durationSec - durationSec) <= maxDiff }.sortedBy { abs(it.durationSec - durationSec) }
         val best = near.firstOrNull() ?: return null
-        val tied = near.count { abs(it.durationSec - durationSec) == abs(best.durationSec - durationSec) } > 1
+        // Empate solo entre canciones distintas: la misma en el álbum y en un recopilatorio no lo es
+        val bestTitle = LibraryMatcher.normalizeTitle(best.title)
+        val tied = near.any { abs(it.durationSec - durationSec) == abs(best.durationSec - durationSec) && LibraryMatcher.normalizeTitle(it.title) != bestTitle }
         return best.takeUnless { tied }
     }
 

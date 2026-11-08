@@ -331,12 +331,12 @@ fun LibraryScreen(
                 } else -1
             } else {
                 val subSongs = when (val sv = currentSubView) {
-                    is SubView.AlbumDetail -> filteredFiles.filter { it.album == sv.albumName }
+                    is SubView.AlbumDetail -> audioFiles.filter { com.kevshupp.kevmusicplayer.data.LibraryNormalizer.albumKey(it.album) == com.kevshupp.kevmusicplayer.data.LibraryNormalizer.albumKey(sv.albumName) }
                         .sortedWith(
                             compareBy<AudioFile> { if (it.track > 0) it.track else Int.MAX_VALUE }
                                 .thenBy { it.title.lowercase() }
                         )
-                    is SubView.ArtistDetail -> filteredFiles.filter { artistSplitter.matches(it.artist, sv.artistName) }
+                    is SubView.ArtistDetail -> audioFiles.filter { artistSplitter.matches(it.artist, sv.artistName) }
                     is SubView.GenreDetail -> filteredFiles.filter { it.genre == sv.genreName }
                     is SubView.FolderDetail -> filteredFiles.filter { it.folderName == sv.folderName }
                     is SubView.PlaylistDetail -> {
@@ -358,7 +358,7 @@ fun LibraryScreen(
     // Grouping
     val albums by remember(filteredFiles) {
         derivedStateOf {
-            filteredFiles.groupBy { it.album }.mapValues { (_, songs) ->
+            groupByAlbum(filteredFiles).mapValues { (_, songs) ->
                 songs.sortedWith(
                     compareBy<AudioFile> { if (it.track > 0) it.track else Int.MAX_VALUE }
                         .thenBy { it.title.lowercase() }
@@ -978,21 +978,23 @@ fun LibraryScreen(
                  var artistTab by remember(subView) { mutableStateOf(ArtistTab.OVERVIEW) }
                  // Play stats live outside the song list, so only the history view needs to follow them
                  val historyStatsVersion = if (subView is SubView.HistoryDetail) viewModel?.statsVersion?.intValue ?: 0 else 0
-                 val subSongs = remember(filteredFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy, historyStatsVersion, artistOnline?.topTracks, artistOnline?.matcher) {
+                 val subSongs = remember(filteredFiles, audioFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy, historyStatsVersion, artistOnline?.topTracks, artistOnline?.matcher) {
                     val baseList = when (subView) {
                         is SubView.AlbumDetail -> {
-                            filteredFiles.filter { it.album == subView.albumName }
+                            audioFiles.filter { com.kevshupp.kevmusicplayer.data.LibraryNormalizer.albumKey(it.album) == com.kevshupp.kevmusicplayer.data.LibraryNormalizer.albumKey(subView.albumName) }
                                 .sortedWith(
                                     compareBy<AudioFile> { if (it.track > 0) it.track else Int.MAX_VALUE }
                                         .thenBy { it.title.lowercase() }
                                 )
                         }
                         is SubView.ArtistDetail -> {
-                            val own = filteredFiles.filter { artistSplitter.matches(it.artist, subView.artistName) }
+                            // Toda la biblioteca, no la lista filtrada por la búsqueda: si se entra al artista con algo
+                            // escrito en el buscador, el perfil solo mostraba las canciones que coincidían (WINGS de BTS)
+                            val own = audioFiles.filter { artistSplitter.matches(it.artist, subView.artistName) }
                             // Colaboraciones que Deezer atribuye al artista pero cuya etiqueta solo nombra a otro
                             // (MY BLOOD de Polima WestCoast con Pablo Chill-E): también son suyas en el perfil.
                             val ownIds = own.mapTo(HashSet()) { it.id }
-                            val visibleIds = filteredFiles.mapTo(HashSet()) { it.id }
+                            val visibleIds = audioFiles.mapTo(HashSet()) { it.id }
                             val collabs = artistOnline?.let { st -> st.topTracks.mapNotNull { st.matcher.findTrack(it) } }.orEmpty()
                                 .filter { it.id !in ownIds && it.id in visibleIds }.distinctBy { it.id }
                             own + collabs
@@ -1162,6 +1164,31 @@ fun LibraryScreen(
                                 )
                             }
                         } else if (subView is SubView.AlbumDetail) {
+                            // Normalizar solo este álbum: mismo análisis y revisión que en Ajustes
+                            var showAlbumNormalizer by remember { mutableStateOf(false) }
+                            IconButton(
+                                enabled = viewModel != null && subSongs.isNotEmpty(),
+                                onClick = {
+                                    viewModel?.startNormalizeScan(subSongs)
+                                    showAlbumNormalizer = true
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.AutoFixHigh,
+                                    contentDescription = if (isEs) "Normalizar álbum" else "Normalize album",
+                                    tint = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+                            if (showAlbumNormalizer && viewModel != null) {
+                                com.kevshupp.kevmusicplayer.ui.screens.dialogs.LibraryNormalizerDialog(
+                                    viewModel = viewModel,
+                                    title = if (isEs) "Normalizar álbum" else "Normalize album",
+                                    onDismiss = {
+                                        showAlbumNormalizer = false
+                                        com.kevshupp.kevmusicplayer.data.LibraryNormalizer.reset()
+                                    }
+                                )
+                            }
                             IconButton(onClick = { albumForEditing = subView.albumName }) {
                                 Icon(
                                     imageVector = Icons.Rounded.Edit,
@@ -1583,7 +1610,7 @@ fun LibraryScreen(
                                 if (subView is SubView.ArtistDetail && (!artistTabbed || artistTab != ArtistTab.DISCOGRAPHY)) {
                                     item {
                                         val artistAlbums = remember(subSongs) {
-                                            subSongs.groupBy { it.album }.filterKeys { it.isNotBlank() }
+                                            groupByAlbum(subSongs).filterKeys { it.isNotBlank() }
                                         }
                                         if (artistAlbums.isNotEmpty()) {
                                             Text(
@@ -1601,7 +1628,7 @@ fun LibraryScreen(
                                                     val albumSongs = artistAlbums[albumName] ?: emptyList()
                                                     // El álbum completo (como al abrirlo): incluye las colaboraciones,
                                                     // que tienen otro artista ("Bad Bunny, Daddy Yankee")
-                                                    val albumTrackCount = albums[albumName]?.size ?: albumSongs.size
+                                                    val albumTrackCount = (albums[albumName] ?: albums.entries.firstOrNull { com.kevshupp.kevmusicplayer.data.LibraryNormalizer.albumKey(it.key) == com.kevshupp.kevmusicplayer.data.LibraryNormalizer.albumKey(albumName) }?.value)?.size ?: albumSongs.size
                                                     val firstSong = albumSongs.firstOrNull()
                                                     val artBytes = rememberAlbumArt(firstSong?.uriString)
                                                     
@@ -2246,3 +2273,11 @@ fun String.stripAccents(): String {
     return Regex("\\p{InCombiningDiacriticalMarks}+").replace(normalized, "")
 }
 
+/**
+ * Agrupa por álbum sin distinguir mayúsculas ni tildes ("WINGS" y "wings" son uno). El nombre que se muestra es
+ * el más repetido entre sus canciones.
+ */
+internal fun groupByAlbum(songs: List<com.kevshupp.kevmusicplayer.data.AudioFile>): Map<String, List<com.kevshupp.kevmusicplayer.data.AudioFile>> =
+    songs.groupBy { com.kevshupp.kevmusicplayer.data.LibraryNormalizer.albumKey(it.album) }.values.associate { group ->
+        group.groupingBy { it.album }.eachCount().maxByOrNull { it.value }!!.key to group
+    }

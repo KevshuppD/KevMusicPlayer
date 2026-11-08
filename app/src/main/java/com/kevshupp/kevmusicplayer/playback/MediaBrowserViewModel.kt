@@ -626,8 +626,8 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
                     }
                 }
 
-                // 2. If currently stored DB lyrics are already synchronized, do not fetch online
-                if (dbIsSynced) {
+                // 2. If currently stored DB lyrics are already synchronized (or marked instrumental), do not fetch online
+                if (dbIsSynced || currentSongLyrics == LyricsRepository.INSTRUMENTAL) {
                     return@launch
                 }
 
@@ -2341,6 +2341,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
 
     /** Analiza la biblioteca con Deezer para "Normalizar biblioteca" (ver [com.kevshupp.kevmusicplayer.data.LibraryNormalizer]). */
     fun startNormalizeScan(full: Boolean) = com.kevshupp.kevmusicplayer.data.LibraryNormalizer.scan(getApplication(), ArrayList(localAudioFiles), full)
+
+    /** Normalizar solo estas canciones (un álbum), siempre completo. */
+    fun startNormalizeScan(songs: List<com.kevshupp.kevmusicplayer.data.AudioFile>) =
+        com.kevshupp.kevmusicplayer.data.LibraryNormalizer.scan(getApplication(), ArrayList(songs), full = true)
 
     /**
      * Aplica las correcciones elegidas. Título y artista forman la clave de las listas y estadísticas en la nube
