@@ -764,6 +764,7 @@ fun TagEditorDialog(
             Button(
                 onClick = {
                     isSaving = true
+                    com.kevshupp.kevmusicplayer.data.KnownArtists.add(listOf(mainArtist) + guests)
                     viewModel?.updateSongMetadata(
                         context = context,
                         songId = song.id,

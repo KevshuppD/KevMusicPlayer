@@ -9,13 +9,15 @@ import java.text.Normalizer
  * - `feat.`, `ft.`, `featuring`, `with` siempre separan (también entre paréntesis: "X (feat. Y)").
  * - `,` `&` `/` `;` ` x ` ` y ` ` and ` solo separan si alguna de las partes ya aparece sola como artista en la
  *   biblioteca: así "Simon & Garfunkel", "Earth, Wind & Fire" o "Los Bunkers y ..." sin canciones sueltas de sus
- *   miembros siguen enteros.
+ *   miembros siguen enteros. También cuenta como conocido quien ya salió separado en otra canción: con
+ *   "Bad Bunny, DUKI, Pablo Chill-E" (Bad Bunny tiene canciones solo), "Polima WestCoast, Pablo Chill-E" se separa
+ *   aunque ninguno de los dos tenga una canción en solitario.
  *
  * El nombre que se muestra es el de la canción en solitario si existe (su forma de escribirlo), si no la primera
  * que aparece.
  */
 class ArtistSplitter(artistFields: Collection<String>) {
-    private val soloKeys: Set<String> = artistFields.mapTo(HashSet()) { key(it) }
+    private val soloKeys: Set<String> = knownArtists(artistFields)
     private val displayByKey = HashMap<String, String>()
 
     init {
@@ -52,6 +54,25 @@ class ArtistSplitter(artistFields: Collection<String>) {
     private fun display(name: String) = displayByKey[key(name)] ?: name
 
     companion object {
+        /** Los que aparecen solos y, por cadena, los que salen separados gracias a ellos (hasta no cambiar). */
+        private fun knownArtists(fields: Collection<String>): Set<String> {
+            val known = fields.mapTo(HashSet()) { key(it) }
+            KnownArtists.all().forEach { known += key(it) }
+            val chunks = fields.flatMap { f ->
+                strong.split(f.replace(Regex("[()\\[\\]]"), " ")).map { it.trim() }.filter { it.isNotEmpty() }
+                    .also { parts -> if (parts.size > 1) parts.forEach { known += key(it) } }
+            }.map { c -> weak.split(c).map { it.trim() }.filter { it.isNotEmpty() } }.filter { it.size > 1 }
+            var changed = true
+            var rounds = 0
+            while (changed && rounds++ < 10) {
+                changed = false
+                for (parts in chunks) {
+                    if (parts.any { key(it) in known }) parts.forEach { if (known.add(key(it))) changed = true }
+                }
+            }
+            return known
+        }
+
         private val strong = Regex("\\s+(?:feat\\.?|ft\\.?|featuring|with)\\s+", RegexOption.IGNORE_CASE)
         private val weak = Regex("\\s*(?:,|&|/|;|\\s+x\\s+|\\s+y\\s+|\\s+and\\s+)\\s*", RegexOption.IGNORE_CASE)
 

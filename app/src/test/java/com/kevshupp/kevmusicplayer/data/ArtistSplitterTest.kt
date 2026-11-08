@@ -37,4 +37,12 @@ class ArtistSplitterTest {
         assertTrue(splitter.matches("ROSALIA y Bad Bunny", "rosalia"))
         assertEquals("Bad Bunny", splitter.primary("Bad Bunny & Nicky Jam"))
     }
+
+    @Test fun colaboradorConocidoPorOtraColaboracion() {
+        // Ni Polima ni Pablo tienen canciones solos, pero Pablo sale separado gracias a Bad Bunny
+        val s = ArtistSplitter(listOf("Bad Bunny", "Bad Bunny, DUKI, Pablo Chill-E", "Polima WestCoast, Pablo Chill-E", "Earth, Wind & Fire"))
+        assertEquals(listOf("Polima WestCoast", "Pablo Chill-E"), s.split("Polima WestCoast, Pablo Chill-E"))
+        assertTrue(s.matches("Polima WestCoast, Pablo Chill-E", "Pablo Chill-E"))
+        assertEquals(listOf("Earth, Wind & Fire"), s.split("Earth, Wind & Fire"))
+    }
 }

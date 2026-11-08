@@ -299,6 +299,7 @@ object LibraryNormalizer {
         val dzArtist = track.optJSONObject("artist")?.optString("name").orEmpty().ifBlank { match.artist }
         val contributors = track.optJSONArray("contributors")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it)?.optString("name")?.takeIf { n -> n.isNotBlank() } } }.orEmpty().distinct()
         val joined = contributors.joinToString(", ")
+        KnownArtists.add(contributors)
         val localArtist = LibraryMatcher.normalize(song.artist)
         val artist = when {
             isUnknown(song.artist) -> dzArtist
@@ -432,6 +433,7 @@ object LibraryNormalizer {
         val title = details.optString("title").ifBlank { track.title }
         val main = details.optJSONObject("artist")?.optString("name").orEmpty().ifBlank { track.artist }
         val full = withGuests(main, contributorsOf(details))
+        KnownArtists.add(listOf(main) + contributorsOf(details))
         // Principal con invitados; si el archivo ya los nombra a todos ("A feat. B") se conserva su forma
         val currentNorm = LibraryMatcher.normalize(current[1])
         val artist = current[1].takeIf { c ->
