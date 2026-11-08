@@ -35,6 +35,7 @@ fun SettingsScreen(status: ConnStatus) {
     var query by remember { mutableStateOf("") }
     var checking by remember { mutableStateOf(false) }
     var checkedNoUpdate by remember { mutableStateOf(false) }
+    var checkFailed by remember { mutableStateOf(false) }
     var cacheCleared by remember { mutableStateOf(false) }
     val saved = remember(status) { Config.load() }
 
@@ -262,12 +263,13 @@ fun SettingsScreen(status: ConnStatus) {
                                 checking = true
                                 checkedNoUpdate = false
                                 scope.launch {
-                                    Updater.check()
+                                    checkFailed = !Updater.check()
                                     checking = false
-                                    checkedNoUpdate = Updater.state.value is UpdateState.Idle
+                                    checkedNoUpdate = !checkFailed && Updater.state.value is UpdateState.Idle
                                 }
                             }, enabled = !checking) { Text(if (checking) "Buscando…" else "Buscar ahora") }
                             Spacer(Modifier.width(12.dp))
+                            if (checkFailed) Text("No se pudo comprobar: revisa la conexión", color = MaterialTheme.colorScheme.error)
                             if (checkedNoUpdate && update is UpdateState.Idle) Text("Tienes la última versión", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }

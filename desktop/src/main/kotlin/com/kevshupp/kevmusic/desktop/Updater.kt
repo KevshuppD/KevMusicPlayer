@@ -43,11 +43,33 @@ object Updater {
     /** Instalada con el .deb o el .msi (y no ejecutada desde el código con probar.sh). */
     val isInstalledBuild: Boolean = ProcessHandle.current().info().command().orElse("").startsWith(INSTALL_DIR, ignoreCase = Platform.isWindows)
 
-    suspend fun check() {
-        val release = withContext(Dispatchers.IO) { runCatching { fetchLatest() }.getOrNull() } ?: return
+    /** false si no se pudo comprobar (sin red): no es lo mismo que "no hay versión nueva". */
+    suspend fun check(): Boolean {
+        val release = withContext(Dispatchers.IO) {
+            runCatching { fetchLatest() }.getOrNull() ?: runCatching { fetchFromFeed() }.getOrNull()
+        } ?: return false
         if (isNewer(release.version, BuildInfo.VERSION) && _state.value is UpdateState.Idle) {
             _state.value = UpdateState.Available(release)
         }
+        return true
+    }
+
+    /**
+     * Sin la API: api.github.com sin sesión permite 60 consultas por hora por IP pública, compartidas con el teléfono
+     * y con cada apertura de la app; agotadas, la 1.6.1 decía que no había versión nueva. El feed de releases no
+     * tiene ese límite: de él sale la versión más alta, y el paquete y las notas por sus direcciones fijas.
+     */
+    private fun fetchFromFeed(): DesktopRelease? {
+        val feed = http.newCall(Request.Builder().url("https://github.com/$REPO/releases.atom").build()).execute()
+            .use { if (it.isSuccessful) it.body!!.string() else return null }
+        val version = Regex("""/releases/tag/${TAG_PREFIX}(\d+\.\d+\.\d+)""").findAll(feed).map { it.groupValues[1] }
+            .maxWithOrNull { a, b -> compareVersions(a, b) } ?: return null
+        val name = if (Platform.isWindows) "kevmusic-desktop-$version-windows-x64.msi" else "kevmusic-desktop_${version}_amd64.deb"
+        val notes = runCatching {
+            http.newCall(Request.Builder().url("https://raw.githubusercontent.com/$REPO/main/changelog/$TAG_PREFIX$version.md").build())
+                .execute().use { if (it.isSuccessful) it.body!!.string() else "" }
+        }.getOrDefault("")
+        return DesktopRelease(version, notes, "https://github.com/$REPO/releases/download/$TAG_PREFIX$version/$name", name, 0L)
     }
 
     fun dismiss() {

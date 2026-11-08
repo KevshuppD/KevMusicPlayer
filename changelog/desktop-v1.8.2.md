@@ -1,0 +1,2 @@
+- **Buscar actualizaciones ya no falla en silencio:** si GitHub limita las consultas, la app busca la versión nueva por otra vía; antes decía que no había actualizaciones
+- Si no se puede comprobar (sin internet), Ajustes lo dice en vez de "Tienes la última versión"
