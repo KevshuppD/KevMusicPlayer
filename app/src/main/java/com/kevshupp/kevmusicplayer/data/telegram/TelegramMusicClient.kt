@@ -519,14 +519,30 @@ object TelegramMusicClient {
 
     private suspend fun download(c: TdlClient, received: ReceivedAudio, onProgress: (Float) -> Unit): TelegramAudio {
         onProgress(0f)
+        // Sin límite, una descarga atascada de TDLib dejaba la canción cargando para siempre
+        // (y el bot ocupado para las siguientes): si no avanza en STALL_TIMEOUT_MS se cancela.
+        val lastProgressAt = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
         val progressJob = scope.launch {
             c.fileUpdates.filter { it.file.id == received.file.id }.collect { u ->
+                lastProgressAt.set(System.currentTimeMillis())
                 val total = u.file.size.takeIf { it > 0 } ?: u.file.expectedSize
                 if (total > 0) onProgress((u.file.local.downloadedSize.toFloat() / total).coerceIn(0f, 1f))
             }
         }
         val file = try {
-            c.downloadFile(fileId = received.file.id, priority = 32, offset = 0L, limit = 0L, synchronous = true).getOrThrow()
+            coroutineScope {
+                val job = async { c.downloadFile(fileId = received.file.id, priority = 32, offset = 0L, limit = 0L, synchronous = true) }
+                while (job.isActive) {
+                    kotlinx.coroutines.delay(1_000)
+                    if (job.isActive && System.currentTimeMillis() - lastProgressAt.get() > STALL_TIMEOUT_MS) {
+                        job.cancel()
+                        c.cancelDownloadFile(fileId = received.file.id, onlyIfPending = false)
+                        TelemetryLogger.logError("Telegram", "Descarga atascada: ${received.fileName}")
+                        throw java.io.IOException("La descarga se atascó")
+                    }
+                }
+                job.await().getOrThrow()
+            }
         } finally {
             progressJob.cancel()
         }
@@ -571,6 +587,7 @@ object TelegramMusicClient {
     private fun TdlResult<*>.failureMessage(): String? = (this as? TdlResult.Failure)?.message
 
     private const val REPLY_TIMEOUT_MS = 90_000L
+    private const val STALL_TIMEOUT_MS = 45_000L
     private const val FILTER_POLLS = 30
     private const val FILTER_POLL_MS = 500L
     private const val SELECTED_MARK = "\u2705"

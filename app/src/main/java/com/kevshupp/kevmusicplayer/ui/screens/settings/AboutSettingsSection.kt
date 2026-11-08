@@ -595,83 +595,56 @@ fun AboutSettingsSection(
             }
         }
 
-        // 4. Tecnologías y Arquitectura Utilizadas (Professional Tech Stack Showcase)
+        // 4. Stack tecnológico: colores del tema (antes un rosa fijo y cajas grises)
         Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = settingsCardContainerColor()),
             modifier = Modifier.fillMaxWidth()
         ) {
+            val accent = MaterialTheme.colorScheme.primary
             Column(modifier = Modifier.padding(18.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFFF0055).copy(alpha = 0.15f)),
+                        modifier = Modifier.size(36.dp).clip(CircleShape).background(accent.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Code,
-                            contentDescription = null,
-                            tint = Color(0xFFFF0055),
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Icon(Icons.Rounded.Code, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
                     }
                     Column {
-                        Text(
-                            text = getLocalized("Stack Tecnológico y Arquitectura", "Tech Stack & Architecture"),
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = settingsTextColor()
-                        )
-                        Text(
-                            text = getLocalized("Ingeniería Android Moderna", "Modern Android Engineering"),
-                            fontSize = 12.sp,
-                            color = Color(0xFFFF0055),
-                            fontWeight = FontWeight.Medium
-                        )
+                        Text(getLocalized("Stack tecnológico", "Tech stack"), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = settingsTextColor())
+                        Text(getLocalized("Con qué está hecha la app", "What the app is built with"), fontSize = 12.sp, color = settingsTextMutedColor())
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                val techCards = listOf(
-                    Pair("Jetpack Compose & Material 3", getLocalized("Interfaz declarativa reactiva con diseño Glassmorphism y soporte de tasa de refresco a 120Hz.", "Reactive declarative UI with Glassmorphism design and 120Hz refresh rate support.")),
-                    Pair("AndroidX Media3 ExoPlayer", getLocalized("Servicio multimedia de baja latencia con reproducción en segundo plano y control de notificaciones.", "Low-latency multimedia service with background playback and notification controls.")),
-                    Pair("DSP Audio FX Processing", getLocalized("Ecualizador de 5 bandas, refuerzo de graves (Bass Boost), sonido virtualizado y normalización ReplayGain.", "5-band equalizer, Bass Boost, Virtualizer surround sound, and ReplayGain normalization.")),
-                    Pair("Room SQLite Database", getLocalized("Almacenamiento local indexado para búsqueda instantánea en colecciones de miles de canciones.", "Indexed local storage for instant search across collections of thousands of songs.")),
-                    Pair("Google Firebase Cloud Services", getLocalized("Autenticación con Google Play Services y respaldos NoSQL comprimidos en Cloud Firestore.", "Google Play Services authentication and GZIP compressed NoSQL backups on Cloud Firestore.")),
-                    Pair("Jaudiotagger & Mp3agic", getLocalized("Edición física de etiquetas ID3v1/v2, FLAC, Vorbis y MP4 sin alterar la fidelidad sonora.", "Physical tag editing for ID3v1/v2, FLAC, Vorbis, and MP4 without altering sound fidelity.")),
-                    Pair("Coil & Multi-Level Art Cache", getLocalized("Caché en 5 niveles (RAM LruCache + WebP en disco + aceleración MediaStore por hardware).", "5-tier cache hierarchy (RAM LruCache + WebP on disk + hardware MediaStore thumbnails).")),
-                    Pair("Deezer API & OkHttp", getLocalized("Búsqueda y descarga de carátulas en ultra alta definición (1000x1000) y letras sincronizadas LRC.", "Ultra high-resolution cover search (1000x1000) and synchronized LRC lyrics fetching."))
+                data class Tech(val icon: androidx.compose.ui.graphics.vector.ImageVector, val name: String, val desc: String)
+                val techs = listOf(
+                    Tech(Icons.Rounded.Brush, "Kotlin · Jetpack Compose", getLocalized("Interfaz con Material 3, temas y 120 Hz", "Material 3 UI, themes and 120 Hz")),
+                    Tech(Icons.Rounded.PlayCircle, "Media3 · ExoPlayer", getLocalized("Reproducción en segundo plano y notificación", "Background playback and notification")),
+                    Tech(Icons.Rounded.GraphicEq, "Audio DSP", getLocalized("Ecualizador, graves, virtualizador y ReplayGain", "Equalizer, bass, virtualizer and ReplayGain")),
+                    Tech(Icons.Rounded.Storage, "Room · MediaStore", getLocalized("Biblioteca local indexada", "Indexed local library")),
+                    Tech(Icons.Rounded.Sell, "Jaudiotagger · mp3agic", getLocalized("Edición de etiquetas en el archivo", "Tag editing in the file")),
+                    Tech(Icons.Rounded.Cloud, "Firebase", getLocalized("Inicio de sesión con Google y copias en Firestore", "Google sign-in and Firestore backups")),
+                    Tech(Icons.Rounded.Image, "Coil · Deezer · LrcLib", getLocalized("Carátulas HD, metadatos y letras sincronizadas", "HD covers, metadata and synced lyrics")),
+                    Tech(Icons.Rounded.Send, "TDLib · Soulseek", getLocalized("Descargas por Telegram y por la red Soulseek", "Downloads via Telegram and Soulseek")),
+                    Tech(Icons.Rounded.Cast, "Google Cast · DLNA", getLocalized("Transmisión a la TV", "Casting to the TV"))
                 )
 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    techCards.forEach { (techName, techDesc) ->
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(settingsDividerColor().copy(alpha = 0.5f))
-                                .padding(horizontal = 12.dp, vertical = 10.dp)
-                        ) {
-                            Column {
-                                Text(
-                                    text = techName,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = techDesc,
-                                    fontSize = 11.sp,
-                                    lineHeight = 15.sp,
-                                    color = settingsTextMutedColor()
-                                )
+                Column {
+                    techs.forEachIndexed { i, t ->
+                        if (i > 0) HorizontalDivider(color = settingsDividerColor().copy(alpha = 0.4f), modifier = Modifier.padding(start = 42.dp))
+                        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier.size(30.dp).clip(RoundedCornerShape(10.dp)).background(accent.copy(alpha = 0.12f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(t.icon, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(t.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = settingsTextColor())
+                                Text(t.desc, fontSize = 11.sp, lineHeight = 14.sp, color = settingsTextMutedColor())
                             }
                         }
                     }

@@ -11,7 +11,8 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.io.IOException
 
-data class MetadataResult(val title: String, val artist: String, val album: String)
+/** [deezerId] > 0 si viene de Deezer: el editor pide con él los colaboradores (`contributors`). */
+data class MetadataResult(val title: String, val artist: String, val album: String, val deezerId: Long = 0)
 
 data class MbRecording(val title: String, val artist: String, val album: String, val lengthSec: Int, val year: String)
 
@@ -33,7 +34,7 @@ enum class MetadataProvider(val key: String, val label: String) {
 object MetadataSearch {
     /** [artistHint] es el artista del editor: si la búsqueda empieza por él, MusicBrainz puede buscar por campos. */
     suspend fun search(provider: MetadataProvider, query: String, artistHint: String, durationMs: Long = 0L): List<MetadataResult> = when (provider) {
-        MetadataProvider.Deezer -> DeezerTrackSearch.search(query, 15, includeUnavailable = true).map { MetadataResult(it.title, it.artist, it.album) }
+        MetadataProvider.Deezer -> DeezerTrackSearch.search(query, 15, includeUnavailable = true).map { MetadataResult(it.title, it.artist, it.album, it.id) }
         MetadataProvider.MusicBrainz -> musicBrainz(query, artistHint, durationMs)
         MetadataProvider.LrcLib -> {
             val failed = java.util.concurrent.atomic.AtomicBoolean(false)

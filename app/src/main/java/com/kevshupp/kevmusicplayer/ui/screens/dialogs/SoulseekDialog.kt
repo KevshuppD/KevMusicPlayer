@@ -3,6 +3,8 @@ package com.kevshupp.kevmusicplayer.ui.screens.dialogs
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -37,6 +39,7 @@ import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.data.remote.SoulseekAccount
 import com.kevshupp.kevmusicplayer.data.soulseek.SoulseekManager
 import com.kevshupp.kevmusicplayer.data.telegram.DeezerAlbum
+import com.kevshupp.kevmusicplayer.data.telegram.DeezerTrack
 import com.kevshupp.kevmusicplayer.data.telegram.DeezerTrackSearch
 import com.kevshupp.soulseek.*
 import kotlinx.coroutines.launch
@@ -153,6 +156,9 @@ private fun SearchTab(librarySongs: List<AudioFile>, downloads: List<Transfer>) 
     var error by remember { mutableStateOf<String?>(null) }
     var albums by remember { mutableStateOf<List<DeezerAlbum>>(emptyList()) }
     var openAlbum by remember { mutableStateOf<DeezerAlbum?>(null) }
+    // Canción que nombra la búsqueda ("butter bts") y filtro por artista
+    var song by remember { mutableStateOf<DeezerTrack?>(null) }
+    var artistFilter by remember { mutableStateOf<String?>(null) }
     var expanded by remember(results.isEmpty()) { mutableStateOf(setOf<String>()) }
 
     val groups = remember(results, format, onlyFree) {
@@ -181,14 +187,28 @@ private fun SearchTab(librarySongs: List<AudioFile>, downloads: List<Transfer>) 
         }
         albums.mapNotNull { a -> matched[a.id]?.let { a to rankSources(a.trackCount, it) } } to rest
     }
+    val songFiles = remember(groups, song) { song?.let { songMatches(groups, it.title, it.artist, it.durationSec) }.orEmpty() }
+    // Artistas reconocidos (de la canción y de los álbumes con fuentes), para filtrar
+    val artists = remember(byAlbum, song) {
+        (listOfNotNull(song?.artist) + byAlbum.map { it.first.artist })
+            .distinctBy { slskKey(it) }.filter { it.isNotBlank() }
+    }
+    val sameArtist = { name: String -> artistFilter == null || slskKey(name) == slskKey(artistFilter!!) }
+    val shownAlbums = byAlbum.filter { sameArtist(it.first.artist) }
+    val shownSong = songFiles.takeIf { song != null && sameArtist(song!!.artist) }.orEmpty()
+    val shownOthers = artistFilter?.let { a -> others.filter { pathHasArtist(it.folder, a) } } ?: others
 
     fun search() {
         val q = query.trim()
         if (q.isBlank()) return
         keyboard?.hide()
-        error = null; expanded = emptySet(); openAlbum = null; albums = emptyList()
+        error = null; expanded = emptySet(); openAlbum = null; albums = emptyList(); song = null; artistFilter = null
         client.search(q)
         scope.launch { albums = runCatching { DeezerTrackSearch.searchAlbums(q, 25) }.getOrDefault(emptyList()) }
+        scope.launch {
+            song = runCatching { DeezerTrackSearch.search(q, 10, includeUnavailable = true) }.getOrDefault(emptyList())
+                .firstOrNull { queryNamesSong(q, it.title, it.artist) }
+        }
     }
 
     openAlbum?.let { album ->
@@ -219,11 +239,20 @@ private fun SearchTab(librarySongs: List<AudioFile>, downloads: List<Transfer>) 
             }
             FilterChip(onlyFree, { onlyFree = !onlyFree }, label = { Text("Disponible ahora") })
         }
+        if (artists.isNotEmpty()) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(artistFilter == null, { artistFilter = null }, label = { Text("Todos los artistas") })
+                artists.forEach { a ->
+                    FilterChip(artistFilter == a, { artistFilter = if (artistFilter == a) null else a }, label = { Text(a, maxLines = 1) })
+                }
+            }
+        }
         if (results.isNotEmpty() || searching) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                 if (searching) { CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
                 Text(
-                    (if (byAlbum.isNotEmpty()) "${byAlbum.size} álbumes reconocidos · " else "") + "${groups.size} carpetas de ${results.size} usuarios",
+                    (if (shownSong.isNotEmpty()) "Canción reconocida · " else "") +
+                        (if (shownAlbums.isNotEmpty()) "${shownAlbums.size} álbumes reconocidos · " else "") + "${groups.size} carpetas de ${results.size} usuarios",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -242,14 +271,20 @@ private fun SearchTab(librarySongs: List<AudioFile>, downloads: List<Transfer>) 
             return@Column
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
-            if (byAlbum.isNotEmpty()) {
+            song?.takeIf { shownSong.isNotEmpty() }?.let { t ->
+                item(key = "h-song") { ListHeader("Canción · ${t.title} — ${t.artist}") }
+                items(shownSong, key = { "song-" + it.first.user + "|" + it.second.path }) { (g, f) ->
+                    FileRow(g.user, f, state[g.user + "|" + f.path], subtitle = g.user + if (g.free) " · disponible" else " · cola ${g.queue}")
+                }
+            }
+            if (shownAlbums.isNotEmpty()) {
                 item(key = "h-albums") { ListHeader("Álbumes") }
-                items(byAlbum, key = { "album-" + it.first.id }) { (album, sources) ->
+                items(shownAlbums, key = { "album-" + it.first.id }) { (album, sources) ->
                     AlbumCard(album, sources, owned[album.id] ?: 0) { openAlbum = album }
                 }
-                if (others.isNotEmpty()) item(key = "h-others") { ListHeader("Otras carpetas") }
             }
-            folders(others, expanded, state, 0, { k -> expanded = if (k in expanded) expanded - k else expanded + k }) { error = it }
+            if ((shownSong.isNotEmpty() || shownAlbums.isNotEmpty()) && shownOthers.isNotEmpty()) item(key = "h-others") { ListHeader("Otras carpetas") }
+            folders(shownOthers, expanded, state, 0, { k -> expanded = if (k in expanded) expanded - k else expanded + k }) { error = it }
         }
     }
 }
@@ -402,7 +437,7 @@ private fun FolderCard(g: FolderGroup, expanded: Boolean, state: Map<String, Tra
 }
 
 @Composable
-private fun FileRow(user: String, f: SlskFile, t: Transfer?) {
+private fun FileRow(user: String, f: SlskFile, t: Transfer?, subtitle: String? = null) {
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -411,7 +446,7 @@ private fun FileRow(user: String, f: SlskFile, t: Transfer?) {
             Text(f.name, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 t?.let { stateLabel(it) } ?: listOfNotNull(
-                    f.extension.uppercase(), quality(f.bitrate, f.bitDepth, f.sampleRate), formatSize(f.size),
+                    subtitle, f.extension.uppercase(), quality(f.bitrate, f.bitDepth, f.sampleRate), formatSize(f.size),
                     f.durationSec?.let { "%d:%02d".format(it / 60, it % 60) }
                 ).joinToString(" · "),
                 fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1

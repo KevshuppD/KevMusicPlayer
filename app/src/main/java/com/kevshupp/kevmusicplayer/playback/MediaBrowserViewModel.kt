@@ -1048,7 +1048,10 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
             e.printStackTrace()
         }
         
-        val fullQueue = customQueue ?: localAudioFiles
+        // Si la canción no está en la lista (p. ej. una colaboración etiquetada solo con otro artista en el
+        // perfil en línea), se pone delante: antes sonaba la primera de la lista en su lugar.
+        val baseQueue = customQueue ?: localAudioFiles
+        val fullQueue = if (baseQueue.any { it.id == file.id }) baseQueue else listOf(file) + baseQueue
         queueManager.setOriginalQueue(fullQueue.toList())
         val fullIndex = fullQueue.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
         

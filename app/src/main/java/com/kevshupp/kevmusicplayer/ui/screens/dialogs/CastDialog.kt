@@ -6,7 +6,10 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -33,7 +36,7 @@ fun CastDialog(queue: () -> Pair<List<AudioFile>, Long>, onStarted: () -> Unit, 
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Rounded.Cast, null) },
+        icon = { Icon(Icons.Rounded.Cast, null, tint = MaterialTheme.colorScheme.primary) },
         title = { Text(state.device ?: "Transmitir a") },
         text = {
             // El diálogo es otra ventana: los botones de volumen le llegan a él y no a MainActivity
@@ -75,7 +78,7 @@ fun CastDialog(queue: () -> Pair<List<AudioFile>, Long>, onStarted: () -> Unit, 
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                             IconButton(onClick = CastController::previous) { Icon(Icons.Rounded.SkipPrevious, "Anterior") }
-                            IconButton(onClick = CastController::togglePlay) { Icon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Reproducir o pausar") }
+                            FilledIconButton(onClick = CastController::togglePlay, modifier = Modifier.size(52.dp)) { Icon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Reproducir o pausar") }
                             IconButton(onClick = CastController::next) { Icon(Icons.Rounded.SkipNext, "Siguiente") }
                         }
                     }
@@ -93,7 +96,11 @@ fun CastDialog(queue: () -> Pair<List<AudioFile>, Long>, onStarted: () -> Unit, 
                             }.padding(vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Rounded.Tv, null)
+                            Box(
+                                Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                                contentAlignment = Alignment.Center
+                            ) { Icon(Icons.Rounded.Tv, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp)) }
                             Spacer(Modifier.width(12.dp))
                             Column {
                                 Text(device.name)

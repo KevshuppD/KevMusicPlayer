@@ -132,6 +132,34 @@ fun PlayerScreen(
     val rememberLyricsOpen = remember(settingsPrefs) { settingsPrefs.getBoolean("remember_lyrics_open", true) }
 
     var showMoreOptions by remember { mutableStateOf(false) }
+    // Canción con colaboradores: al ir al artista se elige cuál (antes abría siempre el principal)
+    var artistChoices by remember { mutableStateOf<List<String>>(emptyList()) }
+    val goToArtist: (String) -> Unit = { field ->
+        val files = viewModel?.localAudioFiles
+        val parts = if (files == null) listOf(field)
+            else com.kevshupp.kevmusicplayer.data.ArtistSplitter(files.map { it.artist }.distinct()).split(field)
+        if (parts.size > 1) artistChoices = parts else { onNavigateToArtist(parts.first()); onBack() }
+    }
+    if (artistChoices.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { artistChoices = emptyList() },
+            title = { Text(if (isEs) "Ir al artista" else "Go to artist") },
+            text = {
+                Column {
+                    artistChoices.forEach { name ->
+                        Text(
+                            name, fontSize = 16.sp,
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                artistChoices = emptyList()
+                                onNavigateToArtist(name); onBack()
+                            }.padding(vertical = 12.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { artistChoices = emptyList() }) { Text(if (isEs) "Cancelar" else "Cancel") } }
+        )
+    }
     var showQueueSheet by remember { mutableStateOf(false) }
     var showFileInfoDialog by remember { mutableStateOf(false) }
     var showLyrics by rememberSaveable {
@@ -969,8 +997,7 @@ fun PlayerScreen(
                                          textAlign = TextAlign.Center,
                                          modifier = Modifier.clickable {
                                              if (pageArtist != "Unknown Artist" && pageArtist.isNotBlank()) {
-                                                 onNavigateToArtist(pageArtist)
-                                                 onBack()
+                                                 goToArtist(pageArtist)
                                              }
                                          }
                                      )
@@ -1471,8 +1498,7 @@ fun PlayerScreen(
                                 .fillMaxWidth()
                                 .clickable {
                                     showMoreOptions = false
-                                    onNavigateToArtist(artist)
-                                    onBack()
+                                    goToArtist(artist)
                                 }
                                 .padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -1490,8 +1516,7 @@ fun PlayerScreen(
                                 .fillMaxWidth()
                                 .clickable {
                                     showMoreOptions = false
-                                    onNavigateToArtist(artist)
-                                    onBack()
+                                    goToArtist(artist)
                                 }
                                 .padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically

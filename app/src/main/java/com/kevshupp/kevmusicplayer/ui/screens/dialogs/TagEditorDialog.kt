@@ -40,7 +40,20 @@ fun TagEditorDialog(
     }
 
     var title by remember { mutableStateOf(song.title) }
-    var artist by remember { mutableStateOf(song.artist) }
+    // Artista = principal + colaboradores ("Polima WestCoast, Pablo Chill-E"), editados por separado
+    val splitter = remember(viewModel) {
+        com.kevshupp.kevmusicplayer.data.ArtistSplitter(viewModel?.localAudioFiles?.map { it.artist }?.distinct().orEmpty())
+    }
+    var mainArtist by remember { mutableStateOf(splitter.split(song.artist).first()) }
+    var guests by remember { mutableStateOf(splitter.split(song.artist).drop(1)) }
+    var newGuest by remember { mutableStateOf("") }
+    var guestStatus by remember { mutableStateOf<String?>(null) }
+    var guestSearching by remember { mutableStateOf(false) }
+    fun setArtist(field: String) {
+        val parts = splitter.split(field)
+        mainArtist = parts.first(); guests = parts.drop(1)
+    }
+    val artist = com.kevshupp.kevmusicplayer.data.LibraryNormalizer.withGuests(mainArtist.trim(), guests)
     var album by remember { mutableStateOf(song.album) }
     var genre by remember { mutableStateOf(song.genre) }
 
@@ -510,9 +523,9 @@ fun TagEditorDialog(
 
                 item {
                     OutlinedTextField(
-                        value = artist,
-                        onValueChange = { artist = it },
-                        label = { Text(getLocalized("Artista", "Artist"), color = Color.White.copy(alpha = 0.5f)) },
+                        value = mainArtist,
+                        onValueChange = { mainArtist = it },
+                        label = { Text(getLocalized("Artista principal", "Main artist"), color = Color.White.copy(alpha = 0.5f)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -523,6 +536,67 @@ fun TagEditorDialog(
                             cursorColor = MaterialTheme.colorScheme.primary
                         )
                     )
+                }
+
+                item {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text(getLocalized("Colaboradores", "Featured artists"), color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                        if (guests.isNotEmpty()) {
+                            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                guests.forEach { g ->
+                                    InputChip(
+                                        selected = false, onClick = { guests = guests - g },
+                                        label = { Text(g, color = Color.White) },
+                                        trailingIcon = { Icon(Icons.Rounded.Close, getLocalized("Quitar", "Remove"), Modifier.size(16.dp), tint = Color.White) }
+                                    )
+                                }
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = newGuest, onValueChange = { newGuest = it }, singleLine = true,
+                                label = { Text(getLocalized("Añadir colaborador", "Add featured artist"), color = Color.White.copy(alpha = 0.5f)) },
+                                modifier = Modifier.weight(1f),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
+                                    cursorColor = MaterialTheme.colorScheme.primary
+                                )
+                            )
+                            IconButton(onClick = {
+                                val g = newGuest.trim()
+                                if (g.isNotEmpty() && guests.none { it.equals(g, true) } && !g.equals(mainArtist.trim(), true)) guests = guests + g
+                                newGuest = ""
+                            }) { Icon(Icons.Rounded.Add, getLocalized("Añadir", "Add"), tint = Color.White) }
+                            IconButton(enabled = !guestSearching && title.isNotBlank(), onClick = {
+                            guestSearching = true; guestStatus = null
+                            scope.launch {
+                                val found = runCatching {
+                                    val match = com.kevshupp.kevmusicplayer.data.telegram.SongRepair.findMatch(song.copy(title = title, artist = artist))
+                                        ?: return@runCatching null
+                                    val a = com.kevshupp.kevmusicplayer.data.telegram.DeezerTrackSearch.trackDetails(match.id).optJSONArray("contributors")
+                                    val names = (0 until (a?.length() ?: 0)).mapNotNull { a?.optJSONObject(it)?.optString("name")?.takeIf { n -> n.isNotBlank() } }
+                                    match.artist to names
+                                }.getOrNull()
+                                guestSearching = false
+                                if (found == null) {
+                                    guestStatus = getLocalized("No se encontró en Deezer", "Not found on Deezer")
+                                } else {
+                                    val (main, names) = found
+                                    mainArtist = main
+                                    guests = names.filter { !it.equals(main, true) }.distinct()
+                                    guestStatus = if (guests.isEmpty()) getLocalized("Deezer no lista colaboradores", "No featured artists on Deezer")
+                                        else getLocalized("Colaboradores de Deezer aplicados", "Featured artists applied from Deezer")
+                                }
+                            }
+                            }) {
+                                if (guestSearching) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                else Icon(Icons.Rounded.Search, getLocalized("Buscar colaboradores en Deezer", "Find featured artists on Deezer"), tint = Color.White)
+                            }
+                        }
+                        guestStatus?.let { Text(it, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp) }
+                    }
                 }
 
                 item {
@@ -657,7 +731,21 @@ fun TagEditorDialog(
                                 .fillMaxWidth()
                                 .clickable {
                                     title = result.title
-                                    artist = result.artist
+                                    setArtist(result.artist)
+                                    if (result.deezerId > 0) {
+                                        guestSearching = true; guestStatus = null
+                                        scope.launch {
+                                            val names = runCatching {
+                                                val a = com.kevshupp.kevmusicplayer.data.telegram.DeezerTrackSearch.trackDetails(result.deezerId).optJSONArray("contributors")
+                                                (0 until (a?.length() ?: 0)).mapNotNull { a?.optJSONObject(it)?.optString("name")?.takeIf { n -> n.isNotBlank() } }
+                                            }.getOrNull()
+                                            guestSearching = false
+                                            if (names != null) {
+                                                guests = (guests + names).filter { !it.equals(mainArtist.trim(), true) }.distinctBy { it.lowercase() }
+                                                if (guests.isNotEmpty()) guestStatus = getLocalized("Colaboradores de Deezer aplicados", "Featured artists applied from Deezer")
+                                            }
+                                        }
+                                    }
                                     if (result.album.isNotBlank()) album = result.album
                                     searchResults = emptyList()
                                     searchStatus = getLocalized("Metadatos aplicados desde la búsqueda en línea", "Metadata applied from online search")

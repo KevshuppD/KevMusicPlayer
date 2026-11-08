@@ -6,7 +6,10 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -151,9 +154,9 @@ private fun ActiveSession(state: TogetherController.State, t: (String, String) -
                 Text(t("Buscando teléfonos cercanos…", "Looking for nearby phones…"))
             }
             state.found.forEach { peer ->
-                OutlinedCard(onClick = { TogetherController.connectTo(peer) }, modifier = Modifier.fillMaxWidth()) {
+                ThemedCard(onClick = { TogetherController.connectTo(peer) }) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.PhoneAndroid, null)
+                        Icon(Icons.Rounded.PhoneAndroid, null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(10.dp))
                         Text(peer.name, fontWeight = FontWeight.SemiBold)
                     }
@@ -211,11 +214,25 @@ private fun ActiveSession(state: TogetherController.State, t: (String, String) -
     state.progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }
 }
 
+/** Tarjeta con el color del tema (antes OutlinedCard con borde gris por defecto). */
+@Composable
+private fun ThemedCard(onClick: () -> Unit, content: @Composable () -> Unit) {
+    val accent = MaterialTheme.colorScheme.primary
+    Card(
+        onClick = onClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = accent.copy(alpha = 0.08f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.25f))
+    ) { content() }
+}
+
 @Composable
 private fun ChoiceCard(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    OutlinedCard(onClick = onClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+    ThemedCard(onClick) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center
+            ) { Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp)) }
             Spacer(Modifier.width(12.dp))
             Column {
                 Text(title, fontWeight = FontWeight.Bold)

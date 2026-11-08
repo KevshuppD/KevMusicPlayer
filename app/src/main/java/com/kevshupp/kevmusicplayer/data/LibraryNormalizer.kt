@@ -302,8 +302,10 @@ object LibraryNormalizer {
         val localArtist = LibraryMatcher.normalize(song.artist)
         val artist = when {
             isUnknown(song.artist) -> dzArtist
-            localArtist == LibraryMatcher.normalize(dzArtist) -> dzArtist
             contributors.size > 1 && localArtist == LibraryMatcher.normalize(joined) -> joined
+            // Solo el principal y Deezer lista invitados: se añaden (MY BLOOD de Polima WestCoast con Pablo Chill-E
+            // no salía en el perfil de Pablo Chill-E)
+            localArtist == LibraryMatcher.normalize(dzArtist) -> if (contributors.size > 1) withGuests(dzArtist, contributors) else dzArtist
             localArtist.contains(LibraryMatcher.normalize(dzArtist)) -> null
             // La etiqueta solo nombra a un invitado: se propone el principal con los demás ("Milo j, Silvio Rodríguez")
             contributors.any { LibraryMatcher.normalize(it) == localArtist } -> joined
@@ -429,8 +431,12 @@ object LibraryNormalizer {
         val album = if (albumId > 0) runCatching { deezer { DeezerTrackSearch.albumDetails(albumId) } }.getOrNull() else null
         val title = details.optString("title").ifBlank { track.title }
         val main = details.optJSONObject("artist")?.optString("name").orEmpty().ifBlank { track.artist }
-        // Si el archivo ya trae a los colaboradores ("A, B") se conservan
-        val artist = current[1].takeIf { LibraryMatcher.normalize(it).contains(LibraryMatcher.normalize(main)) } ?: main
+        val full = withGuests(main, contributorsOf(details))
+        // Principal con invitados; si el archivo ya los nombra a todos ("A feat. B") se conserva su forma
+        val currentNorm = LibraryMatcher.normalize(current[1])
+        val artist = current[1].takeIf { c ->
+            c.isNotBlank() && contributorsOf(details).ifEmpty { listOf(main) }.all { currentNorm.contains(LibraryMatcher.normalize(it)) }
+        } ?: full
         val albumName = details.optJSONObject("album")?.optString("title").orEmpty().ifBlank { track.album }
         val genre = current[3].takeUnless { isUnknown(it) }
             ?: album?.optJSONObject("genres")?.optJSONArray("data")?.optJSONObject(0)?.optString("name").orEmpty()
@@ -440,6 +446,29 @@ object LibraryNormalizer {
         if (wanted == current) return
         val stub = AudioFile(id, current[0].ifBlank { title }, current[1].ifBlank { artist }, current[2], current[3], 0, uri.toString())
         writeTags(context, stub, title, artist, albumName, genre, year, position)?.let { throw java.io.IOException(it) }
+    }
+
+    private fun contributorsOf(details: org.json.JSONObject): List<String> =
+        details.optJSONArray("contributors")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it)?.optString("name")?.takeIf { n -> n.isNotBlank() } } }.orEmpty().distinct()
+
+    /** "Principal, Invitado1, Invitado2": el principal siempre primero. */
+    internal fun withGuests(main: String, contributors: List<String>): String =
+        (listOf(main) + contributors).distinctBy { LibraryMatcher.normalize(it) }.filter { it.isNotBlank() }.joinToString(", ")
+
+    /**
+     * Etiqueta un audio que llegó de fuera (Soulseek, PC) con los datos oficiales de Deezer, si se encuentra
+     * con la coincidencia estricta de Normalizar. Sin coincidencia o con error queda como llegó.
+     */
+    suspend fun tagImported(context: Context, uri: Uri, file: File, title: String, artist: String, album: String) {
+        if (title.isBlank() || artist.isBlank()) return
+        val r = android.media.MediaMetadataRetriever()
+        val durationMs = try {
+            r.setDataSource(file.absolutePath)
+            r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        } catch (e: Exception) { 0L } finally { runCatching { r.release() } }
+        val id = uri.lastPathSegment?.toLongOrNull() ?: return
+        val match = SongRepair.findMatch(AudioFile(id, title, artist, album, duration = durationMs, uriString = uri.toString())) ?: return
+        tagDownloaded(context, uri, file, match)
     }
 
     private fun writeTags(context: Context, s: AudioFile, title: String, artist: String, album: String, genre: String, year: String, track: Int): String? {

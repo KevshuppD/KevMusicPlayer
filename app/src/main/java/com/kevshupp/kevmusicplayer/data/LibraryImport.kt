@@ -27,7 +27,12 @@ object LibraryImport {
             durationSec = 0, coverSmall = "", coverXl = "", link = ""
         )
         val saved = TelegramDownloadQueue.saveToMusicFolder(context, file, track)
-        kotlinx.coroutines.runBlocking { TelegramDownloadQueue.scanFile(context, saved) }
+        kotlinx.coroutines.runBlocking {
+            val uri = TelegramDownloadQueue.scanFile(context, saved)
+            // Etiquetas oficiales de Deezer (con colaboradores), como las descargas de Telegram
+            if (uri != null) runCatching { LibraryNormalizer.tagImported(context, uri, saved, track.title, track.artist, track.album) }
+                .onFailure { TelemetryLogger.logError(context, "LibraryImport", "No se pudo etiquetar ${saved.name}", it) }
+        }
         // El escaneo de la biblioteca lo hace el ViewModel (con la app cerrada, entra en el siguiente)
         Handler(Looper.getMainLooper()).post { TelegramDownloadQueue.onSongSaved?.invoke() }
         return Imported(saved, track.title, track.artist)

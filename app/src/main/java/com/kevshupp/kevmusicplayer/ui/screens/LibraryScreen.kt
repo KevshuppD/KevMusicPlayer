@@ -288,7 +288,7 @@ fun LibraryScreen(
                     terms.all { term -> fullText.contains(term, ignoreCase = true) }
                 }
             }
-            when (sortBy) {
+            val sorted = when (sortBy) {
                 "Alphabetical" -> filtered.sortedWith { songA, songB ->
                     val charA = songA.title.firstOrNull()?.uppercaseChar() ?: '#'
                     val charB = songB.title.firstOrNull()?.uppercaseChar() ?: '#'
@@ -314,6 +314,8 @@ fun LibraryScreen(
                 "Duration" -> filtered.sortedByDescending { it.duration }
                 else -> filtered
             }
+            // Al buscar: primero coincidencias de título, luego de artista (orden estable).
+            if (queryClean.isEmpty()) sorted else sorted.sortedBy { searchRelevance(it, queryClean) }
         }
     }
 
@@ -976,7 +978,7 @@ fun LibraryScreen(
                  var artistTab by remember(subView) { mutableStateOf(ArtistTab.OVERVIEW) }
                  // Play stats live outside the song list, so only the history view needs to follow them
                  val historyStatsVersion = if (subView is SubView.HistoryDetail) viewModel?.statsVersion?.intValue ?: 0 else 0
-                 val subSongs = remember(filteredFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy, historyStatsVersion) {
+                 val subSongs = remember(filteredFiles, subView, viewModel?.playlists, viewModel?.smartPlaylists, playlistSortBy, historyStatsVersion, artistOnline?.topTracks, artistOnline?.matcher) {
                     val baseList = when (subView) {
                         is SubView.AlbumDetail -> {
                             filteredFiles.filter { it.album == subView.albumName }
@@ -985,7 +987,16 @@ fun LibraryScreen(
                                         .thenBy { it.title.lowercase() }
                                 )
                         }
-                        is SubView.ArtistDetail -> filteredFiles.filter { artistSplitter.matches(it.artist, subView.artistName) }
+                        is SubView.ArtistDetail -> {
+                            val own = filteredFiles.filter { artistSplitter.matches(it.artist, subView.artistName) }
+                            // Colaboraciones que Deezer atribuye al artista pero cuya etiqueta solo nombra a otro
+                            // (MY BLOOD de Polima WestCoast con Pablo Chill-E): también son suyas en el perfil.
+                            val ownIds = own.mapTo(HashSet()) { it.id }
+                            val visibleIds = filteredFiles.mapTo(HashSet()) { it.id }
+                            val collabs = artistOnline?.let { st -> st.topTracks.mapNotNull { st.matcher.findTrack(it) } }.orEmpty()
+                                .filter { it.id !in ownIds && it.id in visibleIds }.distinctBy { it.id }
+                            own + collabs
+                        }
                         is SubView.GenreDetail -> filteredFiles.filter { it.genre == subView.genreName }
                         is SubView.FolderDetail -> filteredFiles.filter { it.folderName == subView.folderName }
                         is SubView.PlaylistDetail -> {
@@ -2196,6 +2207,39 @@ fun LibraryScreen(
     )
 
 }
+
+/** 0 = mejor. Título exacto, empieza, palabra, contiene; luego artista; luego el resto. */
+internal fun searchRelevance(song: AudioFile, query: String): Int {
+    val q = query.lowercase()
+    val title = song.title.stripAccents().lowercase().trim()
+    val artist = song.artist.stripAccents().lowercase().trim()
+    fun wordStart(text: String, t: String = q) = text.split(SEARCH_WORD_SPLIT).any { it.startsWith(t) }
+    val terms = q.split(' ').filter { it.isNotBlank() }
+    if (terms.size > 1) {
+        // "run bts": el título "Run" y el artista "BTS" reparten las palabras.
+        val inTitle = terms.filter { wordStart(title, it) }
+        val rest = terms - inTitle.toSet()
+        val restInArtist = rest.all { wordStart(artist, it) || artist.contains(it) }
+        return when {
+            inTitle.size == terms.size -> if (title == q) 0 else 1
+            inTitle.isNotEmpty() && restInArtist -> if (inTitle.joinToString(" ") == title) 0 else 2
+            inTitle.isNotEmpty() -> 3
+            else -> 5
+        }
+    }
+    return when {
+        title == q -> 0
+        title.startsWith(q) -> 1
+        wordStart(title) -> 2
+        title.contains(q) -> 3
+        artist == q -> 4
+        artist.startsWith(q) || wordStart(artist) -> 5
+        artist.contains(q) -> 6
+        else -> 7
+    }
+}
+
+private val SEARCH_WORD_SPLIT = Regex("[^\\p{L}\\p{N}]+")
 
 fun String.stripAccents(): String {
     val normalized = java.text.Normalizer.normalize(this, java.text.Normalizer.Form.NFD)

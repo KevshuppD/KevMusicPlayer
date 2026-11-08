@@ -4,6 +4,7 @@ import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -23,6 +24,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import android.content.Context
 
 private val CyberpunkPurpuraColorScheme = darkColorScheme(
@@ -208,7 +210,7 @@ fun KevMusicPlayerTheme(
         }
     }
 
-    val colorScheme = appColorScheme(currentTheme)
+    val colorScheme = appColorScheme(currentTheme).withThemedContainers()
 
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -244,3 +246,26 @@ fun KevMusicPlayerTheme(
     }
 }
 
+
+
+/**
+ * Los temas no definían `surfaceContainer*` y Material 3 ponía su gris lila por defecto en todo lo que los usa
+ * (AlertDialog, menús, hojas inferiores, barras): el diálogo de Cast o de Escuchar juntos no iba con el tema.
+ * Se derivan del fondo y la superficie del tema con un toque de su color primario.
+ */
+private fun ColorScheme.withThemedContainers(): ColorScheme {
+    val light = background.luminance() > 0.5f
+    fun tone(base: Color, tint: Float, lift: Float): Color {
+        val tinted = androidx.compose.ui.graphics.lerp(base, primary, tint)
+        return androidx.compose.ui.graphics.lerp(tinted, if (light) Color.Black else Color.White, lift)
+    }
+    return copy(
+        surfaceContainerLowest = tone(background, 0.00f, 0.00f),
+        surfaceContainerLow = tone(surface, 0.03f, 0.02f),
+        surfaceContainer = tone(surface, 0.05f, 0.04f),
+        surfaceContainerHigh = tone(surface, 0.07f, 0.06f),
+        surfaceContainerHighest = tone(surface, 0.09f, 0.09f),
+        surfaceBright = tone(surface, 0.06f, 0.12f),
+        surfaceDim = background
+    )
+}

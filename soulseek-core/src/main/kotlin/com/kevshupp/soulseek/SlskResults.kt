@@ -92,3 +92,64 @@ fun formatEta(seconds: Long): String = when {
 
 fun formatSpeed(bytesPerSec: Long) =
     if (bytesPerSec >= 1L shl 20) "%.1f MB/s".format(bytesPerSec / (1L shl 20).toDouble()) else "${bytesPerSec / 1024} KB/s"
+
+// ---- Canciones y artistas reconocidos en una búsqueda ----
+
+/** Minúsculas, sin tildes y con solo letras y números separados por un espacio. */
+fun slskKey(s: String): String =
+    java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "")
+        .lowercase()
+        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .trim()
+
+private fun tokens(s: String) = slskKey(s).split(' ').filter { it.isNotEmpty() }
+
+/** Palabras que separan versiones distintas de una canción: si el título no las lleva, el archivo tampoco. */
+private val VERSION_WORDS = setOf("instrumental", "karaoke", "inst", "remix", "acapella", "live", "mr")
+
+/**
+ * ¿La búsqueda nombra esta canción? Todas las palabras del título deben estar en la búsqueda
+ * y las que sobran deben ser del artista ("butter bts" → *Butter* de BTS; "bts" solo no).
+ */
+fun queryNamesSong(query: String, title: String, artist: String): Boolean {
+    val q = tokens(query)
+    val t = tokens(title.substringBefore(" (").substringBefore(" - "))
+    if (t.isEmpty() || !q.containsAll(t)) return false
+    val rest = q - t.toSet()
+    val a = tokens(artist).toSet()
+    return rest.all { it in a }
+}
+
+/** La ruta (carpetas y nombre) menciona al artista. */
+fun pathHasArtist(path: String, artist: String): Boolean {
+    val key = slskKey(artist)
+    return key.isNotEmpty() && " ${slskKey(path)} ".contains(" $key ")
+}
+
+/**
+ * Archivos que son esta canción: el nombre contiene todas las palabras del título, la ruta nombra
+ * al artista, sin versiones que el título no pide, y con duración ±4 s si se conoce. Mejor primero:
+ * disponibles, sin pérdida, mayor bitrate, más rápidos.
+ */
+fun songMatches(groups: List<FolderGroup>, title: String, artist: String, durationSec: Int, limit: Int = 12): List<Pair<FolderGroup, SlskFile>> {
+    val t = tokens(title.substringBefore(" (")).toSet()
+    if (t.isEmpty()) return emptyList()
+    val forbidden = VERSION_WORDS - tokens(title).toSet()
+    return groups.asSequence()
+        .flatMap { g -> g.files.asSequence().map { g to it } }
+        .filter { (_, f) ->
+            val name = tokens(f.name.substringBeforeLast('.')).toSet()
+            name.containsAll(t) && name.none { it in forbidden } && pathHasArtist(f.path, artist) &&
+                (durationSec <= 0 || f.durationSec == null || kotlin.math.abs(f.durationSec - durationSec) <= 4)
+        }
+        .sortedWith(
+            compareByDescending<Pair<FolderGroup, SlskFile>> { it.first.free }
+                .thenByDescending { it.second.extension in LOSSLESS }
+                .thenByDescending { it.second.bitrate ?: 0 }
+                .thenByDescending { it.first.speed }
+        )
+        .distinctBy { it.first.user }
+        .take(limit)
+        .toList()
+}
