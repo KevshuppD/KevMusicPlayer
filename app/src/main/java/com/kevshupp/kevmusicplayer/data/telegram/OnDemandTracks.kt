@@ -205,7 +205,32 @@ object OnDemandTracks {
             )
         }
         prefs(context).edit().putLong("local_${track.id}", localId).apply()
+        applyPendingPlays(context, track.id, localId)
         savedToLibrary.tryEmit(track.id to localId)
+    }
+
+    /** Reproducción de una canción remota sin fila en Room: se suma al descargarla ([applyPendingPlays]). */
+    fun addPendingPlay(context: Context, deezerId: Long, timestamp: Long) {
+        val p = prefs(context)
+        p.edit()
+            .putInt("plays_$deezerId", p.getInt("plays_$deezerId", 0) + 1)
+            .putLong("last_played_$deezerId", timestamp)
+            .apply()
+    }
+
+    /**
+     * Pasa a Room las reproducciones que tuvo como remota. Solo localmente: la nube ya las recibió una a una
+     * (`RealtimeSongSync.recordPlay`), y su oyente pone el mismo total.
+     */
+    private suspend fun applyPendingPlays(context: Context, deezerId: Long, localId: Long) {
+        val p = prefs(context)
+        val plays = p.getInt("plays_$deezerId", 0)
+        if (plays <= 0) return
+        val dao = com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(context).audioDao()
+        val song = dao.getAudioFileById(localId) ?: return
+        val last = maxOf(song.lastPlayed, p.getLong("last_played_$deezerId", 0L))
+        dao.setPlayStats(localId, song.playCount + plays, last)
+        p.edit().remove("plays_$deezerId").remove("last_played_$deezerId").apply()
     }
 
     /** (id de Deezer, id local) de cada canción bajo demanda que se acaba de guardar en la biblioteca. */

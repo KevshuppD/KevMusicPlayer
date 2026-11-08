@@ -924,6 +924,11 @@ class PlaybackService : MediaLibraryService() {
                 AppDatabase.getDatabase(this@PlaybackService).audioDao().getAudioFileById(localId)
             } ?: return@launch
             val remoteMediaId = (-deezerId).toString()
+            // Ya contada como remota: no volver a contarla al cambiarla por la local
+            val playbackPrefs = getSharedPreferences("playback_prefs", MODE_PRIVATE)
+            if (playbackPrefs.getString("last_counted_media_id", null) == remoteMediaId) {
+                playbackPrefs.edit().putString("last_counted_media_id", localId.toString()).apply()
+            }
             for (i in 0 until player.mediaItemCount) {
                 if (player.getMediaItemAt(i).mediaId != remoteMediaId) continue
                 val uri = Uri.parse(song.uriString)
@@ -959,24 +964,40 @@ class PlaybackService : MediaLibraryService() {
      * o al terminar la anterior y empezar sola.
      */
     private fun onTrackChangedForStats(player: Player, mediaItem: MediaItem?, reason: Int) {
-        // Las remotas no tienen fila en Room: cuentan cuando se cambian por la canción local descargada
-        val id = mediaItem?.mediaId?.takeIf { (it.toLongOrNull() ?: -1L) > 0 }
+        // Las remotas (id negativo) también cuentan: ver commitPendingPlay
+        val id = mediaItem?.mediaId?.takeIf { (it.toLongOrNull() ?: 0L) != 0L }
         if (id == null) { pendingPlayId = null; return }
         val lastCounted = getSharedPreferences("playback_prefs", MODE_PRIVATE).getString("last_counted_media_id", null)
         val isNewPlay = id != lastCounted ||
             reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT ||
             reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
         pendingPlayId = if (isNewPlay) id else null
-        if (player.isPlaying) commitPendingPlay(player)
+        // Transmitiendo, el reproductor local sigue a la TV en pausa: cuenta lo que suena allá
+        if (player.isPlaying || com.kevshupp.kevmusicplayer.data.cast.CastController.isCasting) commitPendingPlay(player)
     }
 
     private fun commitPendingPlay(player: Player) {
         val id = pendingPlayId ?: return
         if (player.currentMediaItem?.mediaId != id) return
         pendingPlayId = null
-        val songId = id.toLongOrNull() ?: return
+        val mediaId = id.toLongOrNull() ?: return
         getSharedPreferences("playback_prefs", MODE_PRIVATE).edit().putString("last_counted_media_id", id).apply()
         val now = System.currentTimeMillis()
+        // Bajo demanda: si ya está descargada cuenta para la local; si no, va a la nube (por artista y título,
+        // así el otro teléfono y la futura descarga la ven) y queda pendiente hasta que tenga fila en Room
+        var songId = mediaId
+        if (OnDemandTracks.isRemoteId(mediaId)) {
+            val deezerId = OnDemandTracks.deezerIdOf(mediaId)
+            val localId = OnDemandTracks.localIdFor(this, deezerId)
+            if (localId == null) {
+                OnDemandTracks.addPendingPlay(this, deezerId, now)
+                OnDemandTracks.audioFileFor(this, mediaId)?.let {
+                    com.kevshupp.kevmusicplayer.data.cloud.RealtimeSongSync.recordPlay(this, it, now)
+                }
+                return
+            }
+            songId = localId
+        }
         serviceScope.launch(Dispatchers.IO) {
             try {
                 val database = AppDatabase.getDatabase(this@PlaybackService)

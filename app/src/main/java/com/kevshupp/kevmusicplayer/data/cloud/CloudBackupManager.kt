@@ -82,7 +82,9 @@ class CloudBackupManager(
                 includeSettings = user.includeSettings,
                 includeEqualizer = user.includeSettings,
                 includePlaylists = user.includePlaylists,
-                includeLyrics = user.includeLyrics,
+                // Las letras ya viajan por canción en tiempo real (RealtimeSongSync): en la copia la hacían pasar
+                // del límite de 1 MiB por documento de Firestore. Solo van si el tiempo real está apagado.
+                includeLyrics = user.includeLyrics && !user.isAutoSyncEnabled,
                 includeStatistics = user.includeStats
             )
             val timestamp = System.currentTimeMillis()
