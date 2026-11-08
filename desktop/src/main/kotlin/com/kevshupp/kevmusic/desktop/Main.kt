@@ -133,6 +133,11 @@ private fun app() = application {
             return@LaunchedEffect
         }
         Config.load()?.let { client.resume(it) }
+        // Teléfono guardado que no responde al abrir: mientras tanto, la música de este PC
+        if (Config.load() != null && !client.onPc.value) launch {
+            kotlinx.coroutines.delay(6000)
+            if (client.status.value !is ConnStatus.Connected) client.fallbackToPcIfOffline()
+        }
         discovery.start()
         // La conexión a D-Bus tarda: fuera del hilo de la interfaz para no retrasar el primer dibujo
         if (!Platform.isWindows) launch(kotlinx.coroutines.Dispatchers.IO) { mpris.start() }

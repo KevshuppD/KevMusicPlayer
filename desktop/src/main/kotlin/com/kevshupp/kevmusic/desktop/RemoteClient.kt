@@ -221,6 +221,14 @@ class RemoteClient(private val scope: CoroutineScope) {
                 device = saved
                 Config.save(saved)
                 _status.value = ConnStatus.Connected(name)
+                // Volvió el teléfono tras el cambio automático al PC: a él, salvo que en el PC ya suene algo
+                if (autoPc) {
+                    autoPc = false
+                    if (_onPc.value && local.state.value?.playing != true) {
+                        scope.launch { switchTo(false, persist = false, transfer = false) }
+                        _notice.value = Notice("Teléfono conectado: vuelve a sonar en el teléfono")
+                    }
+                }
                 // Siempre: mientras estaba desconectado pudo cambiar (escaneo, organizar, migrar)
                 refreshLibrary()
             }
@@ -476,12 +484,35 @@ class RemoteClient(private val scope: CoroutineScope) {
      * Cambia dónde suena. Lo que estaba sonando sigue en el otro lado si allí está la misma canción
      * (por artista y título), en la misma posición; el lado que se deja se pausa.
      */
+    /** El modo PC lo puso [fallbackToPcIfOffline] (no el usuario): al conectar el teléfono se vuelve a él. */
+    @Volatile private var autoPc = false
+
+    /** Elección del usuario (botón, Ajustes): se guarda y anula el cambio automático. */
     fun setPlayOnPc(on: Boolean) {
+        autoPc = false
+        switchTo(on, persist = true)
+    }
+
+    /**
+     * Al abrir, si el teléfono guardado no responde: suena en el PC mientras tanto, sin guardarlo (la próxima vez
+     * se vuelve a intentar con el teléfono). Al conectar, [handle] vuelve al teléfono si en el PC no suena nada.
+     */
+    fun fallbackToPcIfOffline() {
+        if (_onPc.value || _status.value is ConnStatus.Connected) return
+        autoPc = true
+        switchTo(true, persist = false)
+        _notice.value = Notice("El teléfono no responde: suena la música de este PC. Volverá al teléfono al conectarse.")
+    }
+
+    /** [transfer]: llevar lo que suena al otro lado (no al volver solo al teléfono, que tiene su propia cola). */
+    private fun switchTo(on: Boolean, persist: Boolean, transfer: Boolean = true) {
         if (on == _onPc.value) return
         val from = state.value
         val fromQueue = queue.value
-        Settings.playOnPc = on
-        Settings.save()
+        if (persist) {
+            Settings.playOnPc = on
+            Settings.save()
+        }
         if (on) {
             local.start()
             if (from?.playing == true) cmd("pause")
@@ -500,6 +531,7 @@ class RemoteClient(private val scope: CoroutineScope) {
         } else {
             local.pause()
             _onPc.value = false
+            if (!transfer) return
             val phoneLib = _library.value ?: return
             if (from == null || from.id == 0L) return
             val byKey = phoneLib.songs.associateBy { songKey(it.artist, it.title) }

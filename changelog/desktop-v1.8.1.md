@@ -1,0 +1,3 @@
+- **Si el teléfono no responde al abrir**, la app pasa sola a la música de este PC (con un aviso) en vez de quedarse esperando
+  - Cuando el teléfono se conecta, vuelve a sonar en él, salvo que ya estés escuchando algo en el PC
+  - Si eliges a mano dónde suena, la app respeta tu elección
