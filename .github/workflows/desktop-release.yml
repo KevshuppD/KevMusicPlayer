@@ -26,11 +26,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      # 21 compila (toolchain de Kotlin, queda por defecto por ir al final); 25 es el runtime del paquete por su
+      # caché AOT (build.gradle.kts y cds-train.sh la toman de JAVA_HOME_25_X64)
+      - name: Set up JDK 25 and 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: |
+            25
+            21
           cache: 'gradle'
           cache-dependency-path: desktop/*.gradle.kts
 
@@ -52,7 +56,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      # xvfb: cds-train.sh abre la app unos segundos en una pantalla virtual para generar el archivo AppCDS
+      # xvfb: cds-train.sh abre la app unos segundos en una pantalla virtual para generar la caché AOT
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
@@ -88,11 +92,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      # 21 compila (toolchain de Kotlin, queda por defecto por ir al final); 25 es el runtime del paquete por su
+      # caché AOT (build.gradle.kts y cds-train.sh la toman de JAVA_HOME_25_X64)
+      - name: Set up JDK 25 and 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: |
+            25
+            21
           cache: 'gradle'
           cache-dependency-path: desktop/*.gradle.kts
 

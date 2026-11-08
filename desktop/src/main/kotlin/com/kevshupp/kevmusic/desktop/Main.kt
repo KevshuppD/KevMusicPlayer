@@ -45,7 +45,14 @@ private fun setWmClass() {
     }
 }
 
-fun main() {
+/** Abierta por el inicio de sesión (Iniciar con el sistema): empieza oculta en la bandeja. */
+private var startHidden = false
+
+fun main(args: Array<String>) {
+    startHidden = "--hidden" in args
+    // Ya abierta: que se muestre esa (instantáneo) y salir sin cargar Compose
+    if (!CDS_TRAINING && Instance.forwardToRunning()) return
+    if (!CDS_TRAINING) Instance.listen()
     setWmClass()
     Settings.load()
     Settings.applyRenderer()
@@ -67,7 +74,13 @@ private fun app() = application {
         }
     }
     var raiseRequest by remember { mutableStateOf(0) }
-    var windowVisible by remember { mutableStateOf(true) }
+    var minimizeRequest by remember { mutableStateOf(0) }
+    var minimizeAtStart by remember { mutableStateOf(false) }
+    var windowVisible by remember { mutableStateOf(!startHidden) }
+    DisposableEffect(Unit) {
+        Instance.onShow = { windowVisible = true; raiseRequest++ }
+        onDispose { Instance.onShow = null }
+    }
     val mpris = remember {
         Mpris(client, scope, onRaise = { windowVisible = true; raiseRequest++ }, onQuit = {
             client.disconnect(forget = false)
@@ -134,8 +147,11 @@ private fun app() = application {
             tray.stop()
             if (want) tray.start() else null
         }
-        // Al quitar la bandeja, que la ventana no se quede oculta sin forma de volver
-        if (!want) windowVisible = true
+        // Al quitar la bandeja (o si no hay), que la ventana no se quede oculta sin forma de volver
+        if (!want || TrayState.active != true) {
+            if (!windowVisible && startHidden) minimizeAtStart = true
+            windowVisible = true
+        }
     }
     val trayAvailable = TrayState.active == true
     if (Platform.isWindows && trayAvailable) {
@@ -154,7 +170,6 @@ private fun app() = application {
         )
     }
 
-    var minimizeRequest by remember { mutableStateOf(0) }
     Window(
         visible = windowVisible,
         onCloseRequest = {
@@ -169,7 +184,7 @@ private fun app() = application {
         state = rememberWindowState(size = DpSize(1240.dp, 800.dp))
     ) {
         window.minimumSize = java.awt.Dimension(960, 620)
-        LaunchedEffect(minimizeRequest) { if (minimizeRequest > 0) window.isMinimized = true }
+        LaunchedEffect(minimizeRequest, minimizeAtStart) { if (minimizeRequest > 0 || minimizeAtStart) window.isMinimized = true; minimizeAtStart = false }
         LaunchedEffect(raiseRequest) {
             if (raiseRequest > 0) { window.isMinimized = false; window.toFront(); window.requestFocus() }
         }

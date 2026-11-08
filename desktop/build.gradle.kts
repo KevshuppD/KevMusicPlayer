@@ -34,6 +34,16 @@ kotlin {
     jvmToolchain(21)
 }
 
+// Runtime del paquete: Java 25 por su caché AOT (cds-train.sh), que abre la ventana en ~1,4 s frente a ~3,3 s con
+// Java 21 + AppCDS (medido en el portátil). Kotlin sigue compilando con el toolchain 21. En GitHub Actions lo da
+// setup-java (JAVA_HOME_25_X64); en local, RUNTIME_JDK o la primera ~/.jdks/jdk-25*.
+val runtimeJdk: String? = System.getenv("RUNTIME_JDK")
+    ?: System.getenv("JAVA_HOME_25_X64")
+    ?: File(System.getProperty("user.home"), ".jdks").listFiles()
+        ?.filter { it.name.startsWith("jdk-25") && File(it, "bin/java").exists() }
+        ?.maxByOrNull { it.name }?.absolutePath
+if (runtimeJdk == null) logger.warn("Sin JDK 25 para el paquete: se usará el del toolchain (sin caché AOT)")
+
 // El runtime recortado por jlink no trae el archivo CDS (lib/server/classes.jsa) del JDK y la JVM arrancaba
 // cargando todas las clases base desde cero. Se genera con el propio runtime: Compose lo recorta sin bin/java
 // (--strip-native-commands, por eso no sirve el plugin --generate-cds-archive de jlink), así que se copia un
@@ -76,6 +86,7 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "com.kevshupp.kevmusic.desktop.MainKt"
+        runtimeJdk?.let { javaHome = it }
         // Para fijar WM_CLASS (ver setWmClass() en Main.kt) y que Cinnamon asocie la ventana con su lanzador
         jvmArgs += listOf("--add-opens", "java.desktop/sun.awt.X11=ALL-UNNAMED")
         nativeDistributions {

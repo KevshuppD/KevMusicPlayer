@@ -78,7 +78,7 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("ventana", "cerrar", "x", "bandeja", "minimizar", "segundo plano", "salir", "comportamiento")) {
+                if (matches("ventana", "cerrar", "x", "bandeja", "minimizar", "segundo plano", "salir", "comportamiento", "iniciar", "inicio", "arranque", "sistema", "autostart")) {
                     SettingsCard("Ventana", Icons.Rounded.Window) {
                         Text("Al pulsar la X", fontWeight = FontWeight.Medium)
                         val trayOk = com.kevshupp.kevmusic.desktop.TrayState.active != false
@@ -94,7 +94,31 @@ fun SettingsScreen(status: ConnStatus) {
                         Spacer(Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(Settings.CLOSE_EXIT to "Salir", Settings.CLOSE_MINIMIZE to "Minimizar", Settings.CLOSE_TRAY to "Seguir en la bandeja").forEach { (key, label) ->
-                                FilterChip(selected = Settings.closeAction == key, onClick = { Settings.closeAction = key; Settings.save() }, label = { Text(label) })
+                                FilterChip(selected = Settings.closeAction == key, onClick = {
+                                    Settings.closeAction = key
+                                    // Iniciar con el sistema necesita la bandeja: sin ella se quedaría oculta sin forma de abrirla
+                                    if (key != Settings.CLOSE_TRAY && Settings.startWithSystem) {
+                                        Settings.startWithSystem = false
+                                        com.kevshupp.kevmusic.desktop.Autostart.apply(false)
+                                    }
+                                    Settings.save()
+                                }, label = { Text(label) })
+                            }
+                        }
+                        if (!com.kevshupp.kevmusic.desktop.Platform.isWindows) {
+                            Spacer(Modifier.height(8.dp))
+                            val supported = com.kevshupp.kevmusic.desktop.Autostart.supported
+                            SwitchRow(
+                                "Iniciar con el sistema",
+                                if (supported) "Se abre oculta en la bandeja al encender el PC: después abrirla es instantáneo. Activa también \"Seguir en la bandeja\"."
+                                else "Solo con la app instalada (.deb o carpeta portable).",
+                                Settings.startWithSystem && supported
+                            ) { on ->
+                                if (!supported) return@SwitchRow
+                                Settings.startWithSystem = on
+                                if (on) Settings.closeAction = Settings.CLOSE_TRAY
+                                com.kevshupp.kevmusic.desktop.Autostart.apply(on)
+                                Settings.save()
                             }
                         }
                     }

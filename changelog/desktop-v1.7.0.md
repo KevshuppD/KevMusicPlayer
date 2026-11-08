@@ -1,0 +1,3 @@
+- **Abre el doble de rápido:** la ventana aparece en ~1,6 s (antes ~3,3 s), gracias a Java 25 y su caché de arranque
+- **Iniciar con el sistema** (Ajustes › Ventana): se abre oculta en la bandeja al encender el PC, y después abrirla es instantáneo
+- **Una sola ventana:** si ya está abierta (o en la bandeja), abrirla desde el menú trae esa al frente al instante en vez de abrir otra

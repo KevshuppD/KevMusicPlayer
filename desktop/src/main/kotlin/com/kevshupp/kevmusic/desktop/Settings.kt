@@ -31,6 +31,9 @@ object Settings {
     const val RENDER_HARDWARE = "hardware"
     const val RENDER_SOFTWARE = "software"
 
+    /** Abrir oculta en la bandeja al iniciar sesión (ver [Autostart]); obliga a [CLOSE_TRAY]. */
+    var startWithSystem by mutableStateOf(false)
+
     /** Contador de cuadros por segundo de Skiko en una esquina de la ventana (para medir la fluidez). */
     var showFps by mutableStateOf(false)
 
@@ -53,6 +56,7 @@ object Settings {
             hdGridArt = j.optBoolean("hdGridArt", false)
             closeAction = j.optString("closeAction", CLOSE_EXIT).takeIf { it in setOf(CLOSE_EXIT, CLOSE_MINIMIZE, CLOSE_TRAY) } ?: CLOSE_EXIT
             showFps = j.optBoolean("showFps", false)
+            startWithSystem = j.optBoolean("startWithSystem", false)
             renderer = j.optString("renderer", RENDER_AUTO).takeIf { it in setOf(RENDER_AUTO, RENDER_HARDWARE, RENDER_SOFTWARE) } ?: RENDER_AUTO
         }
     }
@@ -63,7 +67,7 @@ object Settings {
             file.writeText(
                 JSONObject().put("theme", theme).put("showTranslation", showTranslation).put("lyricsSize", lyricsSize)
                     .put("autoCheckUpdates", autoCheckUpdates).put("hdGridArt", hdGridArt).put("closeAction", closeAction)
-                    .put("renderer", renderer).put("showFps", showFps).toString(2)
+                    .put("renderer", renderer).put("showFps", showFps).put("startWithSystem", startWithSystem).toString(2)
             )
         }
     }
