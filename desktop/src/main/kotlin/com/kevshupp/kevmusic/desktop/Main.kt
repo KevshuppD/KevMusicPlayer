@@ -45,6 +45,11 @@ private fun setWmClass() {
     }
 }
 
+/** Pantalla de emparejar con el teléfono, abierta a pedido (la app funciona sin teléfono, con la música del PC). */
+object ConnectRequest {
+    var open by mutableStateOf(false)
+}
+
 /** Abierta por el inicio de sesión (Iniciar con el sistema): empieza oculta en la bandeja. */
 private var startHidden = false
 
@@ -91,6 +96,7 @@ private fun app() = application {
     }
     val tray = remember { StatusNotifier(client) { windowVisible = true; raiseRequest++ } }
     fun quit() {
+        client.local.close()
         client.disconnect(forget = false)
         discovery.stop()
         mpris.stop()
@@ -100,8 +106,8 @@ private fun app() = application {
     }
     val status by client.status.collectAsState()
     var section by remember { mutableStateOf(Section.Home) }
-    // Pantalla principal en cuanto hay un teléfono emparejado; si se cae la conexión, se queda y reintenta
-    var paired by remember { mutableStateOf(Config.load() != null) }
+    // Sin teléfono emparejado la app no espera a uno: abre con la música del PC (modo local)
+    LaunchedEffect(Unit) { if (Config.load() == null && !CDS_TRAINING) client.setPlayOnPc(true) }
 
     // Cuenta de Soulseek: el PC sin cuenta toma la del teléfono; tras iniciar sesión, se la guarda al teléfono
     LaunchedEffect(Unit) {
@@ -134,8 +140,10 @@ private fun app() = application {
         if (Settings.autoCheckUpdates) Updater.check()
     }
     LaunchedEffect(status) {
-        if (status is ConnStatus.Connected) paired = true
-        if (status is ConnStatus.Disconnected || (status is ConnStatus.Failed && Config.load() == null)) paired = false
+        // Recién emparejado desde la pantalla de conexión: pasa a sonar en el teléfono
+        if (status is ConnStatus.Connected && ConnectRequest.open) { ConnectRequest.open = false; client.setPlayOnPc(false) }
+        // Desvinculado: de vuelta a la música del PC
+        if (status is ConnStatus.Disconnected && Config.load() == null) client.setPlayOnPc(true)
     }
 
     // Bandeja del sistema: en Linux por D-Bus (ver StatusNotifier), en Windows la de AWT (Tray de Compose, abajo);
@@ -188,7 +196,7 @@ private fun app() = application {
         LaunchedEffect(raiseRequest) {
             if (raiseRequest > 0) { window.isMinimized = false; window.toFront(); window.requestFocus() }
         }
-        if (paired) {
+        run {
             MenuBar {
                 Menu("Archivo") {
                     Item("Salir", shortcut = KeyShortcut(Key.Q, ctrl = true), onClick = ::quit)
@@ -214,8 +222,8 @@ private fun app() = application {
         val phoneTheme by client.phoneTheme.collectAsState()
         KevTheme(if (Settings.theme == Settings.THEME_PHONE) phoneTheme else Settings.theme) {
             CompositionLocalProvider(LocalClient provides client, LocalSoulseek provides soulseek) {
-                if (paired) MainScreen(status, section) { section = it }
-                else ConnectScreen(discovery, status)
+                if (ConnectRequest.open) ConnectScreen(discovery, status)
+                else MainScreen(status, section) { section = it }
                 UpdateDialog(onExit = {
                     client.disconnect(forget = false)
                     discovery.stop()

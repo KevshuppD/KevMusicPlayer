@@ -9,6 +9,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -42,14 +44,31 @@ class RemoteClient(private val scope: CoroutineScope) {
 
     private val _status = MutableStateFlow<ConnStatus>(ConnStatus.Disconnected)
     val status: StateFlow<ConnStatus> = _status
+    // Lo que dice el teléfono; lo público ([state], [queue], [lyrics], [library]) es esto o el modo local
     private val _state = MutableStateFlow<PlayerState?>(null)
-    val state: StateFlow<PlayerState?> = _state
     private val _queue = MutableStateFlow(QueueState())
-    val queue: StateFlow<QueueState> = _queue
     private val _lyrics = MutableStateFlow<Lyrics?>(null)
-    val lyrics: StateFlow<Lyrics?> = _lyrics
     private val _library = MutableStateFlow<Library?>(null)
-    val library: StateFlow<Library?> = _library
+
+    /** Modo local: la música del PC suena en el PC (ver [LocalPlayer]). */
+    val local = com.kevshupp.kevmusic.desktop.local.LocalPlayer(scope)
+    private val _onPc = MutableStateFlow(Settings.playOnPc)
+    val onPc: StateFlow<Boolean> = _onPc
+
+    val state: StateFlow<PlayerState?> = kotlinx.coroutines.flow.combine(_onPc, _state, local.state) { pc, phone, pcState -> if (pc) pcState else phone }
+        .stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, null)
+    val queue: StateFlow<QueueState> = kotlinx.coroutines.flow.combine(_onPc, _queue, local.queue) { pc, phone, pcQueue -> if (pc) pcQueue else phone }
+        .stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, QueueState())
+    val lyrics: StateFlow<Lyrics?> = kotlinx.coroutines.flow.combine(_onPc, _lyrics, local.lyrics) { pc, phone, pcLyrics -> if (pc) pcLyrics else phone }
+        .stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, null)
+    /** En el modo local, la biblioteca del PC con las listas del teléfono (emparejadas por artista y título). */
+    val library: StateFlow<Library?> = kotlinx.coroutines.flow.combine(_onPc, _library, local.library) { pc, phone, pcLib ->
+        if (!pc) phone else pcLib?.let { withPhonePlaylists(it, phone) }
+    }.stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, null)
+
+    init {
+        if (_onPc.value) local.start()
+    }
     private val _libraryLoading = MutableStateFlow(false)
     val libraryLoading: StateFlow<Boolean> = _libraryLoading
 
@@ -316,31 +335,40 @@ class RemoteClient(private val scope: CoroutineScope) {
 
     private fun cmd(type: String, build: JSONObject.() -> Unit = {}) = send(JSONObject().put("type", type).apply(build))
 
-    fun toggle() = cmd("toggle")
-    fun next() = cmd("next")
-    fun previous() = cmd("prev")
+    fun toggle() { if (_onPc.value) local.toggle() else cmd("toggle") }
+    fun next() { if (_onPc.value) local.next() else cmd("next") }
+    fun previous() { if (_onPc.value) local.previous() else cmd("prev") }
 
     fun seek(positionMs: Long) {
+        if (_onPc.value) return local.seek(positionMs)
         cmd("seek") { put("position", positionMs) }
         // Respuesta inmediata en la barra; el teléfono confirma con el siguiente "state"
         _state.value = _state.value?.copy(position = positionMs, receivedAt = System.currentTimeMillis())
     }
 
     fun setVolume(value: Int) {
+        if (_onPc.value) return local.setVolume(value)
         cmd("volume") { put("value", value) }
         _state.value = _state.value?.copy(volume = value)
     }
 
     fun toggleShuffle() {
+        if (_onPc.value) return local.toggleShuffle()
         cmd("shuffle")
         // Respuesta inmediata; el teléfono confirma con el siguiente "state"
         _state.value = _state.value?.let { it.copy(shuffle = !it.shuffle) }
     }
 
-    fun setRepeat(mode: Int) = cmd("repeat") { put("mode", mode.coerceIn(0, 2)) }
+    fun setRepeat(mode: Int) { if (_onPc.value) local.setRepeat(mode) else cmd("repeat") { put("mode", mode.coerceIn(0, 2)) } }
 
     /** Carátula guardada en ~/.cache/kevmusic-desktop/art para MPRIS (que pide una ruta file://). */
     suspend fun artFile(id: Long): java.io.File? {
+        if (com.kevshupp.kevmusic.desktop.local.LocalLibrary.isLocalId(id)) return withContext(Dispatchers.IO) {
+            val t = local.track(id) ?: return@withContext null
+            val f = java.io.File(Platform.cacheDir, "art/local_${-id}.jpg")
+            if (f.length() > 0) return@withContext f
+            com.kevshupp.kevmusic.desktop.local.LocalLibrary.artBytes(t)?.let { b -> f.parentFile.mkdirs(); f.writeBytes(b); f }
+        }
         val d = device ?: return null
         val dir = java.io.File(Platform.cacheDir, "art").apply { mkdirs() }
         val file = java.io.File(dir, "$id.jpg")
@@ -415,12 +443,14 @@ class RemoteClient(private val scope: CoroutineScope) {
     }
 
     fun cycleRepeat() {
+        if (_onPc.value) return local.cycleRepeat()
         val next = ((_state.value?.repeat ?: 0) + 1) % 3
         cmd("repeat") { put("mode", next) }
     }
 
     fun playSongs(ids: List<Long>, startIndex: Int = 0, shuffle: Boolean = false) {
         if (ids.isEmpty()) return
+        if (_onPc.value) return local.playSongs(ids, startIndex, shuffle)
         val list = if (shuffle) ids.shuffled() else ids
         cmd("playIds") {
             put("ids", JSONArray(list))
@@ -428,14 +458,83 @@ class RemoteClient(private val scope: CoroutineScope) {
         }
     }
 
-    fun enqueue(ids: List<Long>, playNext: Boolean) = cmd("enqueue") {
-        put("ids", JSONArray(ids))
-        put("next", playNext)
+    fun enqueue(ids: List<Long>, playNext: Boolean) {
+        if (_onPc.value) return local.enqueue(ids, playNext)
+        cmd("enqueue") {
+            put("ids", JSONArray(ids))
+            put("next", playNext)
+        }
     }
 
-    fun jumpTo(index: Int) = cmd("jump") { put("index", index) }
-    fun removeFromQueue(index: Int) = cmd("remove") { put("index", index) }
-    fun moveInQueue(from: Int, to: Int) = cmd("move") { put("from", from); put("to", to) }
+    fun jumpTo(index: Int) { if (_onPc.value) local.jumpTo(index) else cmd("jump") { put("index", index) } }
+    fun removeFromQueue(index: Int) { if (_onPc.value) local.removeFromQueue(index) else cmd("remove") { put("index", index) } }
+    fun moveInQueue(from: Int, to: Int) { if (_onPc.value) local.moveInQueue(from, to) else cmd("move") { put("from", from); put("to", to) } }
+
+    // ---------- Modo local ----------
+
+    /**
+     * Cambia dónde suena. Lo que estaba sonando sigue en el otro lado si allí está la misma canción
+     * (por artista y título), en la misma posición; el lado que se deja se pausa.
+     */
+    fun setPlayOnPc(on: Boolean) {
+        if (on == _onPc.value) return
+        val from = state.value
+        val fromQueue = queue.value
+        Settings.playOnPc = on
+        Settings.save()
+        if (on) {
+            local.start()
+            if (from?.playing == true) cmd("pause")
+            _onPc.value = true
+            scope.launch {
+                // La biblioteca del PC puede estar cargándose
+                val lib = kotlinx.coroutines.withTimeoutOrNull(5000) { local.library.first { it != null } } ?: return@launch
+                if (from == null) return@launch
+                val byKey = lib.songs.associateBy { songKey(it.artist, it.title) }
+                val ids = fromQueue.items.mapNotNull { byKey[songKey(it.artist, it.title)]?.id }
+                val current = byKey[songKey(from.artist, from.title)]?.id ?: return@launch
+                local.playSongs(ids.ifEmpty { listOf(current) }, ids.indexOf(current).coerceAtLeast(0), false)
+                local.seek(from.positionAt(System.currentTimeMillis()))
+                if (!from.playing) local.toggle()
+            }
+        } else {
+            local.pause()
+            _onPc.value = false
+            val phoneLib = _library.value ?: return
+            if (from == null || from.id == 0L) return
+            val byKey = phoneLib.songs.associateBy { songKey(it.artist, it.title) }
+            val ids = fromQueue.items.mapNotNull { byKey[songKey(it.artist, it.title)]?.id }
+            val current = byKey[songKey(from.artist, from.title)]?.id ?: return
+            cmd("playIds") { put("ids", JSONArray(ids.ifEmpty { listOf(current) })); put("index", ids.indexOf(current).coerceAtLeast(0)) }
+            scope.launch {
+                delay(600)
+                cmd("seek") { put("position", from.positionAt(System.currentTimeMillis())) }
+                if (!from.playing) cmd("pause")
+            }
+        }
+    }
+
+    private fun songKey(artist: String, title: String) =
+        com.kevshupp.kevmusic.desktop.ui.normalize(com.kevshupp.kevmusic.desktop.ui.splitArtists(artist).firstOrNull() ?: artist) + "|" +
+            com.kevshupp.kevmusic.desktop.ui.normalize(title)
+
+    /** Las listas del teléfono con las canciones del PC que coinciden (las que no están en el PC se omiten). */
+    private fun withPhonePlaylists(pc: Library, phone: Library?): Library {
+        if (phone == null || phone.playlists.isEmpty()) return pc
+        val pcByKey = pc.songs.associateBy { songKey(it.artist, it.title) }
+        val phoneToPc = phone.songs.mapNotNull { s -> pcByKey[songKey(s.artist, s.title)]?.let { s.id to it.id } }.toMap()
+        val lists = phone.playlists.map { pl -> pl.copy(songIds = pl.songIds.mapNotNull { phoneToPc[it] }) }.filter { it.songIds.isNotEmpty() }
+        return pc.copy(playlists = lists)
+    }
+
+    /** Ids del PC → los del teléfono (para editar sus listas desde el modo local). */
+    private fun toPhoneIds(ids: List<Long>): List<Long> {
+        if (!_onPc.value) return ids
+        val phone = _library.value ?: return emptyList()
+        val pc = local.library.value ?: return emptyList()
+        val phoneByKey = phone.songs.associateBy { songKey(it.artist, it.title) }
+        return ids.mapNotNull { id -> pc.byId[id]?.let { phoneByKey[songKey(it.artist, it.title)]?.id } }
+    }
 
     // ---------- Edición de la biblioteca (protocolo 3) ----------
 
@@ -458,14 +557,17 @@ class RemoteClient(private val scope: CoroutineScope) {
     }
 
     fun createPlaylist(name: String, ids: List<Long> = emptyList()) =
-        edit("playlistCreate", "Lista \"${name.trim()}\" creada") { put("name", name.trim()); put("ids", JSONArray(ids)) }
-    fun addToPlaylist(name: String, ids: List<Long>) =
-        edit("playlistAdd", if (ids.size == 1) "Añadida a \"$name\"" else "${ids.size} canciones añadidas a \"$name\"") { put("name", name); put("ids", JSONArray(ids)) }
+        edit("playlistCreate", "Lista \"${name.trim()}\" creada") { put("name", name.trim()); put("ids", JSONArray(toPhoneIds(ids))) }
+    fun addToPlaylist(name: String, ids: List<Long>) {
+        val phoneIds = toPhoneIds(ids)
+        if (phoneIds.isEmpty()) { _notice.value = Notice("Esa canción no está en el teléfono: las listas viven allí", error = true); return }
+        edit("playlistAdd", if (phoneIds.size == 1) "Añadida a \"$name\"" else "${phoneIds.size} canciones añadidas a \"$name\"") { put("name", name); put("ids", JSONArray(phoneIds)) }
+    }
     fun removeFromPlaylist(name: String, ids: List<Long>) =
-        edit("playlistRemove", "Quitada de \"$name\"") { put("name", name); put("ids", JSONArray(ids)) }
+        edit("playlistRemove", "Quitada de \"$name\"") { put("name", name); put("ids", JSONArray(toPhoneIds(ids))) }
     fun deletePlaylist(name: String) = edit("playlistDelete", "Lista \"$name\" eliminada") { put("name", name) }
     fun deleteSongs(ids: List<Long>) =
-        edit("deleteSongs", if (ids.size == 1) "Canción eliminada del teléfono" else "${ids.size} canciones eliminadas del teléfono") { put("ids", JSONArray(ids)) }
+        if (_onPc.value) _notice.value = Notice("En el modo PC no se borran archivos desde aquí", error = true) else edit("deleteSongs", if (ids.size == 1) "Canción eliminada del teléfono" else "${ids.size} canciones eliminadas del teléfono") { put("ids", JSONArray(ids)) }
     fun dismissNotice() { _notice.value = null }
 
     // ---------- Telegram ----------
@@ -656,6 +758,19 @@ class RemoteClient(private val scope: CoroutineScope) {
     suspend fun loadArt(id: Long, small: Boolean, tiny: Boolean = false): ImageBitmap? {
         val key = artKey(id, small, tiny)
         synchronized(artCache) { if (artCache.containsKey(key)) return artCache[key] }
+        if (com.kevshupp.kevmusic.desktop.local.LocalLibrary.isLocalId(id)) {
+            val t = local.track(id) ?: return null
+            val bmp = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = com.kevshupp.kevmusic.desktop.local.LocalLibrary.artBytes(t) ?: return@runCatching null
+                    val image = org.jetbrains.skia.Image.makeFromEncoded(bytes)
+                    val side = if (tiny && small) TINY_PX else if (small) 160 else 640
+                    if (image.width > side) scaled(image, side) else image.toComposeImageBitmap()
+                }.getOrNull()
+            }
+            synchronized(artCache) { artCache[key] = bmp }
+            return bmp
+        }
         val d = device ?: return null
         val bmp = withContext(Dispatchers.IO) {
             runCatching {

@@ -212,23 +212,40 @@ private fun Sidebar(status: ConnStatus, section: Section, onSection: (Section) -
             }
         }
         Spacer(Modifier.weight(1f))
-        val (dot, label) = when (status) {
-            is ConnStatus.Connected -> Color(0xFF00E676) to status.device
-            is ConnStatus.Connecting -> Color(0xFFFFC400) to "Conectando…"
-            is ConnStatus.Failed -> Color(0xFFFF5252) to "Reconectando…"
-            ConnStatus.Disconnected -> Color.Gray to "Desconectado"
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
-            Spacer(Modifier.width(8.dp))
-            Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        }
-        if (status is ConnStatus.Failed) {
-            Text(status.message, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp))
-        }
-        Row {
-            TextButton(onClick = { client.refreshLibrary(showProgress = true) }, enabled = !loading) { Text(if (loading) "Cargando…" else "Recargar", fontSize = 12.sp) }
-            TextButton(onClick = { client.disconnect(forget = true) }) { Text("Desvincular", fontSize = 12.sp) }
+        val hasPhone = remember(status) { com.kevshupp.kevmusic.desktop.Config.load() != null }
+        if (!hasPhone) {
+            // Sin teléfono: la app funciona con la música del PC; emparejar es opcional
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Icon(Icons.Rounded.Computer, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text("Música de este PC", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = { com.kevshupp.kevmusic.desktop.ConnectRequest.open = true }) {
+                Icon(Icons.Rounded.PhoneAndroid, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Conectar teléfono", fontSize = 12.sp)
+            }
+        } else {
+            val (dot, label) = when (status) {
+                is ConnStatus.Connected -> Color(0xFF00E676) to status.device
+                is ConnStatus.Connecting -> Color(0xFFFFC400) to "Conectando…"
+                is ConnStatus.Failed -> Color(0xFFFF5252) to "Teléfono sin conexión"
+                ConnStatus.Disconnected -> Color.Gray to "Desconectado"
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+                Spacer(Modifier.width(8.dp))
+                Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            }
+            // El detalle técnico del fallo solo si se está usando el teléfono
+            val onPc by client.onPc.collectAsState()
+            if (status is ConnStatus.Failed && !onPc) {
+                Text(status.message, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp))
+            }
+            Row {
+                TextButton(onClick = { client.refreshLibrary(showProgress = true) }, enabled = !loading) { Text(if (loading) "Cargando…" else "Recargar", fontSize = 12.sp) }
+                TextButton(onClick = { client.disconnect(forget = true) }) { Text("Desvincular", fontSize = 12.sp) }
+            }
         }
         Text(
             "Versión ${com.kevshupp.kevmusic.desktop.BuildInfo.VERSION}" + if (com.kevshupp.kevmusic.desktop.Updater.isInstalledBuild) "" else " (desarrollo)",
@@ -296,15 +313,44 @@ private fun PlayerBar(state: PlayerState?, onOpenNowPlaying: () -> Unit) {
             }
         }
 
-        // Volumen del teléfono
+        // Dónde suena (teléfono o este PC) y volumen de ese lado
         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-            val max = state?.volumeMax ?: 15
-            val vol = state?.volume ?: 0
+            val onPc by client.onPc.collectAsState()
+            val status by client.status.collectAsState()
+            var menu by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { menu = true }) {
+                    Icon(if (onPc) Icons.Rounded.Computer else Icons.Rounded.PhoneAndroid, if (onPc) "Suena en este PC" else "Suena en el teléfono", tint = MaterialTheme.colorScheme.primary)
+                }
+                DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Column { Text("En el teléfono"); Text(if (status is ConnStatus.Connected) "Control remoto" else "Sin conexión", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                        leadingIcon = { Icon(Icons.Rounded.PhoneAndroid, null) },
+                        trailingIcon = { if (!onPc) Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.primary) },
+                        onClick = {
+                            menu = false
+                            // Sin teléfono emparejado: abrir la pantalla para emparejar
+                            if (com.kevshupp.kevmusic.desktop.Config.load() == null) com.kevshupp.kevmusic.desktop.ConnectRequest.open = true
+                            else client.setPlayOnPc(false)
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Column { Text("En este PC"); Text("Tu música de este equipo", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                        leadingIcon = { Icon(Icons.Rounded.Computer, null) },
+                        trailingIcon = { if (onPc) Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.primary) },
+                        onClick = { menu = false; client.setPlayOnPc(true) }
+                    )
+                }
+            }
+            Spacer(Modifier.width(4.dp))
+            val max = if (onPc) 100 else state?.volumeMax ?: 15
+            val pcVolume by client.local.volumeLevel.collectAsState()
+            val vol = if (onPc) pcVolume else state?.volume ?: 0
             Icon(if (vol == 0) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(8.dp))
             Slider(
                 value = vol.toFloat(), onValueChange = { client.setVolume(it.toInt()) },
-                valueRange = 0f..max.toFloat(), steps = (max - 1).coerceAtLeast(0),
+                valueRange = 0f..max.toFloat(), steps = if (max > 30) 0 else (max - 1).coerceAtLeast(0),
                 modifier = Modifier.width(160.dp)
             )
         }

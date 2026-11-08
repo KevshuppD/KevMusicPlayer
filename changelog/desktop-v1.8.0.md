@@ -1,0 +1,6 @@
+- **Música de este PC (nuevo):** la app ahora reproduce tu música del computador, sin necesidad del teléfono
+  - Abre directo con tu música si no tienes un teléfono emparejado; conectarlo es opcional ("Conectar teléfono" en la barra lateral)
+  - Botón junto al volumen para elegir dónde suena: **en el teléfono** o **en este PC**; lo que sonaba sigue en el otro lado
+  - Carátulas, letras (.lrc o de la etiqueta), cola, aleatorio, repetir y teclas multimedia, igual que con el teléfono
+  - Tus listas del teléfono aparecen con las canciones que también tienes en el PC
+  - Ajustes › Música en este PC: elige las carpetas y vuelve a escanear

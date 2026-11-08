@@ -75,6 +75,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.json:json:20240303")
+    // Modo local: audio con libmpv (JNA) y etiquetas con jaudiotagger (la misma que la app Android)
+    implementation("net.java.dev.jna:jna:5.15.0")
+    implementation("net.jthink:jaudiotagger:3.0.1")
     testImplementation(kotlin("test"))
     implementation("org.jmdns:jmdns:3.6.4")
     implementation("org.slf4j:slf4j-nop:2.0.16")
@@ -95,7 +98,7 @@ compose.desktop {
             packageVersion = project.version.toString()
             description = "Control remoto de escritorio para KevMusicPlayer"
             vendor = "kevshupp"
-            modules("java.naming", "jdk.unsupported", "jdk.security.auth", "jdk.net")
+            modules("java.naming", "jdk.unsupported", "jdk.security.auth", "jdk.net", "java.logging")
             linux {
                 iconFile.set(project.file("src/main/resources/icon.png"))
                 menuGroup = "AudioVideo"

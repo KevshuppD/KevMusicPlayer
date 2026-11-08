@@ -78,6 +78,56 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
+                if (matches("pc", "local", "carpeta", "carpetas", "música", "musica", "escanear", "biblioteca", "audio", "mpv")) {
+                    SettingsCard("Música en este PC", Icons.Rounded.Computer) {
+                        val onPc by client.onPc.collectAsState()
+                        val scanning by client.local.scanning.collectAsState()
+                        val error by client.local.error.collectAsState()
+                        val pcLib by client.local.library.collectAsState()
+                        SwitchRow(
+                            "Sonar en este PC",
+                            "Reproduce la música de las carpetas de abajo en este equipo, sin el teléfono. También se cambia desde el botón junto al volumen.",
+                            onPc
+                        ) { client.setPlayOnPc(it) }
+                        error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                        Spacer(Modifier.height(8.dp))
+                        Text("Carpetas", fontWeight = FontWeight.Medium)
+                        val folders = client.local.folders()
+                        folders.forEach { f ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.Folder, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(8.dp))
+                                Text(f.absolutePath, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                                if (Settings.localFolders.isNotEmpty()) IconButton(onClick = {
+                                    Settings.localFolders = Settings.localFolders - f.absolutePath
+                                    Settings.save(); client.local.rescan()
+                                }) { Icon(Icons.Rounded.Close, "Quitar", Modifier.size(18.dp)) }
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedButton(onClick = {
+                                val chooser = javax.swing.JFileChooser(folders.firstOrNull()).apply {
+                                    fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY
+                                    dialogTitle = "Carpeta de música"
+                                }
+                                if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
+                                    val path = chooser.selectedFile.absolutePath
+                                    // La primera elegida reemplaza a la carpeta por defecto
+                                    val base = Settings.localFolders.ifEmpty { folders.map { it.absolutePath } }
+                                    Settings.localFolders = (base + path).distinct()
+                                    Settings.save(); client.local.rescan()
+                                }
+                            }) { Text("Añadir carpeta") }
+                            OutlinedButton(onClick = { client.local.rescan() }, enabled = scanning == null) { Text("Volver a escanear") }
+                            Text(
+                                scanning?.let { (done, total) -> if (total > 0) "Leyendo $done de $total…" else "Buscando canciones…" }
+                                    ?: "${pcLib?.songs?.size ?: 0} canciones",
+                                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
                 if (matches("ventana", "cerrar", "x", "bandeja", "minimizar", "segundo plano", "salir", "comportamiento", "iniciar", "inicio", "arranque", "sistema", "autostart")) {
                     SettingsCard("Ventana", Icons.Rounded.Window) {
                         Text("Al pulsar la X", fontWeight = FontWeight.Medium)

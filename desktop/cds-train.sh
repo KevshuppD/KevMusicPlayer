@@ -80,5 +80,11 @@ for f in "$APP"/lib/*.desktop; do
     sed -i 's/^Name=.*/Name=KevMusic Desktop/' "$f"
     grep -q '^StartupWMClass=' "$f" || echo 'StartupWMClass=kevmusic-desktop-kevmusic-desktop' >> "$f"
 done
+# Modo local: el audio va por libmpv (Mpv.kt); apt la instala con el paquete
+CONTROL="$WORK/pkg/DEBIAN/control"
+if ! grep -q 'libmpv' "$CONTROL"; then
+    if grep -q '^Depends:' "$CONTROL"; then sed -i 's/^Depends: \(.*\)/Depends: \1, libmpv2 | libmpv1/' "$CONTROL"
+    else echo 'Depends: libmpv2 | libmpv1' >> "$CONTROL"; fi
+fi
 dpkg-deb -b --root-owner-group "$WORK/pkg" "$TARGET" >/dev/null
 echo "Reempaquetado $TARGET"

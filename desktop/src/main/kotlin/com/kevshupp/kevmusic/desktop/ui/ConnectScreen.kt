@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -103,6 +104,19 @@ fun ConnectScreen(discovery: Discovery, status: ConnStatus) {
                 ) {
                     if (connecting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                     else Text("Emparejar", fontWeight = FontWeight.Bold)
+                }
+                // Emparejar es opcional: volver a la app (con la música de este PC si no hay teléfono)
+                OutlinedButton(
+                    onClick = {
+                        if (com.kevshupp.kevmusic.desktop.Config.load() == null) client.setPlayOnPc(true)
+                        com.kevshupp.kevmusic.desktop.ConnectRequest.open = false
+                    },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(Icons.Rounded.Computer, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Volver · usar la música de este PC")
                 }
             }
         }
