@@ -62,8 +62,8 @@ class RemoteClient(private val scope: CoroutineScope) {
     val lyrics: StateFlow<Lyrics?> = kotlinx.coroutines.flow.combine(_onPc, _lyrics, local.lyrics) { pc, phone, pcLyrics -> if (pc) pcLyrics else phone }
         .stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, null)
     /** En el modo local, la biblioteca del PC con las listas del teléfono (emparejadas por artista y título). */
-    val library: StateFlow<Library?> = kotlinx.coroutines.flow.combine(_onPc, _library, local.library) { pc, phone, pcLib ->
-        if (!pc) phone else pcLib?.let { withPhonePlaylists(it, phone) }
+    val library: StateFlow<Library?> = kotlinx.coroutines.flow.combine(_onPc, _library, local.library, CloudLibrary.library) { pc, phone, pcLib, cloud ->
+        if (!pc) phone else pcLib?.let { withPhoneSongs(it, phone ?: cloud) }
     }.stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, null)
 
     init {
@@ -572,13 +572,19 @@ class RemoteClient(private val scope: CoroutineScope) {
         com.kevshupp.kevmusic.desktop.ui.normalize(com.kevshupp.kevmusic.desktop.ui.splitArtists(artist).firstOrNull() ?: artist) + "|" +
             com.kevshupp.kevmusic.desktop.ui.normalize(title)
 
-    /** Las listas del teléfono con las canciones del PC que coinciden (las que no están en el PC se omiten). */
-    private fun withPhonePlaylists(pc: Library, phone: Library?): Library {
-        if (phone == null || phone.playlists.isEmpty()) return pc
+    /**
+     * Modo PC: las canciones del PC más las del teléfono que el PC no tiene (las del teléfono conectado, su última
+     * biblioteca guardada o la de la nube, [CloudLibrary]), con sus ids del teléfono; esas suenan bajo demanda
+     * ([LocalPlayer.remoteSongs]). Las listas del teléfono usan la canción del PC cuando coincide por `songKey`.
+     */
+    private fun withPhoneSongs(pc: Library, phone: Library?): Library {
+        if (phone == null) { local.remoteSongs = emptyMap(); return pc }
         val pcByKey = pc.songs.associateBy { songKey(it.artist, it.title) }
-        val phoneToPc = phone.songs.mapNotNull { s -> pcByKey[songKey(s.artist, s.title)]?.let { s.id to it.id } }.toMap()
-        val lists = phone.playlists.map { pl -> pl.copy(songIds = pl.songIds.mapNotNull { phoneToPc[it] }) }.filter { it.songIds.isNotEmpty() }
-        return pc.copy(playlists = lists)
+        val extra = phone.songs.filter { songKey(it.artist, it.title) !in pcByKey }
+        local.remoteSongs = extra.associateBy { it.id }
+        val toPc = phone.songs.associate { s -> s.id to (pcByKey[songKey(s.artist, s.title)]?.id ?: s.id) }
+        val lists = phone.playlists.map { pl -> pl.copy(songIds = pl.songIds.mapNotNull { toPc[it] }.distinct()) }.filter { it.songIds.isNotEmpty() }
+        return Library(pc.device, pc.songs + extra, lists).also { if (extra.isNotEmpty()) it.warm() }
     }
 
     /** Ids del PC → los del teléfono (para editar sus listas desde el modo local). */
@@ -587,7 +593,8 @@ class RemoteClient(private val scope: CoroutineScope) {
         val phone = _library.value ?: return emptyList()
         val pc = local.library.value ?: return emptyList()
         val phoneByKey = phone.songs.associateBy { songKey(it.artist, it.title) }
-        return ids.mapNotNull { id -> pc.byId[id]?.let { phoneByKey[songKey(it.artist, it.title)]?.id } }
+        // Las que no son del PC ya son ids del teléfono (canciones que el PC muestra desde el teléfono o la nube)
+        return ids.mapNotNull { id -> if (id > 0) id else pc.byId[id]?.let { phoneByKey[songKey(it.artist, it.title)]?.id } }
     }
 
     // ---------- Edición de la biblioteca (protocolo 3) ----------

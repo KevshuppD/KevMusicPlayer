@@ -198,6 +198,15 @@ object CloudSession {
             .getOrElse { if (it is CloudHttpException && it.code == 404) null else throw it }
     }
 
+    /** Una página de la colección `users/<uid>/<name>` (`documents`, `nextPageToken`). */
+    suspend fun listCollection(name: String, pageToken: String?): JSONObject? {
+        val id = uid ?: return null
+        val token = token() ?: return null
+        val url = "https://firestore.googleapis.com/v1/$DOCS/users/$id/$name?pageSize=300" +
+            (pageToken?.let { "&pageToken=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: "")
+        return get(url, token)
+    }
+
     // ---------- Utilidades ----------
 
     private fun str(v: String) = JSONObject().put("stringValue", v)

@@ -36,6 +36,16 @@ class LocalPlayer(private val scope: CoroutineScope) {
     val error: StateFlow<String?> = _error
 
     private var tracks: Map<Long, LocalTrack> = emptyMap()
+
+    /** Canciones del teléfono que el PC no tiene (ver `RemoteClient.withPhoneSongs`): suenan bajo demanda. */
+    @Volatile var remoteSongs: Map<Long, com.kevshupp.kevmusic.desktop.Song> = emptyMap()
+    /** Consigue el archivo de una canción remota (ver [com.kevshupp.kevmusic.desktop.OnDemand]). */
+    var resolver: suspend (com.kevshupp.kevmusic.desktop.Song) -> Result<File> = { Result.failure(Exception("Esta canción solo está en el teléfono")) }
+    // Archivos ya conseguidos en esta sesión (id → archivo)
+    private val resolved = java.util.concurrent.ConcurrentHashMap<Long, File>()
+    private var resolveJob: Job? = null
+    private fun playable(id: Long) = id in tracks || id in remoteSongs
+    private fun songOf(id: Long) = tracks[id]?.song ?: remoteSongs[id]
     private var mpv: Mpv? = null
     private var order: MutableList<Long> = mutableListOf()
     /** Orden antes de activar el aleatorio, para volver a él. */
@@ -101,9 +111,9 @@ class LocalPlayer(private val scope: CoroutineScope) {
     // ---------- Comandos (mismos que RemoteClient) ----------
 
     fun playSongs(ids: List<Long>, startIndex: Int, shuffle: Boolean) = synchronized(lock) {
-        val valid = ids.filter { it in tracks }
+        val valid = ids.filter { playable(it) }
         if (valid.isEmpty()) return
-        val start = ids.getOrNull(startIndex)?.takeIf { it in tracks } ?: valid.first()
+        val start = ids.getOrNull(startIndex)?.takeIf { playable(it) } ?: valid.first()
         if (shuffle) {
             unshuffled = valid
             order = (listOf(start) + (valid - start).shuffled()).toMutableList()
@@ -117,7 +127,7 @@ class LocalPlayer(private val scope: CoroutineScope) {
     }
 
     fun enqueue(ids: List<Long>, playNext: Boolean) = synchronized(lock) {
-        val valid = ids.filter { it in tracks }
+        val valid = ids.filter { playable(it) }
         if (valid.isEmpty()) return
         if (order.isEmpty()) { order = valid.toMutableList(); index = 0; playCurrent(); return }
         if (playNext) order.addAll(index + 1, valid) else order.addAll(valid)
@@ -210,22 +220,59 @@ class LocalPlayer(private val scope: CoroutineScope) {
     }
 
     private fun playCurrent(paused: Boolean = false) {
-        val t = tracks[order.getOrNull(index) ?: return] ?: return
+        val id = order.getOrNull(index) ?: return
+        val s = songOf(id) ?: return
         val m = engine() ?: return
-        m.load(t.path, startPaused = paused)
-        val s = t.song
+        resolveJob?.cancel()
+        val t = tracks[id]
         _state.value = PlayerState(
-            s.id, s.title, s.artist, s.album, s.duration, 0, !paused, true, index, repeat,
+            s.id, s.title, s.artist, s.album, s.duration, 0, !paused && t != null, true, index, repeat,
             unshuffled != null, volume, 100, System.currentTimeMillis()
         )
         publishQueue()
-        scope.launch(Dispatchers.IO) {
-            _lyrics.value = LocalLibrary.lyrics(t)?.let { Lyrics.parse(s.id, it, "") }
-            if (!paused) countPlay(s.id)
+        if (t != null) {
+            m.load(t.path, startPaused = paused)
+            update { copy(buffering = false) }
+            scope.launch(Dispatchers.IO) {
+                _lyrics.value = LocalLibrary.lyrics(t)?.let { Lyrics.parse(s.id, it, "") }
+                if (!paused) countPlay(s.id)
+            }
+            return
         }
+        // Canción del teléfono que el PC no tiene: se consigue bajo demanda y después suena
+        m.setPaused(true)
+        _lyrics.value = null
+        resolveJob = scope.launch(Dispatchers.IO) {
+            val file = resolved[id]?.takeIf { it.length() > 0 } ?: resolver(s).getOrElse { e ->
+                _error.value = "${s.title}: ${e.message}"
+                update { copy(playing = false, buffering = false) }
+                return@launch
+            }.also { resolved[id] = it }
+            synchronized(lock) {
+                if (order.getOrNull(index) != id) return@launch
+                _error.value = null
+                m.load(file.absolutePath, startPaused = paused)
+                update { copy(buffering = false, playing = !paused) }
+            }
+            if (!paused) countPlay(id)
+        }
+        prefetchNext()
+    }
+
+    /** Pide por adelantado la siguiente canción remota de la cola, para que no haya espera al llegar. */
+    private fun prefetchNext() {
+        val next = order.getOrNull(index + 1) ?: return
+        val s = remoteSongs[next] ?: return
+        if (resolved.containsKey(next)) return
+        scope.launch(Dispatchers.IO) { resolver(s).onSuccess { resolved[next] = it } }
     }
 
     private fun countPlay(id: Long) {
+        // Las remotas son del teléfono: solo se suman en la nube, y el teléfono las recibe por su oyente
+        remoteSongs[id]?.takeIf { id !in tracks }?.let {
+            com.kevshupp.kevmusic.desktop.CloudSession.recordPlay(it.artist, it.title, System.currentTimeMillis())
+            return
+        }
         val (plays, last) = LocalLibrary.recordPlay(id, System.currentTimeMillis())
         tracks[id]?.song?.let { com.kevshupp.kevmusic.desktop.CloudSession.recordPlay(it.artist, it.title, last) }
         val lib = _library.value ?: return
@@ -233,6 +280,6 @@ class LocalPlayer(private val scope: CoroutineScope) {
     }
 
     private fun publishQueue() {
-        _queue.value = QueueState(index, order.mapNotNull { id -> tracks[id]?.song?.let { QueueItem(it.id, it.title, it.artist) } })
+        _queue.value = QueueState(index, order.mapNotNull { id -> songOf(id)?.let { QueueItem(it.id, it.title, it.artist) } })
     }
 }
