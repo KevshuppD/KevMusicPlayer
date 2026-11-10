@@ -109,6 +109,10 @@ class RemoteControlServer(
 
         /** Equipos conectados ahora mismo (nombres). */
         val connectedClients = MutableStateFlow<List<String>>(emptyList())
+        /** PCs conectados que aceptan "Sonar en el PC" desde el teléfono (envían `proto` ≥ 7 en `hello`). */
+        val handoffTargets = MutableStateFlow<List<String>>(emptyList())
+        /** "Sonar en este PC" pedido desde el teléfono (selector de dispositivos): nombre del PC. */
+        val handoffRequests = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
 
         fun isEnabled(context: Context) =
             PreferenceConstants.getSettingsPrefs(context).getBoolean(KEY_ENABLED, false)
@@ -144,6 +148,7 @@ class RemoteControlServer(
     private var lyricsJob: Job? = null
     private var shuffleJob: Job? = null
     private var smartJob: Job? = null
+    private var handoffJob: Job? = null
     private var nsdListener: NsdManager.RegistrationListener? = null
     // Tema de la app (settings_prefs/app_theme): el escritorio lo copia si está en "Igual que el teléfono"
     private fun themeJson() = JSONObject().put("type", "theme")
@@ -237,6 +242,13 @@ class RemoteControlServer(
                 )
             }
         }
+        // El PC elegido toma la cola y la posición (lo hace él: pausa el teléfono y sigue en el PC)
+        handoffJob = scope.launch {
+            handoffRequests.collect { name ->
+                sockets.filter { it.authorized && it.clientName == name && it.clientProto >= 7 }
+                    .forEach { it.post(JSONObject().put("type", "handoff").toString()) }
+            }
+        }
         // Mientras suena, la posición viaja cada segundo (el escritorio interpola entre medias)
         tickJob = scope.launch(Dispatchers.Main) {
             while (isActive) {
@@ -257,6 +269,8 @@ class RemoteControlServer(
         shuffleJob?.cancel()
         smartJob?.cancel()
         smartJob = null
+        handoffJob?.cancel()
+        handoffJob = null
         shuffleJob = null
         playerProvider()?.removeListener(playerListener)
         com.google.firebase.auth.FirebaseAuth.getInstance().removeAuthStateListener(cloudAuthListener)
@@ -269,6 +283,7 @@ class RemoteControlServer(
         server = null
         pairingCode.value = null
         connectedClients.value = emptyList()
+        handoffTargets.value = emptyList()
         _running.value = false
     }
 
@@ -500,6 +515,7 @@ class RemoteControlServer(
 
     private fun updateConnectedClients() {
         connectedClients.value = sockets.filter { it.authorized }.map { it.clientName }
+        handoffTargets.value = sockets.filter { it.authorized && it.clientProto >= 7 }.map { it.clientName }.distinct()
     }
 
     // ---------- mDNS ----------
@@ -677,6 +693,7 @@ class RemoteControlServer(
     private inner class ClientSocket(handshake: NanoHTTPD.IHTTPSession) : NanoWSD.WebSocket(handshake) {
         @Volatile var authorized = false
         @Volatile var clientName = "PC"
+        @Volatile var clientProto = 0
 
         fun post(text: String) {
             sendExecutor.execute { runCatching { send(text) } }
@@ -695,6 +712,7 @@ class RemoteControlServer(
             val msg = runCatching { JSONObject(frame.textPayload) }.getOrNull() ?: return
             if (!authorized) {
                 clientName = msg.optString("name", "PC").ifBlank { "PC" }
+                clientProto = msg.optInt("proto", 0)
                 val token = when (msg.optString("type")) {
                     "pair" -> pair(msg.optString("code"), clientName)
                     "hello" -> msg.optString("token").takeIf { isValidToken(it) }

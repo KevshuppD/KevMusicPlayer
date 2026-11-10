@@ -142,6 +142,8 @@ class RemoteClient(private val scope: CoroutineScope) {
         socket?.cancel()
         _status.value = ConnStatus.Connecting(host)
         hello.put("name", clientName)
+        // Protocolo del PC: 7 = acepta "handoff" (sonar en el PC elegido desde el teléfono)
+        hello.put("proto", 7)
         val request = Request.Builder().url("ws://$host:$port/ws").build()
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -292,6 +294,11 @@ class RemoteClient(private val scope: CoroutineScope) {
                 msg.optString("idToken"), phoneCloud?.optString("email").orEmpty(),
                 phoneCloud?.optString("name").orEmpty(), phoneCloud?.optString("photo").orEmpty()
             )
+            // Desde el selector de dispositivos del teléfono: lo que suena pasa a este PC
+            "handoff" -> scope.launch(Dispatchers.Main) {
+                setPlayOnPc(true)
+                _notice.value = Notice("Ahora suena en este PC")
+            }
             "slskAccount" -> _slskAccount.value = msg.optString("username") to msg.optString("password")
             "theme" -> _phoneTheme.value = msg.optString("theme", "cyberpunk")
             "tgStatus" -> _telegram.value = TelegramStatus(msg.optBoolean("ready"), msg.optString("reason"))
@@ -561,11 +568,15 @@ class RemoteClient(private val scope: CoroutineScope) {
             _onPc.value = true
             scope.launch {
                 // La biblioteca del PC puede estar cargándose
-                val lib = kotlinx.coroutines.withTimeoutOrNull(5000) { local.library.first { it != null } } ?: return@launch
+                kotlinx.coroutines.withTimeoutOrNull(5000) { local.library.first { it != null } } ?: return@launch
+                // La combinada (PC + teléfono) se recalcula aparte: se espera a que ya sea la del modo PC
+                val lib = kotlinx.coroutines.withTimeoutOrNull(3000) { library.first { it?.device == "Este PC" } } ?: return@launch
                 if (from == null) return@launch
-                val byKey = lib.songs.associateBy { songKey(it.artist, it.title) }
-                val ids = fromQueue.items.mapNotNull { byKey[songKey(it.artist, it.title)]?.id }
-                val current = byKey[songKey(from.artist, from.title)]?.id ?: return@launch
+                // La del PC si la tiene; si no, la del teléfono (suena bajo demanda, ver OnDemand)
+                val byKey = lib.songs.reversed().associateBy { songKey(it.artist, it.title) }
+                fun idOf(id: Long, artist: String, title: String) = byKey[songKey(artist, title)]?.id ?: id.takeIf { it in lib.byId }
+                val ids = fromQueue.items.mapNotNull { idOf(it.id, it.artist, it.title) }
+                val current = idOf(from.id, from.artist, from.title) ?: return@launch
                 local.playSongs(ids.ifEmpty { listOf(current) }, ids.indexOf(current).coerceAtLeast(0), false)
                 local.seek(from.positionAt(System.currentTimeMillis()))
                 if (!from.playing) local.toggle()

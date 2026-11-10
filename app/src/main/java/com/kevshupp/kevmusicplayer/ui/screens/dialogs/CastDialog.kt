@@ -29,6 +29,7 @@ fun CastDialog(queue: () -> Pair<List<AudioFile>, Long>, onStarted: () -> Unit, 
     val context = LocalContext.current
     val state by CastController.state.collectAsState()
     val devices by CastController.devices.collectAsState()
+    val pcs by com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.handoffTargets.collectAsState()
     var available by remember { mutableStateOf(true) }
     DisposableEffect(Unit) {
         available = CastController.startDiscovery(context)
@@ -52,6 +53,26 @@ fun CastDialog(queue: () -> Pair<List<AudioFile>, Long>, onStarted: () -> Unit, 
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                // KevMusic Desktop conectado: la música pasa a sonar en el PC con la misma cola y posición
+                if (state.device == null) pcs.forEach { pc ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable {
+                            com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.handoffRequests.tryEmit(pc)
+                            onDismiss()
+                        }.padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) { Icon(Icons.Rounded.Computer, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp)) }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(pc)
+                            Text("KevMusic Desktop · sonar en el PC", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
                 when {
                     !available -> Text("No se pudo iniciar la búsqueda de dispositivos.")
                     state.connecting -> Row(verticalAlignment = Alignment.CenterVertically) {
