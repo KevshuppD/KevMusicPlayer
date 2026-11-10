@@ -164,6 +164,8 @@ class RemoteControlServer(
             .put("email", user?.email ?: "").put("name", user?.displayName ?: "")
             .put("photo", user?.photoUrl?.toString()?.takeIf { it.startsWith("http") } ?: "")
             .put("stats", prefs.getBoolean(PreferenceConstants.KEY_CLOUD_SYNC_INCLUDE_STATS, true))
+            // El bot de Telegram, para que el PC use el mismo con su propia sesión
+            .put("tgBot", com.kevshupp.kevmusicplayer.data.telegram.TelegramMusicClient.botUsername(context))
     }
     private val cloudAuthListener = com.google.firebase.auth.FirebaseAuth.AuthStateListener { broadcast(cloudAccountJson()) }
 
@@ -539,6 +541,7 @@ class RemoteControlServer(
                 when {
                     uri == "/library" -> json(runBlocking(Dispatchers.IO) { buildLibrary() })
                     uri == "/upload" && session.method == Method.PUT -> receiveUpload(session)
+                    uri.startsWith("/audio/") -> serveAudio(uri.removePrefix("/audio/").toLongOrNull())
                     uri.startsWith("/art/") -> serveArt(uri.removePrefix("/art/").toLongOrNull(), session.parameters["size"]?.firstOrNull())
                     else -> text(Response.Status.NOT_FOUND, "not found")
                 }
@@ -595,6 +598,23 @@ class RemoteControlServer(
             } finally {
                 temp.delete()
             }
+        }
+
+        /**
+         * Archivo de audio original de una canción de la biblioteca (protocolo 7): el modo PC del escritorio
+         * reproduce así las canciones del teléfono que el PC no tiene. Las bajo demanda no se sirven.
+         */
+        private fun serveAudio(id: Long?): Response {
+            id ?: return text(Response.Status.BAD_REQUEST, "bad id")
+            if (id <= 0) return text(Response.Status.NOT_FOUND, "no song")
+            val song = runBlocking(Dispatchers.IO) { AppDatabase.getDatabase(context).audioDao().getAudioFileById(id) }
+                ?: return text(Response.Status.NOT_FOUND, "no song")
+            val uri = song.uri
+            val size = context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+            val input = context.contentResolver.openInputStream(uri) ?: return text(Response.Status.NOT_FOUND, "no file")
+            val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+            return (if (size > 0) newFixedLengthResponse(Response.Status.OK, mime, input, size)
+            else newChunkedResponse(Response.Status.OK, mime, input))
         }
 
         private fun serveArt(id: Long?, size: String?): Response {

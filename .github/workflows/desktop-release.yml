@@ -61,6 +61,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
       - name: Build .deb and portable bundle
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
           chmod +x gradlew cds-train.sh
           ./gradlew packageDeb createDistributable --no-daemon
@@ -106,6 +109,9 @@ jobs:
 
       # Sin firma de código: SmartScreen avisa ("Más información" → "Ejecutar de todas formas")
       - name: Build .msi and portable bundle
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
           VERSION="${{ needs.build-linux.outputs.version }}"
           ./gradlew packageMsi createDistributable --no-daemon

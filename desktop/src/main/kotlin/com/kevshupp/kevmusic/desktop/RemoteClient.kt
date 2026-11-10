@@ -67,6 +67,7 @@ class RemoteClient(private val scope: CoroutineScope) {
     }.stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, null)
 
     init {
+        local.resolver = { song -> OnDemand.resolve(this, song) }
         if (_onPc.value) local.start()
     }
     private val _libraryLoading = MutableStateFlow(false)
@@ -283,6 +284,7 @@ class RemoteClient(private val scope: CoroutineScope) {
             // Protocolo 7: cuenta de Google del teléfono; si el PC no tiene esa sesión, pide un token para abrirla
             "cloudAccount" -> {
                 phoneCloud = msg
+                TelegramPc.phoneBot = msg.optString("tgBot")
                 _phoneCloudUid.value = msg.optString("uid").takeIf { it.isNotEmpty() }
                 if (CloudSession.needsLink(msg.optString("uid"), msg.optBoolean("stats", true))) cmd("cloudLinkRequest")
             }
@@ -402,6 +404,24 @@ class RemoteClient(private val scope: CoroutineScope) {
                 }
             }.getOrNull()
         }
+    }
+
+    /**
+     * Descarga del teléfono el archivo original de una de sus canciones (`/audio/<id>`, protocolo 7) a [dest].
+     * false si no está conectado, es anterior o no la tiene.
+     */
+    fun downloadFromPhone(id: Long, dest: java.io.File): Boolean {
+        val d = device ?: return false
+        if (phoneProtocol < 7 || _status.value !is ConnStatus.Connected) return false
+        return runCatching {
+            val req = Request.Builder().url("http://${d.host}:${d.port}/audio/$id?token=${d.token}").build()
+            http.newBuilder().readTimeout(60, TimeUnit.SECONDS).build().newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use false
+                val tmp = java.io.File(dest.path + ".part")
+                tmp.outputStream().use { resp.body!!.byteStream().copyTo(it) }
+                tmp.length() > 0 && tmp.renameTo(dest)
+            }
+        }.getOrDefault(false)
     }
 
     /** Versión del protocolo del teléfono; la 2 (app 1.8.0) acepta canciones con `PUT /upload`. */

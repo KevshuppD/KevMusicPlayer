@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
@@ -14,13 +15,22 @@ version = "1.8.2"
 val generateBuildInfo by tasks.registering {
     val out = layout.buildDirectory.dir("generated/buildinfo")
     val ver = project.version.toString()
+    // Credenciales de Telegram (my.telegram.org), como en la app: de local.properties de la raíz o del entorno
+    val rootProps = Properties().apply {
+        val f = rootDir.resolve("../local.properties"); if (f.exists()) f.inputStream().use { load(it) }
+    }
+    val tgId = (rootProps.getProperty("TELEGRAM_API_ID") ?: System.getenv("TELEGRAM_API_ID") ?: "0").trim().toIntOrNull() ?: 0
+    val tgHash = (rootProps.getProperty("TELEGRAM_API_HASH") ?: System.getenv("TELEGRAM_API_HASH") ?: "").trim()
     inputs.property("version", ver)
+    inputs.property("tgId", tgId)
+    inputs.property("tgHash", tgHash)
     outputs.dir(out)
     doLast {
         val file = out.get().file("com/kevshupp/kevmusic/desktop/BuildInfo.kt").asFile
         file.parentFile.mkdirs()
         file.writeText(
-            "package com.kevshupp.kevmusic.desktop\n\nobject BuildInfo {\n    const val VERSION = \"$ver\"\n}\n"
+            "package com.kevshupp.kevmusic.desktop\n\nobject BuildInfo {\n    const val VERSION = \"$ver\"\n" +
+                "    const val TELEGRAM_API_ID = $tgId\n    const val TELEGRAM_API_HASH = \"$tgHash\"\n}\n"
         )
     }
 }
@@ -68,11 +78,28 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
     }
 }
 
+// Telegram en el PC (TDLib, la misma versión que la app): el jar trae los binarios de todos los sistemas (~105 MB);
+// se copia sin ellos salvo el del sistema que compila, así el .deb solo lleva linux/x64 y el .msi windows/x64.
+val tdl by configurations.creating { isTransitive = false }
+val tdlSlim by tasks.registering(Jar::class) {
+    val keep = if (System.getProperty("os.name").lowercase().contains("windows")) "windows/x64/" else "linux/x64/"
+    archiveFileName.set("tdl-coroutines-jvm-13.0.0-slim.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("tdl"))
+    from({ zipTree(tdl.singleFile) }) {
+        exclude { e -> listOf("linux/", "macos/", "windows/").any { e.path.startsWith(it) } && !e.path.startsWith(keep) }
+    }
+}
+
 dependencies {
+    tdl("dev.g000sha256:tdl-coroutines-jvm:13.0.0")
+    implementation(files(tdlSlim))
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation("org.jetbrains.kotlinx:atomicfu-jvm:0.32.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0")
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.json:json:20240303")
     // Modo local: audio con libmpv (JNA) y etiquetas con jaudiotagger (la misma que la app Android)

@@ -36,6 +36,11 @@ object Settings {
 
     /** Modo local: el audio suena en este PC con la música de [localFolders] (si no, en el teléfono). */
     var playOnPc by mutableStateOf(false)
+    /** @usuario del bot de Telegram del PC; vacío = el del teléfono. */
+    var telegramBot by mutableStateOf("")
+    /** Fuentes del bajo demanda del PC (canciones del teléfono que el PC no tiene). */
+    var odTelegram by mutableStateOf(true)
+    var odYoutube by mutableStateOf(true)
     /** Carpetas de música del PC para el modo local; vacía = la carpeta de música del usuario. */
     var localFolders by mutableStateOf<List<String>>(emptyList())
 
@@ -63,6 +68,9 @@ object Settings {
             showFps = j.optBoolean("showFps", false)
             startWithSystem = j.optBoolean("startWithSystem", false)
             playOnPc = j.optBoolean("playOnPc", false)
+            telegramBot = j.optString("telegramBot", "")
+            odTelegram = j.optBoolean("odTelegram", true)
+            odYoutube = j.optBoolean("odYoutube", true)
             localFolders = j.optJSONArray("localFolders")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
             renderer = j.optString("renderer", RENDER_AUTO).takeIf { it in setOf(RENDER_AUTO, RENDER_HARDWARE, RENDER_SOFTWARE) } ?: RENDER_AUTO
         }
@@ -75,7 +83,7 @@ object Settings {
                 JSONObject().put("theme", theme).put("showTranslation", showTranslation).put("lyricsSize", lyricsSize)
                     .put("autoCheckUpdates", autoCheckUpdates).put("hdGridArt", hdGridArt).put("closeAction", closeAction)
                     .put("renderer", renderer).put("showFps", showFps).put("startWithSystem", startWithSystem)
-                    .put("playOnPc", playOnPc).put("localFolders", org.json.JSONArray(localFolders)).toString(2)
+                    .put("playOnPc", playOnPc).put("telegramBot", telegramBot).put("odTelegram", odTelegram).put("odYoutube", odYoutube).put("localFolders", org.json.JSONArray(localFolders)).toString(2)
             )
         }
     }

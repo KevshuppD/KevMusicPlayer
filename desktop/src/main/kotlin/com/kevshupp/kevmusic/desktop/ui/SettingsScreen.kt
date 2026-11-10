@@ -110,6 +110,26 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
+                if (matches("bajo demanda", "telegram", "bot", "youtube", "nube", "teléfono", "streaming")) {
+                    SettingsCard("Bajo demanda en este PC", Icons.Rounded.CloudDownload) {
+                        Text(
+                            "Con \"Sonar en este PC\", las canciones del teléfono que este PC no tiene también suenan: se piden al teléfono si está conectado, si no a Telegram o a YouTube Music. Quedan guardadas en la caché (1 GB).",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        SwitchRow("Telegram", "El mismo bot que en el teléfono, con una sesión propia de este PC.", Settings.odTelegram) {
+                            Settings.odTelegram = it; Settings.save()
+                        }
+                        SwitchRow("YouTube Music", "Si Telegram no la encuentra (yt-dlp, AAC de ~128 kbps).", Settings.odYoutube) {
+                            Settings.odYoutube = it; Settings.save()
+                        }
+                        if (Settings.odTelegram) {
+                            Spacer(Modifier.height(10.dp))
+                            TelegramLogin()
+                        }
+                    }
+                }
+
                 if (matches("pc", "local", "carpeta", "carpetas", "música", "musica", "escanear", "biblioteca", "audio", "mpv")) {
                     SettingsCard("Música en este PC", Icons.Rounded.Computer) {
                         val onPc by client.onPc.collectAsState()
@@ -395,5 +415,66 @@ private fun ThemeChip(label: String, themeKey: String, selected: Boolean, modifi
             if (selected) { Icon(Icons.Rounded.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)) }
             Text(label, fontSize = 13.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
         }
+    }
+}
+
+/** Inicio de sesión en Telegram del PC (teléfono → código → contraseña) y el bot. */
+@Composable
+private fun TelegramLogin() {
+    val state by TelegramPc.state.collectAsState()
+    val error by TelegramPc.error.collectAsState()
+    val busy by TelegramPc.busy.collectAsState()
+    var input by remember(state) { mutableStateOf("") }
+    LaunchedEffect(Unit) { if (TelegramPc.configured) TelegramPc.start() }
+    val s = state
+    Text("Sesión de Telegram", fontWeight = FontWeight.Medium)
+    val (label, hint) = when (s) {
+        TgState.NotConfigured -> "Esta versión se compiló sin credenciales de Telegram." to null
+        TgState.Off -> (if (TelegramPc.hasSession) "Sesión guardada (Telegram se abre al usarlo)" else "Telegram cerrado") to null
+        TgState.Loading -> "Abriendo Telegram…" to null
+        TgState.WaitPhone -> "Tu número con prefijo del país" to "+56912345678"
+        is TgState.WaitCode -> "Código enviado a ${s.sentVia} (${s.phone})" to "12345"
+        is TgState.WaitPassword -> "Contraseña de verificación en dos pasos" to s.hint.ifBlank { "Contraseña" }
+        TgState.Ready -> "Sesión iniciada" to null
+        is TgState.Failed -> s.message to null
+    }
+    Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (hint != null) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                input, { input = it }, singleLine = true, placeholder = { Text(hint) },
+                visualTransformation = if (s is TgState.WaitPassword) androidx.compose.ui.text.input.PasswordVisualTransformation()
+                else androidx.compose.ui.text.input.VisualTransformation.None,
+                modifier = Modifier.weight(1f)
+            )
+            Button(enabled = !busy && input.isNotBlank(), onClick = {
+                when (s) {
+                    TgState.WaitPhone -> TelegramPc.submitPhone(input)
+                    is TgState.WaitCode -> TelegramPc.submitCode(input)
+                    is TgState.WaitPassword -> TelegramPc.submitPassword(input)
+                    else -> {}
+                }
+            }) { Text("Continuar") }
+        }
+    }
+    error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+    if (s == TgState.Ready) {
+        Spacer(Modifier.height(8.dp))
+        var bot by remember { mutableStateOf(Settings.telegramBot) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                bot, { bot = it }, singleLine = true, label = { Text("Bot") },
+                placeholder = { Text(TelegramPc.phoneBot.ifBlank { "@bot" }.let { if (it.startsWith("@")) it else "@$it" }) },
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedButton(onClick = {
+                Settings.telegramBot = bot.trim().removePrefix("https://t.me/").removePrefix("t.me/").removePrefix("@"); Settings.save()
+            }) { Text("Guardar") }
+            OutlinedButton(onClick = { TelegramPc.logOut() }, enabled = !busy) { Text("Cerrar sesión") }
+        }
+        Text(
+            if (TelegramPc.bot.isBlank()) "Escribe el bot o conecta el teléfono para usar el mismo." else "Usando @${TelegramPc.bot}" + if (Settings.telegramBot.isBlank()) " (el del teléfono)" else "",
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
