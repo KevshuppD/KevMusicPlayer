@@ -121,6 +121,18 @@ object CloudAuthManager {
         }
     }
 
+    /**
+     * ID token de Google recién emitido (1 h de validez, audiencia [WEB_CLIENT_ID]) para que KevMusic Desktop
+     * abra su propia sesión de Firebase con la misma cuenta (`accounts:signInWithIdp`). Sin interfaz:
+     * `silentSignIn` usa la cuenta ya elegida. null si no hay sesión o Google no responde.
+     */
+    suspend fun freshGoogleIdToken(context: Context): String? = withContext(Dispatchers.IO) {
+        if (auth.currentUser == null) return@withContext null
+        runCatching { getGoogleSignInClient(context).silentSignIn().await().idToken }
+            .onFailure { TelemetryLogger.logError(context, "CloudAuth", "No se pudo renovar el token de Google para el PC: ${it.message}", it) }
+            .getOrNull()
+    }
+
     suspend fun handleGoogleSignInResult(context: Context, intent: Intent?): Result<CloudUser> = withContext(Dispatchers.IO) {
         try {
             if (intent == null) throw Exception("Intent de Google nulo o cancelado")

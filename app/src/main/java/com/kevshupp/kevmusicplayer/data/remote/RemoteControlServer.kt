@@ -18,6 +18,7 @@ import com.kevshupp.kevmusicplayer.data.AppDatabase
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.data.PreferenceConstants
 import com.kevshupp.kevmusicplayer.data.TelemetryLogger
+import com.kevshupp.kevmusicplayer.data.cloud.CloudAuthManager
 import com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks
 import com.kevshupp.kevmusicplayer.data.telegram.TelegramDownloadQueue
 import com.kevshupp.kevmusicplayer.ui.screens.loadAlbumArtBitmap
@@ -71,7 +72,7 @@ class RemoteControlServer(
         const val SERVICE_TYPE = "_kevmusic._tcp."
         private const val PREFS = "remote_prefs"
         private const val KEY_TOKENS = "tokens"
-        private const val PROTOCOL_VERSION = 6
+        private const val PROTOCOL_VERSION = 7
         private const val MAX_UPLOAD_BYTES = 2L * 1024 * 1024 * 1024
         private val UPLOAD_EXTENSIONS = setOf("mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "wma", "alac", "ape")
 
@@ -152,7 +153,20 @@ class RemoteControlServer(
         if (key == "app_theme") broadcast(themeJson())
         // Cambia al restaurar una copia o al guardarla otro PC
         if (key == SoulseekAccount.KEY_PASS) slskAccountJson()?.let { broadcast(it) }
+        if (key == PreferenceConstants.KEY_CLOUD_SYNC_INCLUDE_STATS) broadcast(cloudAccountJson())
     }
+    // Cuenta de Google del teléfono (protocolo 7): el PC la compara con la suya y pide un token si no coincide.
+    // Sin token: el token solo viaja si el PC lo pide ("cloudLinkRequest").
+    private fun cloudAccountJson(): JSONObject {
+        val user = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+        val prefs = PreferenceConstants.getSettingsPrefs(context)
+        return JSONObject().put("type", "cloudAccount").put("uid", user?.uid ?: "")
+            .put("email", user?.email ?: "").put("name", user?.displayName ?: "")
+            .put("photo", user?.photoUrl?.toString()?.takeIf { it.startsWith("http") } ?: "")
+            .put("stats", prefs.getBoolean(PreferenceConstants.KEY_CLOUD_SYNC_INCLUDE_STATS, true))
+    }
+    private val cloudAuthListener = com.google.firebase.auth.FirebaseAuth.AuthStateListener { broadcast(cloudAccountJson()) }
+
     private fun slskAccountJson() = SoulseekAccount.get(context)?.let { (user, pass) ->
         JSONObject().put("type", "slskAccount").put("username", user).put("password", pass)
     }
@@ -197,6 +211,7 @@ class RemoteControlServer(
         registerNsd()
         telegram.start()
         PreferenceConstants.getSettingsPrefs(context).registerOnSharedPreferenceChangeListener(themeListener)
+        com.google.firebase.auth.FirebaseAuth.getInstance().addAuthStateListener(cloudAuthListener)
         _running.value = true
         // Reproducciones ya guardadas en Room: el escritorio actualiza Inicio (recientes, más escuchadas) sin recargar
         playsJob = scope.launch {
@@ -242,6 +257,7 @@ class RemoteControlServer(
         smartJob = null
         shuffleJob = null
         playerProvider()?.removeListener(playerListener)
+        com.google.firebase.auth.FirebaseAuth.getInstance().removeAuthStateListener(cloudAuthListener)
         unregisterNsd()
         telegram.stop()
         PreferenceConstants.getSettingsPrefs(context).unregisterOnSharedPreferenceChangeListener(themeListener)
@@ -316,6 +332,7 @@ class RemoteControlServer(
             val player = playerProvider() ?: return@post
             socket.post(themeJson().toString())
             slskAccountJson()?.let { socket.post(it.toString()) }
+            socket.post(cloudAccountJson().toString())
             telegram.snapshot().forEach { socket.post(it.toString()) }
             socket.post(buildQueue(player).toString())
             socket.post(buildState(player).toString())
@@ -339,6 +356,10 @@ class RemoteControlServer(
                 mainHandler.post { playerProvider()?.let { broadcast(buildState(it)) } }
             }
             "getLyrics" -> sendLyrics(msg.optLong("id"), socket)
+            "cloudLinkRequest" -> scope.launch {
+                val token = CloudAuthManager.freshGoogleIdToken(context)
+                socket.post(JSONObject().put("type", "cloudLink").put("idToken", token ?: "").toString())
+            }
             "slskAccountSave" -> {
                 val user = msg.optString("username").trim()
                 val pass = msg.optString("password")

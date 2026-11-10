@@ -227,6 +227,7 @@ class LocalPlayer(private val scope: CoroutineScope) {
 
     private fun countPlay(id: Long) {
         val (plays, last) = LocalLibrary.recordPlay(id, System.currentTimeMillis())
+        tracks[id]?.song?.let { com.kevshupp.kevmusic.desktop.CloudSession.recordPlay(it.artist, it.title, last) }
         val lib = _library.value ?: return
         _library.value = lib.copy(songs = lib.songs.map { if (it.id == id) it.copy(plays = plays, lastPlayed = last) else it })
     }

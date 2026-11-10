@@ -280,6 +280,16 @@ class RemoteClient(private val scope: CoroutineScope) {
                     .map { p -> p.copy(songIds = p.songIds.filter { it in lib.byId }) }
                 _library.value = lib.copy(playlists = lib.playlists.filterNot { it.smart } + smart)
             }
+            // Protocolo 7: cuenta de Google del teléfono; si el PC no tiene esa sesión, pide un token para abrirla
+            "cloudAccount" -> {
+                phoneCloud = msg
+                _phoneCloudUid.value = msg.optString("uid").takeIf { it.isNotEmpty() }
+                if (CloudSession.needsLink(msg.optString("uid"), msg.optBoolean("stats", true))) cmd("cloudLinkRequest")
+            }
+            "cloudLink" -> CloudSession.link(
+                msg.optString("idToken"), phoneCloud?.optString("email").orEmpty(),
+                phoneCloud?.optString("name").orEmpty(), phoneCloud?.optString("photo").orEmpty()
+            )
             "slskAccount" -> _slskAccount.value = msg.optString("username") to msg.optString("password")
             "theme" -> _phoneTheme.value = msg.optString("theme", "cyberpunk")
             "tgStatus" -> _telegram.value = TelegramStatus(msg.optBoolean("ready"), msg.optString("reason"))
@@ -397,6 +407,18 @@ class RemoteClient(private val scope: CoroutineScope) {
     /** Versión del protocolo del teléfono; la 2 (app 1.8.0) acepta canciones con `PUT /upload`. */
     @Volatile var phoneProtocol = 0
         private set
+    @Volatile private var phoneCloud: JSONObject? = null
+
+    /** Vuelve a pedir la sesión al teléfono (botón de Ajustes); false si no está conectado o es anterior al protocolo 7. */
+    fun relinkCloud(): Boolean {
+        val uid = phoneCloud?.optString("uid").orEmpty()
+        if (phoneProtocol < 7 || socket == null || uid.isEmpty()) return false
+        cmd("cloudLinkRequest")
+        return true
+    }
+    /** Cuenta de Google del teléfono conectado (null sin sesión o sin conexión). */
+    private val _phoneCloudUid = MutableStateFlow<String?>(null)
+    val phoneCloudUid: StateFlow<String?> = _phoneCloudUid
 
     /** Por qué no se puede enviar una canción al teléfono ahora, o null si se puede. */
     fun uploadBlocker(): String? = when {

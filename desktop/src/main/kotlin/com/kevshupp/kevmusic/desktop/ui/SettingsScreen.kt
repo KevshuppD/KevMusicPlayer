@@ -79,6 +79,37 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
+                if (matches("nube", "cuenta", "google", "sesión", "sesion", "firebase", "estadísticas", "reproducciones")) {
+                    SettingsCard("Cuenta en la nube", Icons.Rounded.Cloud) {
+                        val account by CloudSession.account.collectAsState()
+                        val cloudError by CloudSession.error.collectAsState()
+                        val a = account
+                        if (a != null) {
+                            Text(a.name.ifBlank { a.email }, fontWeight = FontWeight.Medium)
+                            if (a.name.isNotBlank()) Text(a.email, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                "La misma cuenta de Google que el teléfono. Las reproducciones de este PC se suman a tus estadísticas aunque el teléfono esté apagado.",
+                                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text("Sin sesión", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Conecta el teléfono con la sesión de Google iniciada en KevMusicPlayer y este PC entrará solo con la misma cuenta.",
+                                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        cloudError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val phoneUid by client.phoneCloudUid.collectAsState()
+                            if (phoneUid != null && phoneUid != a?.uid) {
+                                OutlinedButton(onClick = { client.relinkCloud() }) { Text("Usar la cuenta del teléfono") }
+                            }
+                            if (a != null) OutlinedButton(onClick = { CloudSession.signOut() }) { Text("Cerrar sesión en este PC") }
+                        }
+                    }
+                }
+
                 if (matches("pc", "local", "carpeta", "carpetas", "música", "musica", "escanear", "biblioteca", "audio", "mpv")) {
                     SettingsCard("Música en este PC", Icons.Rounded.Computer) {
                         val onPc by client.onPc.collectAsState()
