@@ -69,6 +69,27 @@ class RemoteClient(private val scope: CoroutineScope) {
     init {
         local.resolver = { song -> OnDemand.resolve(this, song) }
         if (_onPc.value) local.start()
+        // Se cortó el teléfono mientras sonaba en él: tras 8 s sin volver (no por un corte breve del Wi-Fi), pasa
+        // al PC con la misma cola; lo que el PC no tiene suena bajo demanda. Al volver, [handle] regresa al teléfono
+        // si en el PC no suena nada.
+        scope.launch {
+            var wasConnected = false
+            status.collect { st ->
+                if (st is ConnStatus.Connected) { wasConnected = true; return@collect }
+                if (!wasConnected || _onPc.value || userClosed) return@collect
+                wasConnected = false
+                delay(8000)
+                if (_status.value !is ConnStatus.Connected && !_onPc.value) {
+                    val hadMusic = _state.value?.id?.let { it != 0L } == true
+                    autoPc = true
+                    switchTo(true, persist = false)
+                    _notice.value = Notice(
+                        if (hadMusic) "Teléfono sin conexión: sigue en este PC (lo que no tienes aquí suena bajo demanda)"
+                        else "Teléfono sin conexión: suena la música de este PC"
+                    )
+                }
+            }
+        }
     }
     private val _libraryLoading = MutableStateFlow(false)
     val libraryLoading: StateFlow<Boolean> = _libraryLoading
