@@ -54,6 +54,8 @@ object ConnectRequest {
 private var startHidden = false
 
 fun main(args: Array<String>) {
+    // Antes de cualquier hilo nativo (mpv, TDLib, Skia): ver Mpv.fixNumericLocale
+    com.kevshupp.kevmusic.desktop.local.Mpv.fixNumericLocale()
     startHidden = "--hidden" in args
     // Ya abierta: que se muestre esa (instantáneo) y salir sin cargar Compose
     if (!CDS_TRAINING && Instance.forwardToRunning()) return

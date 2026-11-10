@@ -117,11 +117,22 @@ class Mpv private constructor(private val lib: LibMpv, private val ctx: Pointer)
         @Volatile var unavailableReason: String? = null
             private set
 
+        @Volatile private var localeFixed = false
+
+        /**
+         * libmpv se niega a arrancar si LC_NUMERIC no es "C" (la JVM pone el del sistema: es_CL usa coma decimal).
+         * Se llama **una vez al principio de `main()`**, antes de que corra ningún hilo nativo: `setlocale` no es
+         * seguro con otros hilos usando el locale, y llamarlo al crear mpv mientras TDLib abría su base
+         * cerraba la app (SIGSEGV en `std::ostream::_M_insert<double>` de libstdc++, 10/11/2026).
+         */
+        fun fixNumericLocale() {
+            if (localeFixed || com.kevshupp.kevmusic.desktop.Platform.isWindows) return
+            localeFixed = true
+            runCatching { Native.load("c", LibC::class.java).setlocale(LC_NUMERIC, "C") }
+        }
+
         fun create(): Mpv? = runCatching {
-            // libmpv se niega a arrancar si LC_NUMERIC no es "C" (la JVM pone el del sistema: es_CL usa coma decimal)
-            if (!com.kevshupp.kevmusic.desktop.Platform.isWindows) {
-                runCatching { Native.load("c", LibC::class.java).setlocale(LC_NUMERIC, "C") }
-            }
+            fixNumericLocale()
             val lib = loadLib()
             val ctx = lib.mpv_create() ?: error("mpv_create devolvió null")
             listOf(
