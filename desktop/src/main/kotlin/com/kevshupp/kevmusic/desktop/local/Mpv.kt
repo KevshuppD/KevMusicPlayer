@@ -37,6 +37,7 @@ class Mpv private constructor(private val lib: LibMpv, private val ctx: Pointer)
 
     private interface LibC : Library {
         fun setlocale(category: Int, locale: String): String?
+        fun setenv(name: String, value: String, overwrite: Int): Int
     }
 
     fun load(path: String, startPaused: Boolean = false) {
@@ -128,7 +129,16 @@ class Mpv private constructor(private val lib: LibMpv, private val ctx: Pointer)
         fun fixNumericLocale() {
             if (localeFixed || com.kevshupp.kevmusic.desktop.Platform.isWindows) return
             localeFixed = true
-            runCatching { Native.load("c", LibC::class.java).setlocale(LC_NUMERIC, "C") }
+            // El toolkit X11 de AWT hace setlocale(LC_ALL, "") al iniciarse y deshacía el cambio
+            // ("Non-C locale detected" y mpv no arrancaba): se inicia antes, aquí, en el hilo principal.
+            runCatching {
+                val libc = Native.load("c", LibC::class.java)
+                // GTK/AWT vuelven a llamar a setlocale(LC_ALL, "") más tarde: con LC_NUMERIC=C en el
+                // entorno ese "" sigue dando "C" para los números (antes de que haya otros hilos).
+                libc.setenv("LC_NUMERIC", "C", 1)
+                if (!java.awt.GraphicsEnvironment.isHeadless()) java.awt.Toolkit.getDefaultToolkit()
+                libc.setlocale(LC_NUMERIC, "C")
+            }
         }
 
         fun create(): Mpv? = runCatching {
