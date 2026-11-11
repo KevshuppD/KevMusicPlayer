@@ -49,10 +49,16 @@ object OnDemand {
 
         if (Settings.odYoutube) {
             runCatching {
-                val q = "${song.artist.substringBefore(",").trim()} ${song.title}"
-                val results = YtMusic.search(q, 5).take(5).toList()
-                val pick = results.firstOrNull { YtMusic.sameText(it.title, song.title) && kotlin.math.abs(it.durationSec * 1000L - song.duration) <= 5000 }
-                    ?: results.firstOrNull { YtMusic.sameText(it.title, song.title) }
+                val artist = mainArtist(song.artist)
+                val results = YtMusic.search("$artist ${song.title}", 5).take(5).toList()
+                // Siempre del mismo artista: "People Pt.2" de un canal de covers en piano tenía el mismo título y
+                // duración. YouTube Music a veces da el título en el idioma original ("사람 Pt.2"): con el artista
+                // igual basta la duración casi exacta (±2 s).
+                fun dur(t: YtTrack) = kotlin.math.abs(t.durationSec * 1000L - song.duration)
+                val own = results.filter { r -> r.artist.split(",", "&").any { YtMusic.sameText(mainArtist(it), artist) } }
+                val pick = own.firstOrNull { YtMusic.sameText(it.title, song.title) && dur(it) <= 5000 }
+                    ?: own.firstOrNull { song.duration > 0 && dur(it) <= 2000 }
+                    ?: own.firstOrNull { YtMusic.sameText(it.title, song.title) && song.duration <= 0 }
                     ?: throw NoSuchElementException("no se encontró")
                 val got = YtMusic.download(pick) {}
                 val dest = File(dir, "${song.id}.m4a")
@@ -64,7 +70,7 @@ object OnDemand {
         Result.failure(Exception(if (reasons.isEmpty()) "Conecta el teléfono o activa una fuente bajo demanda en Ajustes" else reasons.joinToString(" · ")))
     }
 
-    private fun cached(id: Long): File? = dir.listFiles { f -> f.name.substringBefore('.') == id.toString() && !f.name.endsWith(".part") && f.length() > 0 }?.firstOrNull()
+    fun cached(id: Long): File? = dir.listFiles { f -> f.name.substringBefore('.') == id.toString() && !f.name.endsWith(".part") && f.length() > 0 }?.firstOrNull()
 
     private fun done(f: File): File {
         trim()
@@ -84,7 +90,7 @@ object OnDemand {
 
     /** (id de Deezer, duración en s) de la misma canción: título y artista iguales, la de duración más parecida. */
     private fun deezerTrack(song: Song): Pair<Long, Int>? {
-        val artist = song.artist.substringBefore(",").trim()
+        val artist = mainArtist(song.artist)
         for (q in listOf("$artist ${song.title}", "artist:\"$artist\" track:\"${song.title}\"")) {
             val url = "https://api.deezer.com/search".toHttpUrl().newBuilder().addQueryParameter("q", q).addQueryParameter("limit", "15").build()
             val data = http.newCall(Request.Builder().url(url).build()).execute().use { JSONObject(it.body!!.string()).optJSONArray("data") } ?: continue
@@ -100,4 +106,9 @@ object OnDemand {
         }
         return null
     }
+
+    private val featTail = Regex("""\s*[(\[]?\s*(feat|ft|with)\.?\s.*$""", RegexOption.IGNORE_CASE)
+
+    /** Primer artista sin "feat. …": "Agust D feat. 아이유" → "Agust D". */
+    private fun mainArtist(a: String) = a.substringBefore(",").replace(featTail, "").trim()
 }

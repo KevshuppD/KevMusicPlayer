@@ -45,7 +45,8 @@ fun HomeScreen(
     onOpenPlaylist: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
     onOpenHistory: () -> Unit,
-    onOpenNew: () -> Unit
+    onOpenNew: () -> Unit,
+    onOpenSettings: () -> Unit = {}
 ) {
     val client = LocalClient.current
     val recent = remember(lib) { lib.songs.filter { it.lastPlayed > 0 }.sortedByDescending { it.lastPlayed }.take(20) }
@@ -74,9 +75,12 @@ fun HomeScreen(
     val scroll = rememberScrollState()
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(end = 12.dp).verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(26.dp)) {
-            Column {
-                Text(greeting, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
-                Text("Tu música favorita te espera · ${lib.songs.size} canciones en ${lib.device}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(greeting, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Tu música favorita te espera · ${lib.songs.size} canciones en ${lib.device}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                ProfileButton(onOpenSettings)
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {

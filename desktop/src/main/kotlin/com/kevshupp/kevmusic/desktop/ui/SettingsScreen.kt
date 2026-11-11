@@ -26,6 +26,7 @@ import com.kevshupp.kevmusic.desktop.*
 import kotlinx.coroutines.launch
 
 /** Ajustes del PC, con buscador como los de la app: tema, letras, rendimiento, teléfono y actualizaciones. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(status: ConnStatus) {
     val client = LocalClient.current
@@ -39,10 +40,12 @@ fun SettingsScreen(status: ConnStatus) {
     var cacheCleared by remember { mutableStateOf(false) }
     val saved = remember(status) { Config.load() }
 
-    // Cada bloque declara sus palabras clave; el buscador muestra solo los que coinciden
-    fun matches(vararg words: String): Boolean {
+    var category by remember { mutableStateOf(SettingsCat.General) }
+
+    // Sin búsqueda se ve la categoría elegida; buscando, todos los bloques cuyas palabras clave coinciden
+    fun show(cat: SettingsCat, vararg words: String): Boolean {
         val q = normalize(query.trim())
-        return q.isEmpty() || words.any { normalize(it).contains(q) }
+        return if (q.isEmpty()) cat == category else words.any { normalize(it).contains(q) }
     }
 
     val scroll = rememberScrollState()
@@ -50,10 +53,31 @@ fun SettingsScreen(status: ConnStatus) {
         SectionTitle("Ajustes", "KevMusic Desktop ${BuildInfo.VERSION}")
         SearchField(query, { query = it }, "Buscar ajuste (tema, letra, actualizaciones…)", Modifier.fillMaxWidth())
         Spacer(Modifier.height(14.dp))
-        Box(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxSize()) {
+        // Categorías (como las secciones de Ajustes de la app); buscando se muestran todas las coincidencias
+        Column(Modifier.width(210.dp).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SettingsCat.entries.forEach { c ->
+                val selected = query.isBlank() && c == category
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else androidx.compose.ui.graphics.Color.Transparent)
+                        .clickable { category = c; query = ""; scope.launch { scroll.scrollTo(0) } }
+                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(c.icon, null, Modifier.size(20.dp), tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(c.label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium, fontSize = 14.sp)
+                        Text(c.hint, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    }
+                }
+            }
+        }
+        Box(Modifier.weight(1f).fillMaxHeight()) {
             Column(Modifier.fillMaxSize().padding(end = 12.dp).verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(14.dp)) {
 
-                if (matches("apariencia", "tema", "color", "oscuro", "claro", "cyberpunk", "petróleo", "turquesa", "obsidiana", "monocromo")) {
+                if (show(SettingsCat.General, "apariencia", "tema", "color", "oscuro", "claro", "cyberpunk", "petróleo", "turquesa", "obsidiana", "monocromo")) {
                     SettingsCard("Apariencia", Icons.Rounded.Palette) {
                         Text("Tema", fontWeight = FontWeight.Medium)
                         Text(
@@ -61,25 +85,19 @@ fun SettingsScreen(status: ConnStatus) {
                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                            ThemeChip("Igual que el teléfono", phoneTheme, Settings.theme == Settings.THEME_PHONE, Modifier.weight(1f)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            val chip = Modifier.width(172.dp)
+                            ThemeChip("Igual que el teléfono", phoneTheme, Settings.theme == Settings.THEME_PHONE, chip) {
                                 Settings.theme = Settings.THEME_PHONE; Settings.save()
                             }
-                            Themes.take(3).forEach { (key, label) ->
-                                ThemeChip(label, key, Settings.theme == key, Modifier.weight(1f)) { Settings.theme = key; Settings.save() }
+                            Themes.forEach { (key, label) ->
+                                ThemeChip(label, key, Settings.theme == key, chip) { Settings.theme = key; Settings.save() }
                             }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                            Themes.drop(3).forEach { (key, label) ->
-                                ThemeChip(label, key, Settings.theme == key, Modifier.weight(1f)) { Settings.theme = key; Settings.save() }
-                            }
-                            Spacer(Modifier.weight(1f))
                         }
                     }
                 }
 
-                if (matches("nube", "cuenta", "google", "sesión", "sesion", "firebase", "estadísticas", "reproducciones")) {
+                if (show(SettingsCat.Account, "nube", "cuenta", "google", "sesión", "sesion", "firebase", "estadísticas", "reproducciones")) {
                     SettingsCard("Cuenta en la nube", Icons.Rounded.Cloud) {
                         val account by CloudSession.account.collectAsState()
                         val cloudError by CloudSession.error.collectAsState()
@@ -110,7 +128,7 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("bajo demanda", "telegram", "bot", "youtube", "nube", "teléfono", "streaming")) {
+                if (show(SettingsCat.Music, "bajo demanda", "telegram", "bot", "youtube", "nube", "teléfono", "streaming")) {
                     SettingsCard("Bajo demanda en este PC", Icons.Rounded.CloudDownload) {
                         Text(
                             "Con \"Sonar en este PC\", las canciones del teléfono que este PC no tiene también suenan: se piden al teléfono si está conectado, si no a Telegram o a YouTube Music. Quedan guardadas en la caché (1 GB).",
@@ -130,7 +148,7 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("pc", "local", "carpeta", "carpetas", "música", "musica", "escanear", "biblioteca", "audio", "mpv")) {
+                if (show(SettingsCat.Music, "pc", "local", "carpeta", "carpetas", "música", "musica", "escanear", "biblioteca", "audio", "mpv")) {
                     SettingsCard("Música en este PC", Icons.Rounded.Computer) {
                         val onPc by client.onPc.collectAsState()
                         val scanning by client.local.scanning.collectAsState()
@@ -180,7 +198,7 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("ventana", "cerrar", "x", "bandeja", "minimizar", "segundo plano", "salir", "comportamiento", "iniciar", "inicio", "arranque", "sistema", "autostart")) {
+                if (show(SettingsCat.General, "ventana", "cerrar", "x", "bandeja", "minimizar", "segundo plano", "salir", "comportamiento", "iniciar", "inicio", "arranque", "sistema", "autostart")) {
                     SettingsCard("Ventana", Icons.Rounded.Window) {
                         Text("Al pulsar la X", fontWeight = FontWeight.Medium)
                         val trayOk = com.kevshupp.kevmusic.desktop.TrayState.active != false
@@ -226,7 +244,7 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("letra", "letras", "traducción", "tamaño", "fuente", "karaoke")) {
+                if (show(SettingsCat.General, "letra", "letras", "traducción", "tamaño", "fuente", "karaoke")) {
                     SettingsCard("Letras", Icons.Rounded.Lyrics) {
                         SwitchRow("Mostrar traducción", "Debajo de cada línea, si la canción tiene traducción guardada", Settings.showTranslation) {
                             Settings.showTranslation = it; Settings.save()
@@ -242,7 +260,7 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("rendimiento", "carátulas", "caratulas", "hd", "caché", "cache", "memoria", "imágenes", "lento", "fps", "fluidez", "gráfica", "grafica", "hardware", "software", "opengl", "renderizado")) {
+                if (show(SettingsCat.System, "rendimiento", "carátulas", "caratulas", "hd", "caché", "cache", "memoria", "imágenes", "lento", "fps", "fluidez", "gráfica", "grafica", "hardware", "software", "opengl", "renderizado")) {
                     SettingsCard("Rendimiento", Icons.Rounded.Speed) {
                         Text("Renderizado", fontWeight = FontWeight.Medium)
                         Text(
@@ -282,7 +300,7 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("teléfono", "telefono", "conexión", "dispositivo", "ip", "desvincular", "emparejar", "reconectar", "red")) {
+                if (show(SettingsCat.Account, "teléfono", "telefono", "conexión", "dispositivo", "ip", "desvincular", "emparejar", "reconectar", "red")) {
                     SettingsCard("Teléfono", Icons.Rounded.PhoneAndroid) {
                         val (label, color) = when (status) {
                             is ConnStatus.Connected -> "Conectado" to MaterialTheme.colorScheme.primary
@@ -302,7 +320,7 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("actualizaciones", "actualizar", "versión", "version", "github", "nueva")) {
+                if (show(SettingsCat.System, "actualizaciones", "actualizar", "versión", "version", "github", "nueva")) {
                     SettingsCard("Actualizaciones", Icons.Rounded.SystemUpdate) {
                         InfoRow("Versión instalada", BuildInfo.VERSION + if (Updater.isInstalledBuild) "" else " (desarrollo)")
                         SwitchRow("Buscar al abrir", "Comprueba en GitHub si hay una versión nueva cada vez que abres la app", Settings.autoCheckUpdates) {
@@ -326,7 +344,7 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("atajos", "teclado", "teclas", "multimedia", "shortcut")) {
+                if (show(SettingsCat.System, "atajos", "teclado", "teclas", "multimedia", "shortcut")) {
                     SettingsCard("Atajos de teclado", Icons.Rounded.Keyboard) {
                         listOf(
                             "Ctrl + P" to "Reproducir / pausa",
@@ -338,7 +356,7 @@ fun SettingsScreen(status: ConnStatus) {
                     }
                 }
 
-                if (matches("acerca", "licencia", "mit", "privacidad", "kevmusic")) {
+                if (show(SettingsCat.System, "acerca", "licencia", "mit", "privacidad", "kevmusic")) {
                     SettingsCard("Acerca de", Icons.Rounded.Info) {
                         Text(
                             "KevMusic Desktop es el control remoto de KevMusicPlayer. La música, la biblioteca y las descargas " +
@@ -350,7 +368,15 @@ fun SettingsScreen(status: ConnStatus) {
             }
             VerticalScrollbar(rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
         }
+        }
     }
+}
+
+private enum class SettingsCat(val label: String, val hint: String, val icon: ImageVector) {
+    General("General", "Tema, letras y ventana", Icons.Rounded.Tune),
+    Account("Cuenta y teléfono", "Nube y conexión", Icons.Rounded.AccountCircle),
+    Music("Música y descargas", "Este PC y bajo demanda", Icons.Rounded.LibraryMusic),
+    System("Sistema", "Rendimiento y versión", Icons.Rounded.Settings)
 }
 
 @Composable

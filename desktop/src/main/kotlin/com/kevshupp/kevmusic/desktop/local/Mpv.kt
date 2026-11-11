@@ -136,7 +136,14 @@ class Mpv private constructor(private val lib: LibMpv, private val ctx: Pointer)
                 // GTK/AWT vuelven a llamar a setlocale(LC_ALL, "") más tarde: con LC_NUMERIC=C en el
                 // entorno ese "" sigue dando "C" para los números (antes de que haya otros hilos).
                 libc.setenv("LC_NUMERIC", "C", 1)
-                if (!java.awt.GraphicsEnvironment.isHeadless()) java.awt.Toolkit.getDefaultToolkit()
+                if (!java.awt.GraphicsEnvironment.isHeadless()) {
+                    val tk = java.awt.Toolkit.getDefaultToolkit()
+                    // AWT carga GTK solo cuando algo lo pide (selector de carpetas, iconos, Swing) y gtk_init hace
+                    // setlocale(LC_ALL, ""): si eso pasaba con TDLib formateando un número en otro hilo, la app se
+                    // cerraba (SIGSEGV en std::ostream::_M_insert<double>, 11/11/2026). Pedir un icono de GTK lo
+                    // carga ya, aquí, con un solo hilo.
+                    runCatching { tk.getDesktopProperty("gtk.icon.gtk-ok.4.ltr") }
+                }
                 libc.setlocale(LC_NUMERIC, "C")
             }
         }

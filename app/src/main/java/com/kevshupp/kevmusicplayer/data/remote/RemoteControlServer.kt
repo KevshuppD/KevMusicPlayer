@@ -114,6 +114,15 @@ class RemoteControlServer(
         /** "Sonar en este PC" pedido desde el teléfono (selector de dispositivos): nombre del PC. */
         val handoffRequests = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
 
+        /** Lo que suena en un PC conectado ("Sonar en este PC" activo allí); null si ninguno. */
+        /** [pos] en ms a la hora local [at] (llegada del mensaje); mientras suena se interpola. */
+        data class PcPlayback(val pc: String, val playing: Boolean, val title: String, val artist: String, val pos: Long = 0, val at: Long = 0)
+        val pcPlayback = MutableStateFlow<PcPlayback?>(null)
+        /** "Traer al teléfono" desde el reproductor: el PC vuelve a sonar en el teléfono con su cola. */
+        val handoffBackRequests = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
+        /** Órdenes del reproductor del teléfono para el PC donde suena (`pcCmd`): nombre del PC y la orden. */
+        val pcCommands = kotlinx.coroutines.flow.MutableSharedFlow<Pair<String, JSONObject>>(extraBufferCapacity = 16)
+
         fun isEnabled(context: Context) =
             PreferenceConstants.getSettingsPrefs(context).getBoolean(KEY_ENABLED, false)
 
@@ -249,6 +258,18 @@ class RemoteControlServer(
                     .forEach { it.post(JSONObject().put("type", "handoff").toString()) }
             }
         }
+        scope.launch {
+            handoffBackRequests.collect { name ->
+                sockets.filter { it.authorized && it.clientName == name && it.clientProto >= 7 }
+                    .forEach { it.post(JSONObject().put("type", "handoffBack").toString()) }
+            }
+        }
+        scope.launch {
+            pcCommands.collect { (name, cmd) ->
+                sockets.filter { it.authorized && it.clientName == name && it.clientProto >= 7 }
+                    .forEach { it.post(JSONObject(cmd.toString()).put("type", "pcCmd").toString()) }
+            }
+        }
         // Mientras suena, la posición viaja cada segundo (el escritorio interpola entre medias)
         tickJob = scope.launch(Dispatchers.Main) {
             while (isActive) {
@@ -373,6 +394,13 @@ class RemoteControlServer(
                 mainHandler.post { playerProvider()?.let { broadcast(buildState(it)) } }
             }
             "getLyrics" -> sendLyrics(msg.optLong("id"), socket)
+            // El PC avisa si está sonando en él (protocolo 7): el reproductor lo muestra con "Traer al teléfono"
+            "pcPlayback" -> pcPlayback.value =
+                if (msg.optBoolean("active")) PcPlayback(
+                    socket.clientName, msg.optBoolean("playing"), msg.optString("title"), msg.optString("artist"),
+                    msg.optLong("pos"), android.os.SystemClock.elapsedRealtime()
+                )
+                else pcPlayback.value?.takeIf { it.pc != socket.clientName }
             "cloudLinkRequest" -> scope.launch {
                 val token = CloudAuthManager.freshGoogleIdToken(context)
                 socket.post(JSONObject().put("type", "cloudLink").put("idToken", token ?: "").toString())
@@ -383,6 +411,8 @@ class RemoteControlServer(
                 if (user.isNotEmpty() && pass.isNotEmpty()) SoulseekAccount.set(context, user, pass)
             }
             "playIds", "enqueue" -> scope.launch {
+                // El PC devuelve la música al teléfono: deja de ser control remoto antes de que suene
+                if (msg.optString("type") == "playIds" && pcPlayback.value?.pc == socket.clientName) pcPlayback.value = null
                 val ids = msg.optJSONArray("ids")?.let { a -> (0 until a.length()).map { a.optLong(it) } } ?: emptyList()
                 val items = withContext(Dispatchers.IO) { mediaItemsFor(ids) }
                 if (items.isEmpty()) return@launch
@@ -705,6 +735,7 @@ class RemoteControlServer(
 
         override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
             sockets.remove(this)
+            if (pcPlayback.value?.pc == clientName && sockets.none { it.authorized && it.clientName == clientName }) pcPlayback.value = null
             updateConnectedClients()
         }
 
@@ -740,6 +771,7 @@ class RemoteControlServer(
 
         override fun onException(exception: IOException?) {
             sockets.remove(this)
+            if (pcPlayback.value?.pc == clientName && sockets.none { it.authorized && it.clientName == clientName }) pcPlayback.value = null
             updateConnectedClients()
         }
     }

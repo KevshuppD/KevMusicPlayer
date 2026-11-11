@@ -171,7 +171,7 @@ fun BottomNavBar(
                                             .clip(CircleShape)
                                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
                                             .clickable {
-                                                if (com.kevshupp.kevmusicplayer.data.cast.CastController.interceptToggle()) return@clickable
+                                                if (com.kevshupp.kevmusicplayer.data.cast.CastController.interceptToggle() || com.kevshupp.kevmusicplayer.data.remote.PcRemote.interceptToggle()) return@clickable
                    if (playerState.isPlaying) player.pause() else player.play()
                                             },
                                         contentAlignment = Alignment.Center

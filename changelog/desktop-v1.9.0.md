@@ -1,0 +1,8 @@
+- **Tu cuenta en la nube en el PC:** con la cuenta de Google del teléfono, tus reproducciones del PC se suman a tus estadísticas
+- **Toda tu biblioteca, aunque no esté en el PC:** las canciones y listas del teléfono aparecen en la música de este PC y se consiguen al tocarlas (del teléfono, de Telegram o de YouTube Music)
+  - YouTube Music solo usa el mismo artista: se acabaron los covers en piano
+  - Se ve "cargando" mientras llega la canción
+- **Sin el teléfono:** carátulas y letras de respaldo (Deezer, la nube y LrcLib), y Descargar › Telegram busca y descarga directo en el PC
+- **Sonar en el PC desde el teléfono** con el botón Dispositivos; si el teléfono se desconecta mientras suena, la música sigue en el PC con la misma cola
+- **Inicio con botón de perfil** (cuenta, nube, teléfono y Telegram) y **Ajustes por categorías**, con los temas en cuadrícula
+- **Arreglos:** el PC ya no se cierra al abrir Telegram mientras suena, y la música vuelve a sonar con el sistema en español

@@ -94,7 +94,12 @@ class LocalPlayer(private val scope: CoroutineScope) {
         _error.value = null
         m.setVolume(volume)
         m.listener = object : Mpv.Listener {
-            override fun onPosition(seconds: Double) = update { copy(position = (seconds * 1000).toLong(), buffering = false) }
+            // Mientras se consigue una canción bajo demanda el archivo anterior sigue cargado en mpv: su posición
+            // no debe pisar el estado (quitaba el "cargando" y mostraba la posición de la otra canción)
+            override fun onPosition(seconds: Double) {
+                if (resolving) return
+                update { copy(position = (seconds * 1000).toLong(), buffering = false) }
+            }
             override fun onDuration(seconds: Double) = update { copy(duration = (seconds * 1000).toLong()) }
             override fun onPause(paused: Boolean) = update { copy(playing = !paused) }
             override fun onEndOfFile() { scope.launch { advance(auto = true) } }
@@ -219,6 +224,8 @@ class LocalPlayer(private val scope: CoroutineScope) {
         }
     }
 
+    @Volatile private var resolving = false
+
     private fun playCurrent(paused: Boolean = false) {
         val id = order.getOrNull(index) ?: return
         val s = songOf(id) ?: return
@@ -231,26 +238,36 @@ class LocalPlayer(private val scope: CoroutineScope) {
         )
         publishQueue()
         if (t != null) {
+            resolving = false
             m.load(t.path, startPaused = paused)
             update { copy(buffering = false) }
             scope.launch(Dispatchers.IO) {
-                _lyrics.value = LocalLibrary.lyrics(t)?.let { Lyrics.parse(s.id, it, "") }
                 if (!paused) countPlay(s.id)
+                val l = LocalLibrary.lyrics(t)?.let { Lyrics.parse(s.id, it, "") }
+                    ?: com.kevshupp.kevmusic.desktop.OfflineExtras.lyrics(s)?.let { Lyrics.parse(s.id, it.first, it.second) }
+                if (order.getOrNull(index) == id) _lyrics.value = l
             }
             return
         }
         // Canción del teléfono que el PC no tiene: se consigue bajo demanda y después suena
+        resolving = true
         m.setPaused(true)
         _lyrics.value = null
+        scope.launch(Dispatchers.IO) {
+            val l = com.kevshupp.kevmusic.desktop.OfflineExtras.lyrics(s)?.let { Lyrics.parse(s.id, it.first, it.second) }
+            if (order.getOrNull(index) == id) _lyrics.value = l
+        }
         resolveJob = scope.launch(Dispatchers.IO) {
             val file = resolved[id]?.takeIf { it.length() > 0 } ?: resolver(s).getOrElse { e ->
                 _error.value = "${s.title}: ${e.message}"
+                if (order.getOrNull(index) == id) resolving = false
                 update { copy(playing = false, buffering = false) }
                 return@launch
             }.also { resolved[id] = it }
             synchronized(lock) {
                 if (order.getOrNull(index) != id) return@launch
                 _error.value = null
+                resolving = false
                 m.load(file.absolutePath, startPaused = paused)
                 update { copy(buffering = false, playing = !paused) }
             }

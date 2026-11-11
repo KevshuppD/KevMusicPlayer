@@ -63,7 +63,15 @@ object TelegramPc {
 
     /** @usuario del bot: el de Ajustes del PC o, si está vacío, el que informa el teléfono. */
     val bot: String get() = Settings.telegramBot.ifBlank { phoneBot }
-    @Volatile var phoneBot: String = ""
+    /** Se guarda en disco: sin él, con el teléfono desconectado Telegram no contaba como listo y todo iba a YouTube. */
+    private val phoneBotFile = File(Config.dir, "tg_phone_bot")
+    @Volatile var phoneBot: String = runCatching { phoneBotFile.readText().trim() }.getOrDefault("")
+        set(value) {
+            val v = value.trim()
+            if (v.isBlank() || v == field) return
+            field = v
+            runCatching { phoneBotFile.writeText(v) }
+        }
 
     val ready: Boolean get() = configured && hasSession && bot.isNotBlank()
 

@@ -132,6 +132,7 @@ fun PlayerScreen(
     val rememberLyricsOpen = remember(settingsPrefs) { settingsPrefs.getBoolean("remember_lyrics_open", true) }
 
     var showMoreOptions by remember { mutableStateOf(false) }
+    var showDevicesDialog by remember { mutableStateOf(false) }
     // Canción con colaboradores: al ir al artista se elige cuál (antes abría siempre el principal)
     var artistChoices by remember { mutableStateOf<List<String>>(emptyList()) }
     val goToArtist: (String) -> Unit = { field ->
@@ -1084,7 +1085,7 @@ fun PlayerScreen(
                                                  )
                                              )
                                              .clickable {
-                                                 if (com.kevshupp.kevmusicplayer.data.cast.CastController.interceptToggle()) return@clickable
+                                                 if (com.kevshupp.kevmusicplayer.data.cast.CastController.interceptToggle() || com.kevshupp.kevmusicplayer.data.remote.PcRemote.interceptToggle()) return@clickable
                                                  if (playerState.isPlaying) {
                                                      player.pause()
                                                  } else {
@@ -1232,6 +1233,10 @@ fun PlayerScreen(
                  com.kevshupp.kevmusicplayer.ui.screens.dialogs.TogetherDialog(onDismiss = { showTogetherDialog = false })
              }
 
+             if (showDevicesDialog) {
+                 com.kevshupp.kevmusicplayer.ui.screens.dialogs.DevicesDialog(onDismiss = { showDevicesDialog = false })
+             }
+
              if (showCastDialog) {
                  com.kevshupp.kevmusicplayer.ui.screens.dialogs.CastDialog(
                      queue = {
@@ -1244,6 +1249,37 @@ fun PlayerScreen(
                      onStarted = { player.pause() },
                      onDismiss = { showCastDialog = false }
                  )
+             }
+
+             // Sonando en un PC ("Sonar en este PC" de KevMusic Desktop): aviso con "Traer aquí"
+             val pcPlayback by com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.pcPlayback.collectAsState()
+             pcPlayback?.let { pc ->
+                 Row(
+                     modifier = Modifier
+                         .fillMaxWidth()
+                         .padding(horizontal = 24.dp, vertical = 6.dp)
+                         .clip(RoundedCornerShape(16.dp))
+                         .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                         .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                     verticalAlignment = Alignment.CenterVertically
+                 ) {
+                     Icon(Icons.Rounded.Computer, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                     Spacer(Modifier.width(10.dp))
+                     Column(Modifier.weight(1f)) {
+                         Text(
+                             (if (pc.playing) "Sonando en " else "En pausa en ") + pc.pc,
+                             color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1
+                         )
+                         if (pc.title.isNotBlank()) Text(
+                             pc.title + if (pc.artist.isNotBlank()) " · ${pc.artist}" else "",
+                             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f), fontSize = 12.sp, maxLines = 1,
+                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                         )
+                     }
+                     TextButton(onClick = { com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.handoffBackRequests.tryEmit(pc.pc) }) {
+                         Text("Traer aquí")
+                     }
+                 }
              }
 
              // Bottom Action Bar (5 Action Icons: Lyrics, Like, Sleep Timer, Queue, 3 Dots)
@@ -1306,12 +1342,12 @@ fun PlayerScreen(
                      )
                  }
 
-                 // 3. Moon / Sleep Timer Icon
-                 IconButton(onClick = { showSleepTimerDialog = true }) {
+                 // 3. Dispositivos (teléfono / KevMusic Desktop); el temporizador pasó a "Más opciones"
+                 IconButton(onClick = { showDevicesDialog = true }) {
                      Icon(
-                         imageVector = Icons.Rounded.Bedtime,
-                         contentDescription = "Temporizador",
-                         tint = if (sleepTimerMinutes != 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                         imageVector = if (pcPlayback != null) Icons.Rounded.Computer else Icons.Rounded.Devices,
+                         contentDescription = "Dispositivos",
+                         tint = if (pcPlayback != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                          modifier = Modifier.size(24.dp)
                      )
                  }
@@ -1409,275 +1445,64 @@ fun PlayerScreen(
                         HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(bottom = 6.dp))
                     }
 
-                    // 0. Crear fragmento en video / Compartir historia
+                    // Canción: listas y navegación
+                    // Agregar a una lista
+                    item { MoreOptionRow(Icons.AutoMirrored.Rounded.PlaylistAdd, "Agregar a lista de reproducción") { showMoreOptions = false; showAddToPlaylistDialog = true } }
                     item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                                .clickable {
-                                    showMoreOptions = false
-                                    showShareClipDialog = true
-                                }
-                                .padding(horizontal = 12.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.MovieFilter, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column {
-                                Text("Crear fragmento en video", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                Text("Exporta un clip con música y letra para historias", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                        MoreOptionRow(Icons.Rounded.Album, "Ir al álbum") {
+                            showMoreOptions = false
+                            val albumName = playerState.currentSong?.mediaMetadata?.albumTitle?.toString() ?: "Unknown Album"
+                            onNavigateToAlbum(albumName)
+                            onBack()
+                        }
+                    }
+                    // Ir al artista (con colaboradores pregunta a cuál)
+                    item { MoreOptionRow(Icons.Rounded.Person, "Ir al artista") { showMoreOptions = false; goToArtist(artist) } }
+                    item {
+                        MoreOptionRow(Icons.Rounded.Folder, "Ir a la carpeta") {
+                            showMoreOptions = false
+                            if ((currentSongFile?.folderName ?: "").isNotBlank()) viewModel?.requestedTab?.value = "Carpetas"
+                            onBack()
+                        }
+                    }
+                    item { HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp)) }
+                    // Compartir
+                    // Fragmento en video (Mis videos se abre desde el creador o Inicio)
+                    item { MoreOptionRow(Icons.Rounded.MovieFilter, "Crear video para historias") { showMoreOptions = false; showShareClipDialog = true } }
+                    item { MoreOptionRow(Icons.Rounded.Share, "Compartir archivo") { showMoreOptions = false;
+                        try {
+                            val uri = Uri.parse(currentSongUriString ?: "")
+                            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "audio/*"
+                                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
+                            context.startActivity(android.content.Intent.createChooser(shareIntent, "Compartir pista"))
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    } }
+                    item { HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp)) }
+                    // Reproducción
+                    item {
+                        MoreOptionRow(Icons.Rounded.Bedtime, if (sleepTimerMinutes != 0) "Temporizador de apagado · activo" else "Temporizador de apagado",
+                            tint = if (sleepTimerMinutes != 0) MaterialTheme.colorScheme.primary else null) {
+                            showMoreOptions = false; showSleepTimerDialog = true
                         }
                     }
-
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    showClipHistory = true
-                                }
-                                .padding(horizontal = 12.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.VideoLibrary, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Mis videos", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    item {
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp))
-                    }
-
-                    // 1. Guardar cola de reproducción
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    showSaveQueueDialog = true
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.BookmarkAdd, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Guardar cola de reproducción", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    // 3. Limpiar cola de reproducción
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    player.clearMediaItems()
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Limpiar cola de reproducción", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    item {
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp))
-                    }
-
-                    // 4. Ir al álbum
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    val albumName = playerState.currentSong?.mediaMetadata?.albumTitle?.toString() ?: "Unknown Album"
-                                    onNavigateToAlbum(albumName)
-                                    onBack()
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.Album, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Ir al álbum", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    // 5. Ir al artista
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    goToArtist(artist)
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.Person, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Ir al artista", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    // 6. Ver artista del álbum
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    goToArtist(artist)
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.Group, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Ver artista del álbum", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    // 7. Ir a la carpeta
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    val folder = currentSongFile?.folderName ?: ""
-                                    if (folder.isNotBlank()) {
-                                        viewModel?.requestedTab?.value = "Carpetas"
-                                    }
-                                    onBack()
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.Folder, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Ir a la carpeta", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    item {
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp))
-                    }
-
-                    // 8. Agregar a lista de reproducción
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    showAddToPlaylistDialog = true
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Agregar a lista de reproducción", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    // 9. Editar información
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    showTagEditorDialog = true
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.Edit, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Editar información", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    // 10. Editar letras
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    showEditLyricsDialog = true
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.EditNote, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Editar letras", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    item {
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp))
-                    }
-
-                    // 11. Detalles
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    showFileInfoDialog = true
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.Info, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Detalles", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    // 12. Compartir
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showMoreOptions = false
-                                    try {
-                                        val uri = Uri.parse(currentSongUriString ?: "")
-                                        val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                            type = "audio/*"
-                                            putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                                            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        }
-                                        context.startActivity(android.content.Intent.createChooser(shareIntent, "Compartir pista"))
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.Share, contentDescription = null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text("Compartir", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
+                    // Guardar cola
+                    item { MoreOptionRow(Icons.Rounded.BookmarkAdd, "Guardar cola como lista") { showMoreOptions = false; showSaveQueueDialog = true } }
+                    // Limpiar cola
+                    item { MoreOptionRow(Icons.AutoMirrored.Rounded.QueueMusic, "Limpiar cola") { showMoreOptions = false; player.clearMediaItems() } }
+                    item { HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp)) }
+                    // Editar
+                    // Editor de etiquetas
+                    item { MoreOptionRow(Icons.Rounded.Edit, "Editar información") { showMoreOptions = false; showTagEditorDialog = true } }
+                    // Letras
+                    item { MoreOptionRow(Icons.Rounded.EditNote, "Editar letras") { showMoreOptions = false; showEditLyricsDialog = true } }
+                    // Detalles
+                    item { MoreOptionRow(Icons.Rounded.Info, "Detalles del archivo") { showMoreOptions = false; showFileInfoDialog = true } }
+                    item { HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp)) }
 
                     // Option: Delete Track
                     item {
@@ -2286,4 +2111,22 @@ fun rememberDominantColor(bitmap: android.graphics.Bitmap?): Color {
         }
     }
     return dominantColor
+}
+
+/** Fila del menú "Más opciones" del reproductor. */
+@Composable
+private fun MoreOptionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String,
+    tint: Color? = null,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = tint ?: Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(text, color = tint ?: Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+    }
 }

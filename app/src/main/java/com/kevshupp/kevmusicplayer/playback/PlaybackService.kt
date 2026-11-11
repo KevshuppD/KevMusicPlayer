@@ -580,6 +580,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         com.kevshupp.kevmusicplayer.data.cast.CastController.bindPlayer(this, player)
+        com.kevshupp.kevmusicplayer.data.remote.PcRemote.bindPlayer(player)
         val sessionBuilder = MediaLibrarySession.Builder(this, player, callback)
         if (pendingIntent != null) {
             sessionBuilder.setSessionActivity(pendingIntent)

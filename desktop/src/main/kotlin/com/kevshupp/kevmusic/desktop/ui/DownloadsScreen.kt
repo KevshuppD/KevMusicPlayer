@@ -50,7 +50,7 @@ fun DownloadsScreen() {
         SectionTitle(
             "Descargar",
             when (source) {
-                DownloadSource.Telegram -> "Con el bot de Telegram del teléfono · se guarda en su carpeta de música"
+                DownloadSource.Telegram -> if (LocalClient.current.status.collectAsState().value is com.kevshupp.kevmusic.desktop.ConnStatus.Connected) "Con el bot de Telegram del teléfono · se guarda en su carpeta de música" else "Con el Telegram de este PC · se guarda en la música del PC"
                 DownloadSource.Soulseek -> "Red Soulseek · se descarga en el PC y se envía al teléfono"
                 DownloadSource.YouTube -> "YouTube Music · se descarga en el PC y se envía al teléfono"
                 DownloadSource.Albums -> "Discos que no están en Deezer · datos de MusicBrainz y audio de SoundCloud"

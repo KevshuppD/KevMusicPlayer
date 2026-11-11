@@ -146,7 +146,8 @@ fun MainScreen(status: ConnStatus, section: Section, onSection: (Section) -> Uni
                             onOpenPlaylist = { open(Detail.PlaylistDetail(it)) },
                             onOpenArtist = { open(Detail.Artist(it)) },
                             onOpenHistory = { open(Detail.History) },
-                            onOpenNew = { open(Detail.NewSongs) }
+                            onOpenNew = { open(Detail.NewSongs) },
+                            onOpenSettings = { onSection(Section.Settings) }
                         )
                         Section.NowPlaying -> StateReader(stateFlow) { NowPlayingScreen(it, lyrics) }
                         Section.Songs -> SongsScreen(lib!!, currentId)

@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -68,6 +69,26 @@ class RemoteClient(private val scope: CoroutineScope) {
 
     init {
         local.resolver = { song -> OnDemand.resolve(this, song) }
+        // El teléfono muestra en su reproductor que está sonando aquí (protocolo 7)
+        scope.launch {
+            kotlinx.coroutines.flow.combine(_onPc, local.state, _status) { pc, st, conn ->
+                if (conn !is ConnStatus.Connected) null
+                // La posición viaja al cambiar de canción, de estado o cada ~5 s (el teléfono interpola entre medias)
+                else Triple(pc && st != null, st, (st?.position ?: 0) / 5000)
+            }.distinctUntilChanged { a, b ->
+                a?.first == b?.first && a?.second?.playing == b?.second?.playing && a?.second?.title == b?.second?.title &&
+                    a?.second?.artist == b?.second?.artist && a?.third == b?.third
+            }.collect { t ->
+                if (t == null || phoneProtocol < 7) return@collect
+                val (active, st, _) = t
+                send(
+                    JSONObject().put("type", "pcPlayback").put("active", active).put("playing", st?.playing == true)
+                        .put("title", st?.title.orEmpty()).put("artist", st?.artist.orEmpty())
+                        .put("pos", st?.positionAt(System.currentTimeMillis()) ?: 0L)
+                )
+            }
+        }
+        PcTelegramDownloads.onSaved = { local.rescan() }
         if (_onPc.value) local.start()
         // Se cortó el teléfono mientras sonaba en él: tras 8 s sin volver (no por un corte breve del Wi-Fi), pasa
         // al PC con la misma cola; lo que el PC no tiene suena bajo demanda. Al volver, [handle] regresa al teléfono
@@ -99,9 +120,23 @@ class RemoteClient(private val scope: CoroutineScope) {
     val phoneTheme: StateFlow<String> = _phoneTheme
 
     private val _telegram = MutableStateFlow(TelegramStatus(false, "Conectando con el teléfono…"))
-    val telegram: StateFlow<TelegramStatus> = _telegram
+    /** Sin teléfono, Descargar › Telegram usa la sesión de Telegram del PC ([PcTelegramDownloads]). */
+    private fun phoneOnline() = _status.value is ConnStatus.Connected
+    val telegram: StateFlow<TelegramStatus> = kotlinx.coroutines.flow.combine(_status, _telegram, TelegramPc.state) { st, phone, _ ->
+        if (st is ConnStatus.Connected) phone else TelegramStatus(
+            TelegramPc.ready,
+            when {
+                !TelegramPc.configured -> "Sin teléfono conectado, y esta compilación no trae Telegram para el PC."
+                !TelegramPc.hasSession -> "Sin teléfono conectado. Inicia sesión en Telegram en Ajustes › Bajo demanda en este PC para descargar desde aquí."
+                TelegramPc.bot.isBlank() -> "Falta el bot: escríbelo en Ajustes › Bajo demanda en este PC o conecta el teléfono una vez."
+                else -> ""
+            }
+        )
+    }.stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, TelegramStatus(false, "Conectando con el teléfono…"))
     private val _downloads = MutableStateFlow<List<DownloadItem>>(emptyList())
-    val downloads: StateFlow<List<DownloadItem>> = _downloads
+    val downloads: StateFlow<List<DownloadItem>> = kotlinx.coroutines.flow.combine(_status, _downloads, PcTelegramDownloads.downloads) { st, phone, pc ->
+        if (st is ConnStatus.Connected) phone else pc
+    }.stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyList())
 
     // Peticiones a Deezer hechas por el teléfono, esperando su tgResult
     private val pending = java.util.concurrent.ConcurrentHashMap<Long, kotlinx.coroutines.CompletableDeferred<DzResult>>()
@@ -316,9 +351,41 @@ class RemoteClient(private val scope: CoroutineScope) {
                 phoneCloud?.optString("name").orEmpty(), phoneCloud?.optString("photo").orEmpty()
             )
             // Desde el selector de dispositivos del teléfono: lo que suena pasa a este PC
+            // Si ya estaba en modo PC, setPlayOnPc no hacía nada y no sonaba: se toma igual lo del teléfono
             "handoff" -> scope.launch(Dispatchers.Main) {
-                setPlayOnPc(true)
+                val from = _state.value
+                val fromQueue = _queue.value
                 _notice.value = Notice("Ahora suena en este PC")
+                if (_onPc.value) {
+                    autoPc = false
+                    if (from?.playing == true) cmd("pause")
+                    if (from != null) playOnPcFrom(from, fromQueue)
+                } else setPlayOnPc(true)
+            }
+            // El reproductor del teléfono hace de control remoto mientras suena aquí
+            "pcCmd" -> scope.launch(Dispatchers.Main) {
+                if (!_onPc.value) return@launch
+                when (msg.optString("cmd")) {
+                    "toggle" -> if (local.state.value != null) local.toggle()
+                    "seek" -> local.seek(msg.optLong("position"))
+                    "play" -> {
+                        val key = songKey(msg.optString("artist"), msg.optString("title"))
+                        // Ya es la que suena: no volver a empezarla
+                        local.state.value?.let { if (songKey(it.artist, it.title) == key) return@launch }
+                        val i = local.queue.value.items.indexOfFirst { songKey(it.artist, it.title) == key }
+                        if (i >= 0) local.jumpTo(i) else {
+                            val lib = library.value ?: return@launch
+                            val id = lib.songs.firstOrNull { songKey(it.artist, it.title) == key }?.id
+                                ?: msg.optLong("id").takeIf { it in lib.byId } ?: return@launch
+                            local.playSongs(listOf(id), 0, false)
+                        }
+                    }
+                }
+            }
+            // "Traer al teléfono" desde su reproductor
+            "handoffBack" -> scope.launch(Dispatchers.Main) {
+                setPlayOnPc(false)
+                _notice.value = Notice("Ahora suena en el teléfono")
             }
             "slskAccount" -> _slskAccount.value = msg.optString("username") to msg.optString("password")
             "theme" -> _phoneTheme.value = msg.optString("theme", "cyberpunk")
@@ -417,10 +484,13 @@ class RemoteClient(private val scope: CoroutineScope) {
             if (f.length() > 0) return@withContext f
             com.kevshupp.kevmusic.desktop.local.LocalLibrary.artBytes(t)?.let { b -> f.parentFile.mkdirs(); f.writeBytes(b); f }
         }
-        val d = device ?: return null
         val dir = java.io.File(Platform.cacheDir, "art").apply { mkdirs() }
         val file = java.io.File(dir, "$id.jpg")
         if (file.length() > 0) return file
+        val d = device?.takeIf { status.value is ConnStatus.Connected } ?: return withContext(Dispatchers.IO) {
+            val song = library.value?.byId?.get(id) ?: return@withContext null
+            OfflineExtras.cover(song)?.let { b -> file.writeBytes(b); file }
+        }
         return withContext(Dispatchers.IO) {
             runCatching {
                 val req = Request.Builder().url("http://${d.host}:${d.port}/art/$id?token=${d.token}&size=big").build()
@@ -587,21 +657,7 @@ class RemoteClient(private val scope: CoroutineScope) {
             local.start()
             if (from?.playing == true) cmd("pause")
             _onPc.value = true
-            scope.launch {
-                // La biblioteca del PC puede estar cargándose
-                kotlinx.coroutines.withTimeoutOrNull(5000) { local.library.first { it != null } } ?: return@launch
-                // La combinada (PC + teléfono) se recalcula aparte: se espera a que ya sea la del modo PC
-                val lib = kotlinx.coroutines.withTimeoutOrNull(3000) { library.first { it?.device == "Este PC" } } ?: return@launch
-                if (from == null) return@launch
-                // La del PC si la tiene; si no, la del teléfono (suena bajo demanda, ver OnDemand)
-                val byKey = lib.songs.reversed().associateBy { songKey(it.artist, it.title) }
-                fun idOf(id: Long, artist: String, title: String) = byKey[songKey(artist, title)]?.id ?: id.takeIf { it in lib.byId }
-                val ids = fromQueue.items.mapNotNull { idOf(it.id, it.artist, it.title) }
-                val current = idOf(from.id, from.artist, from.title) ?: return@launch
-                local.playSongs(ids.ifEmpty { listOf(current) }, ids.indexOf(current).coerceAtLeast(0), false)
-                local.seek(from.positionAt(System.currentTimeMillis()))
-                if (!from.playing) local.toggle()
-            }
+            if (from != null) scope.launch { playOnPcFrom(from, fromQueue) }
         } else {
             local.pause()
             _onPc.value = false
@@ -611,6 +667,7 @@ class RemoteClient(private val scope: CoroutineScope) {
             val byKey = phoneLib.songs.associateBy { songKey(it.artist, it.title) }
             val ids = fromQueue.items.mapNotNull { byKey[songKey(it.artist, it.title)]?.id }
             val current = byKey[songKey(from.artist, from.title)]?.id ?: return
+            send(JSONObject().put("type", "pcPlayback").put("active", false))
             cmd("playIds") { put("ids", JSONArray(ids.ifEmpty { listOf(current) })); put("index", ids.indexOf(current).coerceAtLeast(0)) }
             scope.launch {
                 delay(600)
@@ -618,6 +675,28 @@ class RemoteClient(private val scope: CoroutineScope) {
                 if (!from.playing) cmd("pause")
             }
         }
+    }
+
+    /**
+     * Sigue en el PC con la cola y la posición de [from] (lo que sonaba en el teléfono). Avisa si no puede, en vez
+     * de quedarse callado.
+     */
+    private suspend fun playOnPcFrom(from: PlayerState, fromQueue: QueueState) {
+        // La biblioteca del PC puede estar cargándose
+        kotlinx.coroutines.withTimeoutOrNull(8000) { local.library.first { it != null } }
+            ?: return run { _notice.value = Notice("La música de este PC aún se está cargando: inténtalo de nuevo", error = true) }
+        // La combinada (PC + teléfono) se recalcula aparte: se espera a que ya sea la del modo PC
+        val lib = kotlinx.coroutines.withTimeoutOrNull(5000) { library.first { it?.device == "Este PC" } }
+            ?: return run { _notice.value = Notice("No se pudo preparar la biblioteca del PC", error = true) }
+        // La del PC si la tiene; si no, la del teléfono (suena bajo demanda, ver OnDemand)
+        val byKey = lib.songs.reversed().associateBy { songKey(it.artist, it.title) }
+        fun idOf(id: Long, artist: String, title: String) = byKey[songKey(artist, title)]?.id ?: id.takeIf { it in lib.byId }
+        val ids = fromQueue.items.mapNotNull { idOf(it.id, it.artist, it.title) }
+        val current = idOf(from.id, from.artist, from.title)
+            ?: return run { _notice.value = Notice("\"${from.title}\" no está en este PC ni en la biblioteca del teléfono", error = true) }
+        local.playSongs(ids.ifEmpty { listOf(current) }, ids.indexOf(current).coerceAtLeast(0), false)
+        local.seek(from.positionAt(System.currentTimeMillis()))
+        if (!from.playing) local.toggle()
     }
 
     private fun songKey(artist: String, title: String) =
@@ -699,17 +778,20 @@ class RemoteClient(private val scope: CoroutineScope) {
             ?: DzResult(emptyList(), emptyList(), emptyList(), "El teléfono no respondió").also { pending.remove(req) }
     }
 
-    suspend fun tgSearch(query: String, mode: String) = request("tgSearch") { put("query", query); put("mode", mode) }
+    suspend fun tgSearch(query: String, mode: String) =
+        if (!phoneOnline()) PcTelegramDownloads.search(query, mode) else request("tgSearch") { put("query", query); put("mode", mode) }
 
-    suspend fun tgAlbum(album: DzAlbum) = request("tgAlbum") {
+    suspend fun tgAlbum(album: DzAlbum) = if (!phoneOnline()) PcTelegramDownloads.album(album) else request("tgAlbum") {
         put("album", JSONObject().put("id", album.id).put("title", album.title).put("artist", album.artist)
             .put("cover", album.cover).put("tracks", album.tracks).put("type", album.type).put("year", album.year))
     }
 
-    suspend fun tgArtist(artist: DzArtist) = request("tgArtist") { put("id", artist.id); put("name", artist.name) }
+    suspend fun tgArtist(artist: DzArtist) =
+        if (!phoneOnline()) PcTelegramDownloads.artist(artist.id, artist.name) else request("tgArtist") { put("id", artist.id); put("name", artist.name) }
 
     /** Populares y discografía de un artista por su nombre (panel de artista); el teléfono lo busca en Deezer. */
-    suspend fun tgArtistByName(name: String) = request("tgArtist") { put("id", 0); put("name", name) }
+    suspend fun tgArtistByName(name: String) =
+        if (!phoneOnline()) PcTelegramDownloads.artist(0, name) else request("tgArtist") { put("id", 0); put("name", name) }
 
     // ---------- Bajo demanda (protocolo 5) ----------
 
@@ -731,6 +813,7 @@ class RemoteClient(private val scope: CoroutineScope) {
 
     fun tgDownload(tracks: List<DzTrack>) {
         if (tracks.isEmpty()) return
+        if (!phoneOnline()) return PcTelegramDownloads.download(tracks)
         val arr = JSONArray()
         tracks.forEach { t ->
             arr.put(JSONObject().put("id", t.id).put("title", t.title).put("artist", t.artist).put("album", t.album)
@@ -739,7 +822,7 @@ class RemoteClient(private val scope: CoroutineScope) {
         cmd("tgDownload") { put("tracks", arr) }
     }
 
-    fun tgClearFinished() = cmd("tgClearFinished")
+    fun tgClearFinished() = if (!phoneOnline()) PcTelegramDownloads.clearFinished() else cmd("tgClearFinished")
 
     private val urlImages = object : LinkedHashMap<String, ImageBitmap?>(128, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap?>?) = size > 300
@@ -875,7 +958,8 @@ class RemoteClient(private val scope: CoroutineScope) {
             val t = local.track(id) ?: return null
             val bmp = withContext(Dispatchers.IO) {
                 runCatching {
-                    val bytes = com.kevshupp.kevmusic.desktop.local.LocalLibrary.artBytes(t) ?: return@runCatching null
+                    val bytes = com.kevshupp.kevmusic.desktop.local.LocalLibrary.artBytes(t)
+                        ?: OfflineExtras.cover(t.song) ?: return@runCatching null
                     val image = org.jetbrains.skia.Image.makeFromEncoded(bytes)
                     val side = if (tiny && small) TINY_PX else if (small) 160 else 640
                     if (image.width > side) scaled(image, side) else image.toComposeImageBitmap()
@@ -884,18 +968,24 @@ class RemoteClient(private val scope: CoroutineScope) {
             synchronized(artCache) { artCache[key] = bmp }
             return bmp
         }
-        val d = device ?: return null
+        val d = device
+        val song = library.value?.byId?.get(id) ?: _library.value?.byId?.get(id)
         val bmp = withContext(Dispatchers.IO) {
             runCatching {
                 val disk = artDiskFile(id, small)
+                // Sin teléfono (o sin conexión con él): la del archivo bajo demanda o la del álbum en Deezer
+                suspend fun fallback(): ByteArray? = song?.let { OfflineExtras.cover(it) }
                 val bytes = if (disk.isFile && disk.length() > 0) disk.readBytes() else {
-                    val size = if (small) "small" else "big"
-                    val req = Request.Builder().url("http://${d.host}:${d.port}/art/$id?token=${d.token}&size=$size").build()
-                    http.newCall(req).execute().use { resp ->
-                        if (resp.code == 404) return@runCatching null
-                        if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
-                        resp.body!!.bytes()
-                    }.also { b -> runCatching { disk.parentFile.mkdirs(); disk.writeBytes(b) } }
+                    val fromPhone = if (d == null || status.value !is ConnStatus.Connected) null else {
+                        val size = if (small) "small" else "big"
+                        val req = Request.Builder().url("http://${d.host}:${d.port}/art/$id?token=${d.token}&size=$size").build()
+                        http.newCall(req).execute().use { resp ->
+                            if (resp.code == 404) return@use null
+                            if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                            resp.body!!.bytes()
+                        }?.also { b -> runCatching { disk.parentFile.mkdirs(); disk.writeBytes(b) } }
+                    }
+                    fromPhone ?: fallback() ?: return@runCatching null
                 }
                 val image = org.jetbrains.skia.Image.makeFromEncoded(bytes)
                 if (tiny && small && image.width > TINY_PX) scaled(image, TINY_PX) else image.toComposeImageBitmap()
