@@ -9,7 +9,7 @@ plugins {
 
 group = "com.kevshupp.kevmusic"
 // Versión del PC, independiente de la app Android. publicar.sh la sube y crea el tag desktop-v<versión>
-version = "1.8.2"
+version = "1.9.0"
 
 // La app conoce su propia versión (para buscar actualizaciones) mediante un objeto generado
 val generateBuildInfo by tasks.registering {
