@@ -29,6 +29,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.Saver
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -274,50 +276,22 @@ fun LibraryScreen(
         if (selectedTab in enabledTabs) selectedTab else enabledTabs.firstOrNull() ?: "Songs"
     }
 
-    // Filter audio files by search query
-    val filteredFiles by remember(audioFiles, searchQuery, sortBy, viewModel?.searchIndex) {
-        derivedStateOf {
-            val queryClean = searchQuery.stripAccents().trim()
-            val filtered = if (queryClean.isEmpty()) {
-                audioFiles
-            } else {
-                val terms = queryClean.split(WHITESPACE_REGEX)
-                val sIndex = viewModel?.searchIndex
-                audioFiles.filter { song ->
-                    val fullText = sIndex?.get(song.id) ?: "${song.title.stripAccents()} ${song.artist.stripAccents()} ${song.album.stripAccents()} ${song.genre.stripAccents()}"
-                    terms.all { term -> fullText.contains(term, ignoreCase = true) }
+    // Filtro, orden y agrupados de la biblioteca en segundo plano: con miles de canciones, hacerlo en la
+    // composición (con cada letra del buscador o cambio de la biblioteca) daba tirones. El primer cuadro se
+    // calcula en el acto para no mostrar la lista vacía al abrir.
+    val currentSortBy by rememberUpdatedState(sortBy)
+    val libraryView by produceState(
+        initialValue = remember { computeLibraryView(audioFiles.toList(), searchQuery, sortBy, viewModel?.searchIndex, artistSplitter) }
+    ) {
+        snapshotFlow { LibraryViewInput(audioFiles.toList(), searchQuery, currentSortBy, viewModel?.searchIndex, artistSplitter) }
+            .distinctUntilChanged()
+            .collectLatest { input ->
+                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    computeLibraryView(input.files, input.query, input.sortBy, input.searchIndex, input.splitter)
                 }
             }
-            val sorted = when (sortBy) {
-                "Alphabetical" -> filtered.sortedWith { songA, songB ->
-                    val charA = songA.title.firstOrNull()?.uppercaseChar() ?: '#'
-                    val charB = songB.title.firstOrNull()?.uppercaseChar() ?: '#'
-                    
-                    val typeA = when {
-                        charA.isDigit() -> 0  // '#'
-                        charA in 'A'..'Z' -> 1 // Letters
-                        else -> 2             // '?'
-                    }
-                    val typeB = when {
-                        charB.isDigit() -> 0
-                        charB in 'A'..'Z' -> 1
-                        else -> 2
-                    }
-                    
-                    if (typeA != typeB) {
-                        typeA.compareTo(typeB)
-                    } else {
-                        songA.title.lowercase().compareTo(songB.title.lowercase())
-                    }
-                }
-                "Artist" -> filtered.sortedBy { it.artist.lowercase() }
-                "Duration" -> filtered.sortedByDescending { it.duration }
-                else -> filtered
-            }
-            // Al buscar: primero coincidencias de título, luego de artista (orden estable).
-            if (queryClean.isEmpty()) sorted else sorted.sortedBy { searchRelevance(it, queryClean) }
-        }
     }
+    val filteredFiles = libraryView.filtered
 
     // Active song target index calculations for scrolling
     val currentPlayingMediaId = player?.currentMediaItem?.mediaId?.toLongOrNull()
@@ -355,25 +329,10 @@ fun LibraryScreen(
         }
     }
 
-    // Grouping
-    val albums by remember(filteredFiles) {
-        derivedStateOf {
-            groupByAlbum(filteredFiles).mapValues { (_, songs) ->
-                songs.sortedWith(
-                    compareBy<AudioFile> { if (it.track > 0) it.track else Int.MAX_VALUE }
-                        .thenBy { it.title.lowercase() }
-                )
-            }
-        }
-    }
-    val artists by remember(filteredFiles) {
-        derivedStateOf {
-            filteredFiles.flatMap { file -> artistSplitter.split(file.artist).map { it to file } }
-                .groupBy({ it.first }, { it.second })
-        }
-    }
-    val genres by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.genre } } }
-    val folders by remember(filteredFiles) { derivedStateOf { filteredFiles.groupBy { it.folderName } } }
+    val albums = libraryView.albums
+    val artists = libraryView.artists
+    val genres = libraryView.genres
+    val folders = libraryView.folders
 
     Box(
         modifier = modifier
@@ -2270,8 +2229,10 @@ private val SEARCH_WORD_SPLIT = Regex("[^\\p{L}\\p{N}]+")
 
 fun String.stripAccents(): String {
     val normalized = java.text.Normalizer.normalize(this, java.text.Normalizer.Form.NFD)
-    return Regex("\\p{InCombiningDiacriticalMarks}+").replace(normalized, "")
+    return COMBINING_MARKS.replace(normalized, "")
 }
+
+private val COMBINING_MARKS = Regex("\\p{InCombiningDiacriticalMarks}+")
 
 /**
  * Agrupa por álbum sin distinguir mayúsculas ni tildes ("WINGS" y "wings" son uno). El nombre que se muestra es
@@ -2281,3 +2242,82 @@ internal fun groupByAlbum(songs: List<com.kevshupp.kevmusicplayer.data.AudioFile
     songs.groupBy { com.kevshupp.kevmusicplayer.data.LibraryNormalizer.albumKey(it.album) }.values.associate { group ->
         group.groupingBy { it.album }.eachCount().maxByOrNull { it.value }!!.key to group
     }
+
+
+private data class LibraryViewInput(
+    val files: List<AudioFile>,
+    val query: String,
+    val sortBy: String,
+    val searchIndex: Map<Long, String>?,
+    val splitter: com.kevshupp.kevmusicplayer.data.ArtistSplitter
+)
+
+private class LibraryView(
+    val filtered: List<AudioFile>,
+    val albums: Map<String, List<AudioFile>>,
+    val artists: Map<String, List<AudioFile>>,
+    val genres: Map<String, List<AudioFile>>,
+    val folders: Map<String, List<AudioFile>>
+)
+
+private fun computeLibraryView(
+    files: List<AudioFile>,
+    query: String,
+    sortBy: String,
+    searchIndex: Map<Long, String>?,
+    artistSplitter: com.kevshupp.kevmusicplayer.data.ArtistSplitter
+): LibraryView {
+            val queryClean = query.stripAccents().trim()
+            val filtered = if (queryClean.isEmpty()) {
+                files
+            } else {
+                val terms = queryClean.split(WHITESPACE_REGEX)
+                val sIndex = searchIndex
+                files.filter { song ->
+                    val fullText = sIndex?.get(song.id) ?: "${song.title.stripAccents()} ${song.artist.stripAccents()} ${song.album.stripAccents()} ${song.genre.stripAccents()}"
+                    terms.all { term -> fullText.contains(term, ignoreCase = true) }
+                }
+            }
+            val sorted = when (sortBy) {
+                "Alphabetical" -> filtered.sortedWith { songA, songB ->
+                    val charA = songA.title.firstOrNull()?.uppercaseChar() ?: '#'
+                    val charB = songB.title.firstOrNull()?.uppercaseChar() ?: '#'
+                    
+                    val typeA = when {
+                        charA.isDigit() -> 0  // '#'
+                        charA in 'A'..'Z' -> 1 // Letters
+                        else -> 2             // '?'
+                    }
+                    val typeB = when {
+                        charB.isDigit() -> 0
+                        charB in 'A'..'Z' -> 1
+                        else -> 2
+                    }
+                    
+                    if (typeA != typeB) {
+                        typeA.compareTo(typeB)
+                    } else {
+                        songA.title.lowercase().compareTo(songB.title.lowercase())
+                    }
+                }
+                "Artist" -> filtered.sortedBy { it.artist.lowercase() }
+                "Duration" -> filtered.sortedByDescending { it.duration }
+                else -> filtered
+            }
+            // Al buscar: primero coincidencias de título, luego de artista (orden estable).
+            val result = if (queryClean.isEmpty()) sorted else sorted.sortedBy { searchRelevance(it, queryClean) }
+
+            return LibraryView(
+                filtered = result,
+                albums = groupByAlbum(result).mapValues { (_, songs) ->
+                    songs.sortedWith(
+                        compareBy<AudioFile> { if (it.track > 0) it.track else Int.MAX_VALUE }
+                            .thenBy { it.title.lowercase() }
+                    )
+                },
+                artists = result.flatMap { file -> artistSplitter.split(file.artist).map { it to file } }
+                    .groupBy({ it.first }, { it.second }),
+                genres = result.groupBy { it.genre },
+                folders = result.groupBy { it.folderName }
+            )
+}

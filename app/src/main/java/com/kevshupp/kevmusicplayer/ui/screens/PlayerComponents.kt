@@ -516,18 +516,22 @@ fun ScrollingLyricsView(
     }
 }
 
+private val HANGUL_REGEX = Regex("[\\uAC00-\\uD7A3\\u1100-\\u11FF\\u3130-\\u318F]")
+private val KANA_REGEX = Regex("[\\u3040-\\u309F\\u30A0-\\u30FF]")
+private val NON_LATIN_WORD_REGEX = Regex("[^a-záéíóúüñâêîôûàèìòùçãõ]")
+
 fun detectLanguage(text: String): String {
     // 1. Instant check for Korean Hangul characters
-    if (text.contains(Regex("[\\uAC00-\\uD7A3\\u1100-\\u11FF\\u3130-\\u318F]"))) {
+    if (text.contains(HANGUL_REGEX)) {
         return "ko"
     }
     // 2. Instant check for Japanese characters (Hiragana and Katakana)
-    if (text.contains(Regex("[\\u3040-\\u309F\\u30A0-\\u30FF]"))) {
+    if (text.contains(KANA_REGEX)) {
         return "ja"
     }
 
     val words = text.lowercase(java.util.Locale.ROOT)
-        .split(Regex("[^a-záéíóúüñâêîôûàèìòùçãõ]"))
+        .split(NON_LATIN_WORD_REGEX)
         .filter { it.isNotBlank() }
     
     val esWords = setOf("el", "la", "los", "las", "un", "una", "y", "en", "que", "de", "con", "por", "para", "como", "me", "te", "se", "lo", "mi", "tu")

@@ -1,0 +1,252 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.kevshupp.kevmusicplayer.baselineprofile" >
+4
+5    <uses-sdk
+5-->/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/tmp/manifest/benchmarkRelease/tempFile1ProcessTestManifest10548325248365272970.xml:5:5-74
+6        android:minSdkVersion="33"
+6-->/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/tmp/manifest/benchmarkRelease/tempFile1ProcessTestManifest10548325248365272970.xml:5:15-41
+7        android:targetSdkVersion="37" />
+7-->/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/tmp/manifest/benchmarkRelease/tempFile1ProcessTestManifest10548325248365272970.xml:5:42-71
+8
+9    <instrumentation
+9-->/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/tmp/manifest/benchmarkRelease/tempFile1ProcessTestManifest10548325248365272970.xml:7:5-11:93
+10        android:name="androidx.test.runner.AndroidJUnitRunner"
+10-->/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/tmp/manifest/benchmarkRelease/tempFile1ProcessTestManifest10548325248365272970.xml:7:22-76
+11        android:functionalTest="false"
+11-->/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/tmp/manifest/benchmarkRelease/tempFile1ProcessTestManifest10548325248365272970.xml:10:22-52
+12        android:handleProfiling="false"
+12-->/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/tmp/manifest/benchmarkRelease/tempFile1ProcessTestManifest10548325248365272970.xml:9:22-53
+13        android:label="Tests for com.kevshupp.kevmusicplayer.baselineprofile"
+13-->/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/tmp/manifest/benchmarkRelease/tempFile1ProcessTestManifest10548325248365272970.xml:11:22-91
+14        android:targetPackage="com.kevshupp.kevmusicplayer.baselineprofile" />
+14-->/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/tmp/manifest/benchmarkRelease/tempFile1ProcessTestManifest10548325248365272970.xml:8:22-89
+15    <!--
+16    QUERY_ALL_PACKAGES is used to enable macrobenchmarks to read package information from
+17    potential target packages, e.g. for querying debuggable, profileable, or default launch intent.
+18
+19    This could also be done by making each macrobenchmark specify a <queries/> tag, with the
+20    target package, but this removes the need for documenting that setup step, and detecting
+21    misconfiguration.
+22    -->
+23    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+23-->[androidx.benchmark:benchmark-macro:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/d6a09c4f97a3f557f9b80f7bd36ad136/transformed/benchmark-macro-1.5.0/AndroidManifest.xml:31:5-33:53
+23-->[androidx.benchmark:benchmark-macro:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/d6a09c4f97a3f557f9b80f7bd36ad136/transformed/benchmark-macro-1.5.0/AndroidManifest.xml:32:9-61
+24    <!--
+25    This is needed to write benchmark report data to an external directory during instrumented
+26    tests to allow the accompanying androidx.benchmark gradle plugin to pull the reports onto host
+27     machine after the tests are done running.
+28    -->
+29    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+29-->[androidx.benchmark:benchmark-common:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/7ca46ab1e6ea88371a2db220bcc45359/transformed/benchmark-common-1.5.0/AndroidManifest.xml:27:5-81
+29-->[androidx.benchmark:benchmark-common:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/7ca46ab1e6ea88371a2db220bcc45359/transformed/benchmark-common-1.5.0/AndroidManifest.xml:27:22-78
+30    <!--
+31         Internet permission is required for perfetto trace shell processor http server but
+32        it's used to reach localhost only
+33    -->
+34    <uses-permission android:name="android.permission.INTERNET" />
+34-->[androidx.benchmark:benchmark-common:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/7ca46ab1e6ea88371a2db220bcc45359/transformed/benchmark-common-1.5.0/AndroidManifest.xml:33:5-67
+34-->[androidx.benchmark:benchmark-common:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/7ca46ab1e6ea88371a2db220bcc45359/transformed/benchmark-common-1.5.0/AndroidManifest.xml:33:22-64
+35    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+36
+37    <queries>
+37-->[androidx.test:runner:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/c05059ce2f649df64df166a0793f5885/transformed/runner-1.7.0/AndroidManifest.xml:24:5-28:15
+38        <package android:name="androidx.test.orchestrator" />
+38-->[androidx.test:runner:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/c05059ce2f649df64df166a0793f5885/transformed/runner-1.7.0/AndroidManifest.xml:25:9-62
+38-->[androidx.test:runner:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/c05059ce2f649df64df166a0793f5885/transformed/runner-1.7.0/AndroidManifest.xml:25:18-59
+39        <package android:name="androidx.test.services" />
+39-->[androidx.test:runner:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/c05059ce2f649df64df166a0793f5885/transformed/runner-1.7.0/AndroidManifest.xml:26:9-58
+39-->[androidx.test:runner:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/c05059ce2f649df64df166a0793f5885/transformed/runner-1.7.0/AndroidManifest.xml:26:18-55
+40        <package android:name="com.google.android.apps.common.testing.services" />
+40-->[androidx.test:runner:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/c05059ce2f649df64df166a0793f5885/transformed/runner-1.7.0/AndroidManifest.xml:27:9-83
+40-->[androidx.test:runner:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/c05059ce2f649df64df166a0793f5885/transformed/runner-1.7.0/AndroidManifest.xml:27:18-80
+41    </queries>
+42
+43    <permission
+43-->[androidx.core:core:1.9.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/9aa26a930f01e8e7a62fe9edb97f4f17/transformed/core-1.9.0/AndroidManifest.xml:22:5-24:47
+44        android:name="com.kevshupp.kevmusicplayer.baselineprofile.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+44-->[androidx.core:core:1.9.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/9aa26a930f01e8e7a62fe9edb97f4f17/transformed/core-1.9.0/AndroidManifest.xml:23:9-81
+45        android:protectionLevel="signature" />
+45-->[androidx.core:core:1.9.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/9aa26a930f01e8e7a62fe9edb97f4f17/transformed/core-1.9.0/AndroidManifest.xml:24:9-44
+46
+47    <uses-permission android:name="com.kevshupp.kevmusicplayer.baselineprofile.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+47-->[androidx.core:core:1.9.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/9aa26a930f01e8e7a62fe9edb97f4f17/transformed/core-1.9.0/AndroidManifest.xml:26:5-97
+47-->[androidx.core:core:1.9.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/9aa26a930f01e8e7a62fe9edb97f4f17/transformed/core-1.9.0/AndroidManifest.xml:26:22-94
+48    <uses-permission android:name="android.permission.REORDER_TASKS" />
+48-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:24:5-72
+48-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:24:22-69
+49
+50    <application
+50-->INJECTED
+51        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+51-->[androidx.core:core:1.9.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/9aa26a930f01e8e7a62fe9edb97f4f17/transformed/core-1.9.0/AndroidManifest.xml:28:18-86
+52        android:debuggable="true"
+53        android:extractNativeLibs="false"
+53-->INJECTED
+54        android:networkSecurityConfig="@xml/network_security_config" > <!-- Activity used to block background content while benchmarks are running -->
+54-->[androidx.benchmark:benchmark-common:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/7ca46ab1e6ea88371a2db220bcc45359/transformed/benchmark-common-1.5.0/AndroidManifest.xml:35:18-78
+55        <activity
+55-->[androidx.benchmark:benchmark-common:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/7ca46ab1e6ea88371a2db220bcc45359/transformed/benchmark-common-1.5.0/AndroidManifest.xml:38:9-41:80
+56            android:name="androidx.benchmark.IsolationActivity"
+56-->[androidx.benchmark:benchmark-common:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/7ca46ab1e6ea88371a2db220bcc45359/transformed/benchmark-common-1.5.0/AndroidManifest.xml:39:13-64
+57            android:exported="true"
+57-->[androidx.benchmark:benchmark-common:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/7ca46ab1e6ea88371a2db220bcc45359/transformed/benchmark-common-1.5.0/AndroidManifest.xml:40:13-36
+58            android:theme="@android:style/Theme.Light.NoTitleBar.Fullscreen" /> <!-- For optional XrExtensions usage in GestureController -->
+58-->[androidx.benchmark:benchmark-common:1.5.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/7ca46ab1e6ea88371a2db220bcc45359/transformed/benchmark-common-1.5.0/AndroidManifest.xml:41:13-77
+59        <uses-library
+59-->[androidx.test.uiautomator:uiautomator:2.4.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/89ad41af6539c918c66c53cd2a537070/transformed/uiautomator-2.4.0/AndroidManifest.xml:25:9-27:40
+60            android:name="com.android.extensions.xr"
+60-->[androidx.test.uiautomator:uiautomator:2.4.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/89ad41af6539c918c66c53cd2a537070/transformed/uiautomator-2.4.0/AndroidManifest.xml:26:13-53
+61            android:required="false" />
+61-->[androidx.test.uiautomator:uiautomator:2.4.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/89ad41af6539c918c66c53cd2a537070/transformed/uiautomator-2.4.0/AndroidManifest.xml:27:13-37
+62
+63        <receiver
+63-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:24:9-37:20
+64            android:name="androidx.tracing.perfetto.TracingReceiver"
+64-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:25:13-69
+65            android:directBootAware="false"
+65-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:26:13-44
+66            android:enabled="true"
+66-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:27:13-35
+67            android:exported="true"
+67-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:28:13-36
+68            android:permission="android.permission.DUMP" >
+68-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:29:13-57
+69
+70            <!-- Note: DUMP above highly limits who can call the receiver; Shell has DUMP perm. -->
+71            <intent-filter>
+71-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:32:13-36:29
+72                <action android:name="androidx.tracing.perfetto.action.ENABLE_TRACING" />
+72-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:33:17-90
+72-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:33:25-87
+73                <action android:name="androidx.tracing.perfetto.action.ENABLE_TRACING_COLD_START" />
+73-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:34:17-101
+73-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:34:25-98
+74                <action android:name="androidx.tracing.perfetto.action.DISABLE_TRACING_COLD_START" />
+74-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:35:17-102
+74-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:35:25-99
+75            </intent-filter>
+76        </receiver>
+77
+78        <provider
+78-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:39:9-47:20
+79            android:name="androidx.startup.InitializationProvider"
+79-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:40:13-67
+80            android:authorities="com.kevshupp.kevmusicplayer.baselineprofile.androidx-startup"
+80-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:41:13-68
+81            android:exported="false" >
+81-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:42:13-37
+82            <meta-data
+82-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:44:13-46:52
+83                android:name="androidx.tracing.perfetto.StartupTracingInitializer"
+83-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:45:17-83
+84                android:value="androidx.startup" />
+84-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:46:17-49
+85            <meta-data
+85-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:29:13-31:52
+86                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+86-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:30:17-85
+87                android:value="androidx.startup" />
+87-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:31:17-49
+88        </provider>
+89
+90        <receiver
+90-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:49:9-55:20
+91            android:name="androidx.tracing.perfetto.StartupTracingConfigStoreIsEnabledGate"
+91-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:50:13-92
+92            android:directBootAware="false"
+92-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:51:13-44
+93            android:enabled="false"
+93-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:52:13-36
+94            android:exported="false" >
+94-->[androidx.tracing:tracing-perfetto:1.0.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/dc8ea74c630d9b5a0446e498650867e5/transformed/tracing-perfetto-1.0.1/AndroidManifest.xml:53:13-37
+95        </receiver>
+96        <receiver
+96-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:34:9-52:20
+97            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+97-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:35:13-76
+98            android:directBootAware="false"
+98-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:36:13-44
+99            android:enabled="true"
+99-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:37:13-35
+100            android:exported="true"
+100-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:38:13-36
+101            android:permission="android.permission.DUMP" >
+101-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:39:13-57
+102            <intent-filter>
+102-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:40:13-42:29
+103                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+103-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:41:17-91
+103-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:41:25-88
+104            </intent-filter>
+105            <intent-filter>
+105-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:43:13-45:29
+106                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+106-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:44:17-85
+106-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:44:25-82
+107            </intent-filter>
+108            <intent-filter>
+108-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:46:13-48:29
+109                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+109-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:47:17-88
+109-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:47:25-85
+110            </intent-filter>
+111            <intent-filter>
+111-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:49:13-51:29
+112                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+112-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:50:17-95
+112-->[androidx.profileinstaller:profileinstaller:1.4.1] /home/kevshupp/.gradle/caches/9.4.1/transforms/58e10b08cc9fa9c77ad6060af6bd6c86/transformed/profileinstaller-1.4.1/AndroidManifest.xml:50:25-92
+113            </intent-filter>
+114        </receiver>
+115
+116        <activity
+116-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:27:9-34:20
+117            android:name="androidx.test.core.app.InstrumentationActivityInvoker$BootstrapActivity"
+117-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:28:13-99
+118            android:exported="true"
+118-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:29:13-36
+119            android:theme="@style/WhiteBackgroundTheme" >
+119-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:30:13-56
+120            <intent-filter android:priority="-100" >
+120-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:31:13-33:29
+120-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:31:28-51
+121                <category android:name="android.intent.category.LAUNCHER" />
+121-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:32:17-77
+121-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:32:27-74
+122            </intent-filter>
+123        </activity>
+124        <activity
+124-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:35:9-42:20
+125            android:name="androidx.test.core.app.InstrumentationActivityInvoker$EmptyActivity"
+125-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:36:13-95
+126            android:exported="true"
+126-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:37:13-36
+127            android:theme="@style/WhiteBackgroundTheme" >
+127-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:38:13-56
+128            <intent-filter android:priority="-100" >
+128-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:31:13-33:29
+128-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:31:28-51
+129                <category android:name="android.intent.category.LAUNCHER" />
+129-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:32:17-77
+129-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:32:27-74
+130            </intent-filter>
+131        </activity>
+132        <activity
+132-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:43:9-50:20
+133            android:name="androidx.test.core.app.InstrumentationActivityInvoker$EmptyFloatingActivity"
+133-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:44:13-103
+134            android:exported="true"
+134-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:45:13-36
+135            android:theme="@style/WhiteBackgroundDialogTheme" >
+135-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:46:13-62
+136            <intent-filter android:priority="-100" >
+136-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:31:13-33:29
+136-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:31:28-51
+137                <category android:name="android.intent.category.LAUNCHER" />
+137-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:32:17-77
+137-->[androidx.test:core:1.7.0] /home/kevshupp/.gradle/caches/9.4.1/transforms/f832e791f7137c2f7e66f4bb0f5ee6fd/transformed/core-1.7.0/AndroidManifest.xml:32:27-74
+138            </intent-filter>
+139        </activity>
+140    </application>
+141
+142</manifest>

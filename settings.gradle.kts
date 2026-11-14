@@ -24,4 +24,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Kev Music Player"
 include(":app")
+include(":baselineprofile")
  

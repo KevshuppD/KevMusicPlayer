@@ -1,0 +1,8 @@
+com.kevshupp.kevmusicplayer.baselineprofile-pngs-0 /home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/generated/res/pngs/benchmarkRelease
+com.kevshupp.kevmusicplayer.baselineprofile-updated_navigation_xml-1 /home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/generated/updated_navigation_xml/benchmarkRelease
+com.kevshupp.kevmusicplayer.baselineprofile-packageBenchmarkReleaseResources-2 /home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/incremental/benchmarkRelease/packageBenchmarkReleaseResources/merged.dir
+com.kevshupp.kevmusicplayer.baselineprofile-packageBenchmarkReleaseResources-3 /home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/incremental/benchmarkRelease/packageBenchmarkReleaseResources/stripped.dir
+com.kevshupp.kevmusicplayer.baselineprofile-benchmarkRelease-4 /home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/merged_res/benchmarkRelease/mergeBenchmarkReleaseResources
+com.kevshupp.kevmusicplayer.baselineprofile-benchmarkRelease-5 /home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/src/benchmarkRelease/res
+com.kevshupp.kevmusicplayer.baselineprofile-main-6 /home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/src/main/res
+gradleHome-0 /home/kevshupp/.gradle

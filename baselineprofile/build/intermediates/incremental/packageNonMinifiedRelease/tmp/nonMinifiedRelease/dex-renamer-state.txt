@@ -1,0 +1,13 @@
+#Sat Nov 14 11:52:01 CLST 2026
+base.0=/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/dex/nonMinifiedRelease/mergeExtDexNonMinifiedRelease/classes.dex
+base.1=/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/dex/nonMinifiedRelease/mergeProjectDexNonMinifiedRelease/0/classes.dex
+base.2=/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/dex/nonMinifiedRelease/mergeProjectDexNonMinifiedRelease/5/classes.dex
+base.3=/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/intermediates/global_synthetics_dex/nonMinifiedRelease/generateNonMinifiedReleaseGlobalSynthetics/classes.dex
+path.0=classes.dex
+path.1=0/classes.dex
+path.2=5/classes.dex
+path.3=classes.dex
+renamed.0=classes.dex
+renamed.1=classes2.dex
+renamed.2=classes3.dex
+renamed.3=classes4.dex

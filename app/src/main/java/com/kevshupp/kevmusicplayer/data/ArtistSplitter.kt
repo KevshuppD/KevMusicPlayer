@@ -19,6 +19,8 @@ import java.text.Normalizer
 class ArtistSplitter(artistFields: Collection<String>) {
     private val soloKeys: Set<String> = knownArtists(artistFields)
     private val displayByKey = HashMap<String, String>()
+    // La biblioteca repite mucho el mismo campo: cada uno se separa una sola vez (antes, en cada fila y cuadro)
+    private val splitCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
 
     init {
         // Forma de escribir: la del artista en solitario tiene prioridad
@@ -26,11 +28,13 @@ class ArtistSplitter(artistFields: Collection<String>) {
     }
 
     /** Artistas de una canción, en orden (el principal primero). Nunca vacía. */
-    fun split(artist: String): List<String> {
+    fun split(artist: String): List<String> = splitCache.getOrPut(artist) { splitUncached(artist) }
+
+    private fun splitUncached(artist: String): List<String> {
         if (artist.isBlank()) return listOf(artist)
         val parts = mutableListOf<String>()
         // 1. Colaboraciones explícitas
-        strong.split(artist.replace(Regex("[()\\[\\]]"), " ")).map { it.trim() }.filter { it.isNotEmpty() }.forEach { chunk ->
+        strong.split(artist.replace(brackets, " ")).map { it.trim() }.filter { it.isNotEmpty() }.forEach { chunk ->
             // 2. Separadores ambiguos, solo si alguna parte es un artista conocido
             val weakParts = weak.split(chunk).map { it.trim() }.filter { it.isNotEmpty() }
             if (weakParts.size > 1 && weakParts.any { key(it) in soloKeys }) {
@@ -59,7 +63,7 @@ class ArtistSplitter(artistFields: Collection<String>) {
             val known = fields.mapTo(HashSet()) { key(it) }
             KnownArtists.all().forEach { known += key(it) }
             val chunks = fields.flatMap { f ->
-                strong.split(f.replace(Regex("[()\\[\\]]"), " ")).map { it.trim() }.filter { it.isNotEmpty() }
+                strong.split(f.replace(brackets, " ")).map { it.trim() }.filter { it.isNotEmpty() }
                     .also { parts -> if (parts.size > 1) parts.forEach { known += key(it) } }
             }.map { c -> weak.split(c).map { it.trim() }.filter { it.isNotEmpty() } }.filter { it.size > 1 }
             var changed = true
@@ -76,7 +80,12 @@ class ArtistSplitter(artistFields: Collection<String>) {
         private val strong = Regex("\\s+(?:feat\\.?|ft\\.?|featuring|with)\\s+", RegexOption.IGNORE_CASE)
         private val weak = Regex("\\s*(?:,|&|/|;|\\s+x\\s+|\\s+y\\s+|\\s+and\\s+)\\s*", RegexOption.IGNORE_CASE)
 
-        fun key(s: String): String = Normalizer.normalize(s.trim().lowercase(), Normalizer.Form.NFD)
-            .replace(Regex("\\p{M}+"), "").replace(Regex("\\s+"), " ")
+        private val brackets = Regex("[()\\[\\]]")
+        private val marks = Regex("\\p{M}+")
+        private val spaces = Regex("\\s+")
+        private val keyCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+        fun key(s: String): String = keyCache[s] ?: Normalizer.normalize(s.trim().lowercase(), Normalizer.Form.NFD)
+            .replace(marks, "").replace(spaces, " ").also { if (keyCache.size < 20_000) keyCache[s] = it }
     }
 }

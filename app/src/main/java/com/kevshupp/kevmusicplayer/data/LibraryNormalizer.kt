@@ -195,8 +195,12 @@ object LibraryNormalizer {
     }
 
     /** Clave del álbum sin mayúsculas ni tildes: "WINGS" y "wings" son el mismo. */
-    fun albumKey(album: String): String =
-        java.text.Normalizer.normalize(album.trim(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "").lowercase()
+    private val albumMarks = Regex("\\p{Mn}+")
+    private val albumKeyCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun albumKey(album: String): String = albumKeyCache[album]
+        ?: java.text.Normalizer.normalize(album.trim(), java.text.Normalizer.Form.NFD).replace(albumMarks, "").lowercase()
+            .also { if (albumKeyCache.size < 20_000) albumKeyCache[album] = it }
 
     /**
      * Un mismo disco escrito de varias formas (3 canciones "WINGS" y 12 "wings") queda con un solo nombre: el que

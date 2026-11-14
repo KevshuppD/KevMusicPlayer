@@ -1,0 +1,207 @@
+# proto-message: google.testing.platform.proto.api.core.TestSuiteResult
+# 2026-11-14T15:03:02.772355452Z:
+test_suite_meta_data {
+  scheduled_test_case_count: 1
+  device {
+    id: "192.168.1.17:40265"
+    friendly_name: "primary"
+  }
+}
+test_status: PASSED
+test_result {
+  test_case {
+    test_class: "BaselineProfileGenerator"
+    test_package: "com.kevshupp.kevmusicplayer.baselineprofile"
+    test_method: "generate"
+    start_time {
+      seconds: 1794667948
+      nanos: 225000000
+    }
+    end_time {
+      seconds: 1794668579
+      nanos: 45000000
+    }
+    device {
+      id: "192.168.1.17:40265"
+      friendly_name: "primary"
+    }
+  }
+  test_status: PASSED
+  output_artifact {
+    label {
+      label: "additionaltestoutput.benchmark.message"
+      namespace: "android"
+    }
+    source_path {
+      path: "/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/outputs/connected_android_test_additional_output/nonMinifiedRelease/connected/moto g35 5G - 15/additionaltestoutput.benchmark.message_com.kevshupp.kevmusicplayer.baselineprofile.BaselineProfileGenerator.generate.txt"
+    }
+  }
+  output_artifact {
+    label {
+      label: "additionaltestoutput.benchmark.trace"
+      namespace: "android"
+    }
+    source_path {
+      path: "/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/outputs/connected_android_test_additional_output/nonMinifiedRelease/connected/moto g35 5G - 15/BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt"
+    }
+  }
+  output_artifact {
+    label {
+      label: "logcat"
+      namespace: "android"
+    }
+    source_path {
+      path: "/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/outputs/androidTest-results/connected/nonMinifiedRelease/moto g35 5G - 15/logcat-com.kevshupp.kevmusicplayer.baselineprofile.BaselineProfileGenerator-generate.txt"
+    }
+  }
+  output_artifact {
+    label {
+      label: "device-info"
+      namespace: "android"
+    }
+    source_path {
+      path: "/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/outputs/androidTest-results/connected/nonMinifiedRelease/moto g35 5G - 15/device-info.pb"
+    }
+  }
+  output_artifact {
+    label {
+      label: "device-info.meminfo"
+      namespace: "android"
+    }
+    source_path {
+      path: "/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/outputs/androidTest-results/connected/nonMinifiedRelease/moto g35 5G - 15/meminfo"
+    }
+  }
+  output_artifact {
+    label {
+      label: "device-info.cpuinfo"
+      namespace: "android"
+    }
+    source_path {
+      path: "/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/outputs/androidTest-results/connected/nonMinifiedRelease/moto g35 5G - 15/cpuinfo"
+    }
+  }
+  details {
+    key: "additionalTestOutputFile_BaselineProfileGenerator_generate-startup-prof.txt"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt"
+  }
+  details {
+    key: "additionalTestOutputFile_BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt"
+  }
+  details {
+    key: "android.studio.display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v2display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v2display.benchmark.outputDirPath"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output"
+  }
+  details {
+    key: "android.studio.v3display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v3display.benchmark.outputDirPath"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output"
+  }
+  details {
+    key: "additionalTestOutputFile_BaselineProfileGenerator_generate-startup-prof.txt"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt"
+  }
+  details {
+    key: "additionalTestOutputFile_BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt"
+  }
+  details {
+    key: "android.studio.display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v2display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v2display.benchmark.outputDirPath"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output"
+  }
+  details {
+    key: "android.studio.v3display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v3display.benchmark.outputDirPath"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output"
+  }
+  details {
+    key: "additionalTestOutputFile_BaselineProfileGenerator_generate-startup-prof.txt"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt"
+  }
+  details {
+    key: "additionalTestOutputFile_BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt"
+  }
+  details {
+    key: "android.studio.display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v2display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v2display.benchmark.outputDirPath"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output"
+  }
+  details {
+    key: "android.studio.v3display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v3display.benchmark.outputDirPath"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output"
+  }
+  details {
+    key: "additionalTestOutputFile_BaselineProfileGenerator_generate-startup-prof.txt"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt"
+  }
+  details {
+    key: "additionalTestOutputFile_BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt"
+  }
+  details {
+    key: "android.studio.display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v2display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v2display.benchmark.outputDirPath"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output"
+  }
+  details {
+    key: "android.studio.v3display.benchmark"
+    value: "BaselineProfileGenerator_generate\nTotal run time Ns: 630546493472.\nBaseline profile [results](file://BaselineProfileGenerator_generate-startup-prof-2026-11-14-15-02-56.txt)\n\nTo copy the profile use:\nadb -s ZE223GJ4WB pull \"/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output/BaselineProfileGenerator_generate-startup-prof.txt\" .\n"
+  }
+  details {
+    key: "android.studio.v3display.benchmark.outputDirPath"
+    value: "/sdcard/Android/media/com.kevshupp.kevmusicplayer.baselineprofile/additional_test_output"
+  }
+}
+output_artifact {
+  label {
+    label: "test-results.log"
+    namespace: "com.google.testing.platform.runtime.android.driver.AndroidInstrumentationDriver"
+  }
+  source_path {
+    path: "/home/kevshupp/Escritorio/Proyectos/kevmusicplayer/baselineprofile/build/outputs/androidTest-results/connected/nonMinifiedRelease/moto g35 5G - 15/testlog/test-results.log"
+  }
+  type: TEST_DATA
+  mime_type: "text/plain"
+}

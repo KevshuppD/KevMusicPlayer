@@ -23,7 +23,11 @@ import com.kevshupp.kevmusicplayer.data.telegram.TelegramMusicClient
  * el bot de Telegram las entrega al sonar. El usuario elige si lo descargado queda en caché o en la biblioteca.
  */
 @Composable
-fun OnDemandSettingsCard(context: android.content.Context, getLocalized: (String, String) -> String) {
+fun OnDemandSettingsCard(
+    context: android.content.Context,
+    getLocalized: (String, String) -> String,
+    onOpenTelegram: () -> Unit
+) {
     val prefs = remember { context.getSharedPreferences("settings_prefs", android.content.Context.MODE_PRIVATE) }
     var enabled by remember { mutableStateOf(prefs.getBoolean(OnDemandTracks.KEY_ENABLED, false)) }
     var storage by remember { mutableStateOf(OnDemandTracks.storageMode(context)) }
@@ -68,6 +72,28 @@ fun OnDemandSettingsCard(context: android.content.Context, getLocalized: (String
             if (!telegramOn) return@Column
             HorizontalDivider(color = settingsDividerColor())
 
+            // Cuenta y bot: se configuran aquí mismo (antes solo desde el botón de nube de Inicio)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(getLocalized("Cuenta de Telegram", "Telegram account"), fontWeight = FontWeight.Bold, fontSize = 15.sp, color = settingsTextColor())
+                    Text(
+                        when {
+                            telegramReady -> getLocalized("Conectada · bot @$bot", "Connected · bot @$bot")
+                            auth == TelegramAuthState.Ready -> getLocalized("Conectada · falta configurar el bot", "Connected · bot not set up")
+                            else -> getLocalized("Sin sesión iniciada", "Not signed in")
+                        },
+                        fontSize = 12.sp,
+                        color = settingsTextMutedColor()
+                    )
+                }
+                if (telegramReady) {
+                    OutlinedButton(onClick = onOpenTelegram) { Text(getLocalized("Abrir", "Open")) }
+                } else {
+                    Button(onClick = onOpenTelegram) { Text(getLocalized("Conectar", "Connect")) }
+                }
+            }
+            HorizontalDivider(color = settingsDividerColor())
+
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -86,8 +112,8 @@ fun OnDemandSettingsCard(context: android.content.Context, getLocalized: (String
                             "Busca y pon en la cola canciones que no tienes; el bot de Telegram las entrega al sonar.",
                             "Search and queue songs you don't have; the Telegram bot delivers them when they play."
                         ) else getLocalized(
-                            "Requiere iniciar sesión en Telegram y configurar el bot (botón de nube en Inicio).",
-                            "Requires signing in to Telegram and setting up the bot (cloud button on Home)."
+                            "Requiere iniciar sesión en Telegram y configurar el bot (Conectar, arriba).",
+                            "Requires signing in to Telegram and setting up the bot (Connect, above)."
                         ),
                         fontSize = 12.sp,
                         color = settingsTextMutedColor()

@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.google.devtools.ksp)
     alias(libs.plugins.jetbrains.kotlin.plugin.serialization)
     alias(libs.plugins.google.services)
+    alias(libs.plugins.androidx.baselineprofile)
 }
 
 android {
@@ -19,8 +20,8 @@ android {
         applicationId = "com.kevshupp.kevmusicplayer"
         minSdk = 33
         targetSdk = 37
-        versionCode = 96
-        versionName = "1.20.0"
+        versionCode = 97
+        versionName = "1.20.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -124,7 +125,24 @@ composeCompiler {
     includeSourceInformation = false
 }
 
+// Variantes que crea el plugin de Baseline Profile para generar el perfil en el teléfono: con el paquete y la
+// firma de la debug, para no reemplazar la release instalada (y google-services tiene ese cliente). En el DSL
+// no sirve: el plugin las configura después y las dejaba con el paquete de la release.
+androidComponents {
+    onVariants(selector().withBuildType("nonMinifiedRelease")) { variant ->
+        variant.applicationId.set("com.kevshupp.kevmusicplayer.debug")
+        variant.signingConfig.setConfig(android.signingConfigs.getByName("shared"))
+    }
+    onVariants(selector().withBuildType("benchmarkRelease")) { variant ->
+        variant.applicationId.set("com.kevshupp.kevmusicplayer.debug")
+        variant.signingConfig.setConfig(android.signingConfigs.getByName("shared"))
+    }
+}
+
 dependencies {
+    // Instala el Baseline Profile al instalar el APK (la app no viene de Play, que lo haría en la nube)
+    implementation(libs.androidx.profileinstaller)
+    "baselineProfile"(project(":baselineprofile"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.media3.exoplayer)

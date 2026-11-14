@@ -42,7 +42,14 @@ fun AddonsSettingsSection(
     context: android.content.Context,
     getLocalized: (String, String) -> String
 ) {
-    OnDemandSettingsCard(context, getLocalized)
+    var showTelegram by remember { mutableStateOf(false) }
+    OnDemandSettingsCard(context, getLocalized) { showTelegram = true }
+    if (showTelegram) {
+        com.kevshupp.kevmusicplayer.ui.screens.dialogs.TelegramDownloadDialog(
+            librarySongs = viewModel.audioFilesWithStats,
+            onDismiss = { showTelegram = false }
+        )
+    }
     Spacer(modifier = Modifier.height(4.dp))
 
     var showSoulseek by remember { mutableStateOf(false) }
