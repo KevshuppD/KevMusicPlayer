@@ -214,7 +214,6 @@ fun PlayerScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showTagEditorDialog by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
-    var showCastDialog by remember { mutableStateOf(false) }
     var showTogetherDialog by remember { mutableStateOf(false) }
     val togetherState by com.kevshupp.kevmusicplayer.data.together.TogetherController.state.collectAsState()
     val castState by com.kevshupp.kevmusicplayer.data.cast.CastController.state.collectAsState()
@@ -1234,11 +1233,9 @@ fun PlayerScreen(
              }
 
              if (showDevicesDialog) {
-                 com.kevshupp.kevmusicplayer.ui.screens.dialogs.DevicesDialog(onDismiss = { showDevicesDialog = false })
-             }
-
-             if (showCastDialog) {
-                 com.kevshupp.kevmusicplayer.ui.screens.dialogs.CastDialog(
+                 com.kevshupp.kevmusicplayer.ui.screens.dialogs.DevicesDialog(
+                     castEnabled = castEnabled,
+                     togetherVisible = togetherEnabled || togetherState.active,
                      queue = {
                          val start = player.currentMediaItemIndex.coerceAtLeast(0)
                          val songs = (start until player.mediaItemCount).mapNotNull { i ->
@@ -1246,8 +1243,9 @@ fun PlayerScreen(
                          }
                          songs to player.currentPosition
                      },
-                     onStarted = { player.pause() },
-                     onDismiss = { showCastDialog = false }
+                     onCastStarted = { player.pause() },
+                     onOpenTogether = { showDevicesDialog = false; showTogetherDialog = true },
+                     onDismiss = { showDevicesDialog = false }
                  )
              }
 
@@ -1324,30 +1322,27 @@ fun PlayerScreen(
                      )
                  }
 
-                 if (castEnabled) IconButton(onClick = { showCastDialog = true }) {
+                 // Temporizador de apagado (volvió a la barra al salir de ella Transmitir y Escuchar juntos)
+                 IconButton(onClick = { showSleepTimerDialog = true }) {
                      Icon(
-                         imageVector = if (castState.device != null) Icons.Rounded.CastConnected else Icons.Rounded.Cast,
-                         contentDescription = "Transmitir",
-                         tint = if (castState.device != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                         imageVector = Icons.Rounded.Bedtime,
+                         contentDescription = "Temporizador de apagado",
+                         tint = if (sleepTimerMinutes != 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                          modifier = Modifier.size(24.dp)
                      )
                  }
 
-                 if (togetherEnabled || togetherState.active) IconButton(onClick = { showTogetherDialog = true }) {
-                     Icon(
-                         imageVector = Icons.Rounded.Groups,
-                         contentDescription = "Escuchar juntos",
-                         tint = if (togetherState.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                         modifier = Modifier.size(24.dp)
-                     )
-                 }
-
-                 // 3. Dispositivos (teléfono / KevMusic Desktop); el temporizador pasó a "Más opciones"
+                 // 3. Dispositivos: salidas del teléfono, PCs, TVs y Escuchar juntos (sus botones propios se quitaron)
                  IconButton(onClick = { showDevicesDialog = true }) {
                      Icon(
-                         imageVector = if (pcPlayback != null) Icons.Rounded.Computer else Icons.Rounded.Devices,
+                         imageVector = when {
+                             castState.device != null -> Icons.Rounded.CastConnected
+                             pcPlayback != null -> Icons.Rounded.Computer
+                             togetherState.active -> Icons.Rounded.Groups
+                             else -> Icons.Rounded.Devices
+                         },
                          contentDescription = "Dispositivos",
-                         tint = if (pcPlayback != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                         tint = if (pcPlayback != null || castState.device != null || togetherState.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                          modifier = Modifier.size(24.dp)
                      )
                  }
@@ -1484,12 +1479,6 @@ fun PlayerScreen(
                     } }
                     item { HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 6.dp)) }
                     // Reproducción
-                    item {
-                        MoreOptionRow(Icons.Rounded.Bedtime, if (sleepTimerMinutes != 0) "Temporizador de apagado · activo" else "Temporizador de apagado",
-                            tint = if (sleepTimerMinutes != 0) MaterialTheme.colorScheme.primary else null) {
-                            showMoreOptions = false; showSleepTimerDialog = true
-                        }
-                    }
                     // Guardar cola
                     item { MoreOptionRow(Icons.Rounded.BookmarkAdd, "Guardar cola como lista") { showMoreOptions = false; showSaveQueueDialog = true } }
                     // Limpiar cola

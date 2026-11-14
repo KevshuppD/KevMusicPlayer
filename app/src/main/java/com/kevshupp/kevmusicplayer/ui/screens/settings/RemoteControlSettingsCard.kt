@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.sp
 import com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer
 
 /**
- * Control desde el PC: activa el servidor de KevMusic Desktop en PlaybackService y muestra
+ * KevMusic Connect (antes "Control desde el PC"): activa el servidor de KevMusic Desktop en PlaybackService y muestra
  * la dirección y el código de emparejamiento que hay que escribir en el escritorio.
  */
 @Composable
@@ -47,11 +47,11 @@ fun RemoteControlSettingsCard(context: android.content.Context, getLocalized: (S
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(getLocalized("Control desde el PC", "Control from PC"), fontWeight = FontWeight.Bold, fontSize = 15.sp, color = settingsTextColor())
+                    Text(getLocalized("KevMusic Connect", "KevMusic Connect"), fontWeight = FontWeight.Bold, fontSize = 15.sp, color = settingsTextColor())
                     Text(
                         getLocalized(
-                            "Maneja la reproducción, la cola y la biblioteca con KevMusic Desktop en la misma red Wi-Fi.",
-                            "Control playback, queue and library with KevMusic Desktop on the same Wi-Fi network."
+                            "Conecta el teléfono con KevMusic Desktop en la misma red Wi-Fi: elige en Dispositivos dónde suena la música y contrólala desde cualquiera de los dos.",
+                            "Link your phone with KevMusic Desktop on the same Wi-Fi: pick where music plays in Devices and control it from either one."
                         ),
                         fontSize = 12.sp,
                         color = settingsTextMutedColor()

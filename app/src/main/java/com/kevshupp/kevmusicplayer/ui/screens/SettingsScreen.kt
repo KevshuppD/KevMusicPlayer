@@ -540,7 +540,7 @@ fun SettingsScreen(
             ),
             SettingSearchItem(
                 title = getLocalized("Complementos", "Add-ons"),
-                description = getLocalized("Telegram, bajo demanda, Soulseek, control desde el PC, Chromecast y DLNA", "Telegram, on demand, Soulseek, PC control, Chromecast and DLNA"),
+                description = getLocalized("Telegram, bajo demanda, Soulseek, KevMusic Connect (PC), Chromecast y DLNA", "Telegram, on demand, Soulseek, KevMusic Connect (PC), Chromecast and DLNA"),
                 categoryKey = "addons",
                 icon = Icons.Rounded.Extension
             ),
@@ -826,7 +826,7 @@ fun SettingsScreen(
                             icon = Icons.Rounded.Extension,
                             iconColor = Color(0xFF69F0AE),
                             title = getLocalized("Complementos", "Add-ons"),
-                            subtitle = getLocalized("Telegram, Soulseek, control desde el PC y TV", "Telegram, Soulseek, PC control and TV"),
+                            subtitle = getLocalized("Telegram, Soulseek, KevMusic Connect y TV", "Telegram, Soulseek, KevMusic Connect and TV"),
                             onClick = { activeCategory = "addons" }
                         )
 

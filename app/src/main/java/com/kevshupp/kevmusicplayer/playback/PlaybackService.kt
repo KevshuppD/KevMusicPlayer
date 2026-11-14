@@ -171,6 +171,11 @@ class PlaybackService : MediaLibraryService() {
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
 
+        // Salida de audio elegida en Dispositivos (altavoz, Bluetooth, cable)
+        com.kevshupp.kevmusicplayer.data.AudioOutputs.start(this)
+        com.kevshupp.kevmusicplayer.data.AudioOutputs.applyPreferred = { device -> player.setPreferredAudioDevice(device) }
+        com.kevshupp.kevmusicplayer.data.AudioOutputs.reapply()
+
         serviceScope.launch {
             restorePlaybackState(player)
         }
@@ -1017,6 +1022,7 @@ class PlaybackService : MediaLibraryService() {
     private var loggedBackgroundRestriction = false
 
     override fun onDestroy() {
+        com.kevshupp.kevmusicplayer.data.AudioOutputs.applyPreferred = null
         mediaLibrarySession?.player?.let { player ->
             try {
                 val prefs = PreferenceConstants.getPlaybackPrefs(this)

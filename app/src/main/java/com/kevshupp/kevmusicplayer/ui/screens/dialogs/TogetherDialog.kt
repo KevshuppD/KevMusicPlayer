@@ -8,6 +8,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +43,7 @@ private val NEARBY_PERMISSIONS = arrayOf(
 )
 
 /** Escuchar juntos: primero pregunta si están juntos o a distancia, luego si comparte o se une. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TogetherDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -70,65 +73,91 @@ fun TogetherDialog(onDismiss: () -> Unit) {
         }
     }
 
-    AlertDialog(
+    val accent = MaterialTheme.colorScheme.secondary
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Rounded.Groups, null) },
-        title = { Text(t("Escuchar juntos", "Listen together")) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                state.message?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
-                when {
-                    // Sesión en marcha
-                    state.active -> ActiveSession(state, ::t)
-                    // Paso 1: ¿dónde están?
-                    mode == null -> {
-                        Text(t("¿Están juntos o a distancia?", "Are you together or far apart?"), fontWeight = FontWeight.SemiBold)
-                        ChoiceCard(Icons.Rounded.Bluetooth, t("Estamos juntos", "We're together"),
-                            t("Se conectan por Bluetooth: más rápido y sincronizado al instante. Si el otro no tiene la canción, se la envías.",
-                                "Connect via Bluetooth: faster and in sync. If the other phone lacks the song, you send it.")) { mode = Mode.NEARBY }
-                        ChoiceCard(Icons.Rounded.Public, t("A distancia", "Far apart"),
-                            t("Por internet con un código. Cada uno escucha desde su biblioteca (o bajo demanda). Requiere sesión de Google.",
-                                "Over the internet with a code. Each plays from their own library (or on demand). Needs Google sign-in.")) { mode = Mode.REMOTE }
-                    }
-                    // Paso 2: compartir o unirse
-                    mode == Mode.NEARBY -> {
-                        ChoiceCard(Icons.Rounded.Speaker, t("Compartir lo que suena", "Share what's playing"),
-                            t("Tu teléfono manda: el otro sigue tu música", "Your phone leads: the other follows")) { requestNearby(Role.HOST) }
-                        ChoiceCard(Icons.Rounded.Headphones, t("Unirme", "Join"),
-                            t("Busca el teléfono cercano que comparte", "Find the nearby phone that's sharing")) { requestNearby(Role.GUEST) }
-                    }
-                    else -> {
-                        ChoiceCard(Icons.Rounded.Speaker, t("Compartir lo que suena", "Share what's playing"),
-                            t("Te da un código para tu amigo", "Gives you a code for your friend")) { TogetherController.hostRemote(context) }
-                        OutlinedTextField(
-                            value = joinCode,
-                            onValueChange = { joinCode = it.uppercase().filter { c -> c.isLetterOrDigit() }.take(6) },
-                            label = { Text(t("Código de tu amigo", "Friend's code")) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Button(onClick = { TogetherController.joinRemote(context, joinCode) }, enabled = joinCode.length == 6, modifier = Modifier.fillMaxWidth()) {
-                            Text(t("Unirme", "Join"))
-                        }
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
+    ) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp).padding(bottom = 20.dp).navigationBarsPadding().imePadding(),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Cabecera con el mismo estilo que la hoja de Dispositivos, en el color secundario
+            NowCard(
+                icon = Icons.Rounded.Groups,
+                label = when {
+                    state.active && state.phase == Phase.CONNECTED -> t("Escuchando juntos", "Listening together")
+                    state.active -> t("Preparando la sesión", "Setting up")
+                    else -> t("Escuchar juntos", "Listen together")
+                },
+                name = when {
+                    state.active && state.phase == Phase.CONNECTED -> t("Con ${state.peer ?: state.code ?: "tu amigo"}", "With ${state.peer ?: state.code ?: "your friend"}")
+                    mode == Mode.NEARBY -> t("Estamos juntos", "We're together")
+                    mode == Mode.REMOTE -> t("A distancia", "Far apart")
+                    else -> t("¿Juntos o a distancia?", "Together or far apart?")
+                },
+                detail = state.nowPlaying?.takeIf { state.active },
+                accent = accent
+            )
+            state.message?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
+            when {
+                // Sesión en marcha
+                state.active -> ActiveSession(state, ::t)
+                // Paso 1: ¿dónde están?
+                mode == null -> Column {
+                    DeviceRow(Icons.Rounded.Bluetooth, t("Estamos juntos", "We're together"),
+                        t("Por Bluetooth, sin internet. Si el otro no tiene la canción, se la envías.",
+                            "Over Bluetooth, no internet. If the other phone lacks the song, you send it."),
+                        false, Icons.Rounded.ChevronRight) { mode = Mode.NEARBY }
+                    DeviceRow(Icons.Rounded.Public, t("A distancia", "Far apart"),
+                        t("Por internet con un código. Requiere sesión de Google.",
+                            "Over the internet with a code. Needs Google sign-in."),
+                        false, Icons.Rounded.ChevronRight) { mode = Mode.REMOTE }
+                }
+                // Paso 2: compartir o unirse
+                mode == Mode.NEARBY -> Column {
+                    DeviceRow(Icons.Rounded.Speaker, t("Compartir lo que suena", "Share what's playing"),
+                        t("Tu teléfono manda: el otro sigue tu música", "Your phone leads: the other follows"),
+                        false, Icons.Rounded.ChevronRight) { requestNearby(Role.HOST) }
+                    DeviceRow(Icons.Rounded.Headphones, t("Unirme", "Join"),
+                        t("Busca el teléfono cercano que comparte", "Find the nearby phone that's sharing"),
+                        false, Icons.Rounded.ChevronRight) { requestNearby(Role.GUEST) }
+                }
+                else -> {
+                    DeviceRow(Icons.Rounded.Speaker, t("Compartir lo que suena", "Share what's playing"),
+                        t("Te da un código para tu amigo", "Gives you a code for your friend"),
+                        false, Icons.Rounded.ChevronRight) { TogetherController.hostRemote(context) }
+                    OutlinedTextField(
+                        value = joinCode,
+                        onValueChange = { joinCode = it.uppercase().filter { c -> c.isLetterOrDigit() }.take(6) },
+                        label = { Text(t("Código de tu amigo", "Friend's code")) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Button(onClick = { TogetherController.joinRemote(context, joinCode) }, enabled = joinCode.length == 6, modifier = Modifier.fillMaxWidth()) {
+                        Text(t("Unirme", "Join"))
                     }
                 }
             }
-        },
-        confirmButton = {
-            if (state.active) TextButton(onClick = { TogetherController.stop() }) {
-                Text(t("Salir de la sesión", "Leave session"), color = MaterialTheme.colorScheme.error)
-            } else TextButton(onClick = onDismiss) { Text(t("Cerrar", "Close")) }
-        },
-        dismissButton = {
-            if (state.active) TextButton(onClick = onDismiss) { Text(t("Ocultar", "Hide")) }
-            else if (mode != null) TextButton(onClick = { mode = null; TogetherController.clearMessage() }) { Text(t("Atrás", "Back")) }
+            when {
+                state.active -> OutlinedButton(
+                    onClick = { TogetherController.stop() }, modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) { Text(t("Salir de la sesión", "Leave session")) }
+                mode != null -> TextButton(onClick = { mode = null; TogetherController.clearMessage() }, modifier = Modifier.fillMaxWidth()) {
+                    Text(t("Atrás", "Back"))
+                }
+            }
         }
-    )
+    }
 }
 
 @Composable
-private fun ActiveSession(state: TogetherController.State, t: (String, String) -> String) {
+private fun ColumnScope.ActiveSession(state: TogetherController.State, t: (String, String) -> String) {
     val clipboard = LocalClipboardManager.current
     val host = state.role == Role.HOST
     when {
@@ -179,7 +208,6 @@ private fun ActiveSession(state: TogetherController.State, t: (String, String) -
     state.authDigits?.takeIf { state.mode == Mode.NEARBY && state.phase != Phase.IDLE }?.let {
         Text(t("Código de verificación: $it (debe coincidir en ambos)", "Verification code: $it (must match on both)"), fontSize = 12.sp)
     }
-    state.nowPlaying?.let { Text("♪ $it", fontSize = 13.sp) }
     if (!host && state.phase == Phase.CONNECTED) {
         val context = LocalContext.current
         val offset by TogetherController.userOffsetMs.collectAsState()
@@ -223,21 +251,4 @@ private fun ThemedCard(onClick: () -> Unit, content: @Composable () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = accent.copy(alpha = 0.08f)),
         border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.25f))
     ) { content() }
-}
-
-@Composable
-private fun ChoiceCard(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    ThemedCard(onClick) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
-                contentAlignment = Alignment.Center
-            ) { Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp)) }
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(title, fontWeight = FontWeight.Bold)
-                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
 }
