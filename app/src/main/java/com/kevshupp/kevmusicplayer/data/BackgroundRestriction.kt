@@ -11,7 +11,7 @@ import android.os.Process
  * `ActivityManager.isBackgroundRestricted` no basta: en el moto g35 la app puede estar exenta de la
  * optimización de batería ("Sin restricciones" en Ajustes) y a la vez tener denegado el permiso
  * RUN_ANY_IN_BACKGROUND; entonces la API devuelve false pero Android rechaza startForeground().
- * Se lee también ese permiso directamente.
+ * Se lee también ese permiso directamente (`checkOpNoThrow`: `unsafeCheckOpNoThrow` es obsoleto desde la API 37).
  */
 object BackgroundRestriction {
     private const val OPSTR_RUN_ANY_IN_BACKGROUND = "android:run_any_in_background"
@@ -25,7 +25,7 @@ object BackgroundRestriction {
         if (byActivityManager) return true
         return try {
             val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-            appOps.unsafeCheckOpNoThrow(OPSTR_RUN_ANY_IN_BACKGROUND, Process.myUid(), context.packageName) !=
+            appOps.checkOpNoThrow(OPSTR_RUN_ANY_IN_BACKGROUND, Process.myUid(), context.packageName) !=
                 AppOpsManager.MODE_ALLOWED
         } catch (e: Exception) {
             false

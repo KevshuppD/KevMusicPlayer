@@ -22,7 +22,9 @@ class BaselineProfileGenerator {
     @Test
     fun generate() = rule.collect(
         packageName = "com.kevshupp.kevmusicplayer.debug",
-        includeInStartupProfile = true
+        // Sin perfil de arranque: con él R8 (DEX layout) dejó una clase de Media3 que ART rechaza (VerifyError en
+        // PlaybackService.onCreate, v1.20.1)
+        includeInStartupProfile = false
     ) {
         pressHome()
         startActivityAndWait()
