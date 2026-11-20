@@ -1997,21 +1997,20 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun shuffleUpcomingQueue() = queueManager.shuffleUpcomingQueue()
     fun restoreUnshuffledQueue() = queueManager.restoreUnshuffledQueue()
 
+    /** Quita de la cola las canciones que se van a borrar; si se quita la que suena, ExoPlayer pasa solo a la siguiente. */
+    private fun removeFromLiveQueue(ids: Set<String>) {
+        val b = browser.value ?: return
+        for (i in b.mediaItemCount - 1 downTo 0) {
+            if (b.getMediaItemAt(i).mediaId in ids) b.removeMediaItem(i)
+        }
+    }
+
     fun deleteSong(context: android.content.Context, songId: Long) {
         viewModelScope.launch {
             try {
                 val song = localAudioFiles.find { it.id == songId } ?: return@launch
                 
-                val b = browser.value
-                if (b != null && b.currentMediaItem?.mediaId == songId.toString()) {
-                    if (b.hasNextMediaItem()) {
-                        b.seekToNext()
-                    } else if (b.hasPreviousMediaItem()) {
-                        b.seekToPrevious()
-                    } else {
-                        b.stop()
-                    }
-                }
+                removeFromLiveQueue(setOf(songId.toString()))
                 
                 // 1. Physically delete from storage first if it's a direct file path or resolvable MediaStore DATA path
                 try {
@@ -2381,20 +2380,7 @@ class MediaBrowserViewModel(application: Application) : AndroidViewModel(applica
     fun deleteSongs(context: android.content.Context, songIds: List<Long>, onComplete: () -> Unit) {
         viewModelScope.launch {
             try {
-                val playingId = browser.value?.currentMediaItem?.mediaId
-                val isPlayingDeleted = playingId != null && songIds.contains(playingId.toLongOrNull() ?: -1L)
-                if (isPlayingDeleted) {
-                    val b = browser.value
-                    if (b != null) {
-                        if (b.hasNextMediaItem()) {
-                            b.seekToNext()
-                        } else if (b.hasPreviousMediaItem()) {
-                            b.seekToPrevious()
-                        } else {
-                            b.stop()
-                        }
-                    }
-                }
+                removeFromLiveQueue(songIds.map { it.toString() }.toSet())
 
                 songIds.forEach { songId ->
                     val song = localAudioFiles.find { it.id == songId } ?: return@forEach

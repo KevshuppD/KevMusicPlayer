@@ -227,6 +227,8 @@ fun LibraryScreen(
     var albumToEdit by remember { mutableStateOf<Pair<String, List<AudioFile>>?>(null) }
     var albumToShowInfo by remember { mutableStateOf<Pair<String, List<AudioFile>>?>(null) }
     var songForPlaylist by remember { mutableStateOf<AudioFile?>(null) }
+    var showSelectionMenu by remember { mutableStateOf(false) }
+    var confirmDeleteSelected by remember { mutableStateOf(false) }
     var songForTagEditing by remember { mutableStateOf<AudioFile?>(null) }
     var albumForCoverEditing by remember { mutableStateOf<String?>(null) }
     var albumForEditing by remember { mutableStateOf<String?>(null) }
@@ -1684,77 +1686,101 @@ fun LibraryScreen(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(64.dp),
-                shape = RoundedCornerShape(32.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                    .height(60.dp),
+                shape = RoundedCornerShape(30.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
                 shadowElevation = 8.dp
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Cancelar la selección
+                    IconButton(
+                        onClick = {
+                            isMultiSelectMode = false
+                            selectedSongs.clear()
+                        }
+                    ) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Cancelar selección", tint = MaterialTheme.colorScheme.onSurface)
+                    }
+
                     Text(
-                        text = "${selectedSongs.size} seleccionadas",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = if (selectedSongs.size == 1) "1 canción seleccionada" else "${selectedSongs.size} canciones seleccionadas",
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
-                        modifier = Modifier.padding(start = 8.dp)
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Action 1: Add to Queue
-                        IconButton(
-                            onClick = {
-                                selectedSongs.forEach { viewModel?.addToQueue(it) }
-                                isMultiSelectMode = false
-                                selectedSongs.clear()
-                            }
-                        ) {
-                            Icon(Icons.Rounded.Queue, contentDescription = "Cola", tint = MaterialTheme.colorScheme.primary)
+                    // Menú con lo que se puede hacer con las seleccionadas
+                    Box {
+                        IconButton(onClick = { showSelectionMenu = true }) {
+                            Icon(Icons.Rounded.MoreVert, contentDescription = "Más opciones", tint = MaterialTheme.colorScheme.primary)
                         }
-
-                        // Action 2: Add to Playlist
-                        IconButton(
-                            onClick = {
-                                if (selectedSongs.isNotEmpty()) {
-                                    songForPlaylist = selectedSongs.first()
+                        DropdownMenu(
+                            expanded = showSelectionMenu,
+                            onDismissRequest = { showSelectionMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Agregar a la cola") },
+                                leadingIcon = { Icon(Icons.Rounded.Queue, contentDescription = null) },
+                                onClick = {
+                                    showSelectionMenu = false
+                                    selectedSongs.forEach { viewModel?.addToQueue(it) }
+                                    isMultiSelectMode = false
+                                    selectedSongs.clear()
                                 }
-                            }
-                        ) {
-                            Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = "Playlist", tint = MaterialTheme.colorScheme.primary)
-                        }
-
-                        // Action 3: Delete
-                        IconButton(
-                            onClick = {
-                                selectedSongs.forEach { viewModel?.deleteSong(context, it.id) }
-                                isMultiSelectMode = false
-                                selectedSongs.clear()
-                            }
-                        ) {
-                            Icon(Icons.Rounded.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
-                        }
-
-                        // Action 4: Cancel
-                        IconButton(
-                            onClick = {
-                                isMultiSelectMode = false
-                                selectedSongs.clear()
-                            }
-                        ) {
-                            Icon(Icons.Rounded.Close, contentDescription = "Cancel", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Agregar a una lista") },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) },
+                                onClick = {
+                                    showSelectionMenu = false
+                                    if (selectedSongs.isNotEmpty()) songForPlaylist = selectedSongs.first()
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Eliminar del dispositivo", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    showSelectionMenu = false
+                                    if (selectedSongs.isNotEmpty()) confirmDeleteSelected = true
+                                }
+                            )
                         }
                     }
                 }
             }
         }
+    }
+
+    if (confirmDeleteSelected) {
+        val context = LocalContext.current
+        val count = selectedSongs.size
+        AlertDialog(
+            onDismissRequest = { confirmDeleteSelected = false },
+            title = { Text(getLocalized("¿Eliminar $count canciones?", "Delete $count songs?"), fontWeight = FontWeight.Bold) },
+            text = { Text(getLocalized("Se borrarán los archivos del dispositivo. No se puede deshacer.", "The files will be deleted from the device. This can't be undone.")) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val ids = selectedSongs.map { it.id }
+                    confirmDeleteSelected = false
+                    isMultiSelectMode = false
+                    selectedSongs.clear()
+                    viewModel?.deleteSongs(context, ids) {}
+                }) { Text(getLocalized("Eliminar", "Delete"), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteSelected = false }) { Text(getLocalized("Cancelar", "Cancel")) }
+            }
+        )
     }
 
     if (albumToDelete != null) {

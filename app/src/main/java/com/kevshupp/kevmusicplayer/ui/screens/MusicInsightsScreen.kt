@@ -1,5 +1,6 @@
 package com.kevshupp.kevmusicplayer.ui.screens
 
+import kotlinx.coroutines.withContext
 import android.content.Intent
 import android.graphics.Bitmap
 import androidx.compose.animation.*
@@ -42,7 +43,38 @@ enum class InsightPeriod {
     ALL_TIME,
     THIS_YEAR,
     THIS_MONTH,
-    LAST_30_DAYS
+    LAST_7_DAYS,
+    LAST_30_DAYS,
+    LAST_3_MONTHS,
+    LAST_YEAR
+}
+
+/** Cabecera de una sección de ranking: título con cuántos se ven y botones Ver más / Ver menos (5 → 10 → 25 → todos). */
+@Composable
+private fun StatsSectionHeader(title: String, total: Int, limit: Int, onLimit: (Int) -> Unit) {
+    val shown = minOf(limit, total)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = if (total > 5 && limit != 5) "$title ($shown/$total)" else title,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.sp,
+            modifier = Modifier.weight(1f)
+        )
+        if (limit > 5 && total > 5) {
+            TextButton(onClick = { onLimit(5) }) { Text("Ver menos", fontSize = 12.sp) }
+        }
+        if (total > limit) {
+            TextButton(onClick = {
+                onLimit(when { limit < 10 -> 10; limit < 25 -> 25; else -> Int.MAX_VALUE })
+            }) { Text(if (limit >= 25) "Ver todo ($total)" else "Ver más", fontSize = 12.sp) }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -91,6 +123,22 @@ fun MusicInsightsScreen(
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
+    val startOfLastYear = remember {
+        Calendar.getInstance().apply {
+            add(Calendar.YEAR, -1)
+            set(Calendar.DAY_OF_YEAR, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+    val sevenDaysAgo = remember {
+        System.currentTimeMillis() - (7L * 24 * 60 * 60 * 1000)
+    }
+    val threeMonthsAgo = remember {
+        System.currentTimeMillis() - (90L * 24 * 60 * 60 * 1000)
+    }
     val thirtyDaysAgo = remember {
         System.currentTimeMillis() - (30L * 24 * 60 * 60 * 1000)
     }
@@ -102,7 +150,10 @@ fun MusicInsightsScreen(
             InsightPeriod.ALL_TIME -> base
             InsightPeriod.THIS_YEAR -> base.filter { it.lastPlayed >= startOfYear }
             InsightPeriod.THIS_MONTH -> base.filter { it.lastPlayed >= startOfMonth }
+            InsightPeriod.LAST_7_DAYS -> base.filter { it.lastPlayed >= sevenDaysAgo }
             InsightPeriod.LAST_30_DAYS -> base.filter { it.lastPlayed >= thirtyDaysAgo }
+            InsightPeriod.LAST_3_MONTHS -> base.filter { it.lastPlayed >= threeMonthsAgo }
+            InsightPeriod.LAST_YEAR -> base.filter { it.lastPlayed in startOfLastYear until startOfYear }
         }
     }
 
@@ -114,36 +165,42 @@ fun MusicInsightsScreen(
         playedSongs.sumOf { it.playCount }
     }
 
-    val topSongs = remember(playedSongs) {
-        playedSongs.sortedByDescending { it.playCount }.take(5)
+    val allTopSongs = remember(playedSongs) {
+        playedSongs.sortedByDescending { it.playCount }
     }
+    val topSongs = remember(allTopSongs) { allTopSongs.take(5) }
 
-    val topArtists = remember(playedSongs) {
+    val allTopArtists = remember(playedSongs) {
         playedSongs.groupBy { it.artist }
             .mapValues { entry -> entry.value.sumOf { it.playCount } }
             .toList()
             .sortedByDescending { it.second }
-            .take(5)
     }
+    val topArtists = remember(allTopArtists) { allTopArtists.take(5) }
 
-    val topAlbums = remember(playedSongs) {
+    val allTopAlbums = remember(playedSongs) {
         playedSongs.filter { it.album.isNotBlank() && it.album != "<unknown>" }
             .groupBy { it.album to it.artist }
             .map { (key, songs) ->
                 Triple(key.first, key.second, songs.sumOf { it.playCount } to songs.first().uriString)
             }
             .sortedByDescending { it.third.first }
-            .take(5)
     }
+    val topAlbums = remember(allTopAlbums) { allTopAlbums.take(5) }
 
-    val topGenres = remember(playedSongs) {
+    val allTopGenres = remember(playedSongs) {
         playedSongs.filter { !com.kevshupp.kevmusicplayer.data.LibraryNormalizer.isUnknown(it.genre) }
             .groupBy { it.genre }
             .mapValues { entry -> entry.value.sumOf { it.playCount } }
             .toList()
             .sortedByDescending { it.second }
-            .take(5)
     }
+    val topGenres = remember(allTopGenres) { allTopGenres.take(5) }
+    val allGenrePlays = remember(allTopGenres) { allTopGenres.sumOf { it.second }.coerceAtLeast(1) }
+    var songsLimit by remember { mutableIntStateOf(5) }
+    var artistsLimit by remember { mutableIntStateOf(5) }
+    var albumsLimit by remember { mutableIntStateOf(5) }
+    var genresLimit by remember { mutableIntStateOf(5) }
 
     val totalGenrePlays = remember(topGenres) {
         topGenres.sumOf { it.second }.coerceAtLeast(1)
@@ -217,7 +274,10 @@ fun MusicInsightsScreen(
             InsightPeriod.ALL_TIME -> getLocalized("Histórico", "All-Time")
             InsightPeriod.THIS_YEAR -> getLocalized("Año $currentYear", "Year $currentYear")
             InsightPeriod.THIS_MONTH -> getLocalized("Este Mes", "This Month")
+            InsightPeriod.LAST_7_DAYS -> getLocalized("Últimos 7 días", "Last 7 Days")
             InsightPeriod.LAST_30_DAYS -> getLocalized("Últimos 30 días", "Last 30 Days")
+            InsightPeriod.LAST_3_MONTHS -> getLocalized("Últimos 3 meses", "Last 3 Months")
+            InsightPeriod.LAST_YEAR -> getLocalized("Año ${currentYear - 1}", "Year ${currentYear - 1}")
         }
         val topArtistStr = topArtists.firstOrNull()?.first ?: "N/A"
         val topSongStr = topSongs.firstOrNull()?.title ?: "N/A"
@@ -366,7 +426,10 @@ fun MusicInsightsScreen(
                         InsightPeriod.ALL_TIME to getLocalized("Todo el tiempo", "All Time"),
                         InsightPeriod.THIS_YEAR to getLocalized("Año $currentYear", "Year $currentYear"),
                         InsightPeriod.THIS_MONTH to getLocalized("Este mes", "This Month"),
-                        InsightPeriod.LAST_30_DAYS to getLocalized("Últimos 30 días", "Last 30 Days")
+                        InsightPeriod.LAST_7_DAYS to getLocalized("Últimos 7 días", "Last 7 Days"),
+                        InsightPeriod.LAST_30_DAYS to getLocalized("Últimos 30 días", "Last 30 Days"),
+                        InsightPeriod.LAST_3_MONTHS to getLocalized("Últimos 3 meses", "Last 3 Months"),
+                        InsightPeriod.LAST_YEAR to getLocalized("Año ${currentYear - 1}", "Year ${currentYear - 1}")
                     )
 
                     periods.forEach { (period, label) ->
@@ -570,7 +633,10 @@ fun MusicInsightsScreen(
                                             InsightPeriod.ALL_TIME -> "Top Favoritas KevMusic"
                                             InsightPeriod.THIS_YEAR -> "Top $currentYear"
                                             InsightPeriod.THIS_MONTH -> "Top Mes"
+                                            InsightPeriod.LAST_7_DAYS -> "Top 7 Días"
                                             InsightPeriod.LAST_30_DAYS -> "Top 30 Días"
+                                            InsightPeriod.LAST_3_MONTHS -> "Top 3 Meses"
+                                            InsightPeriod.LAST_YEAR -> "Top ${currentYear - 1}"
                                         }
                                         onCreatePlaylist?.invoke(playlistName, topSongs)
                                     },
@@ -600,13 +666,7 @@ fun MusicInsightsScreen(
 
                         // 3. Top Songs Section
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = getLocalized("TOP 5 CANCIONES", "TOP 5 SONGS"),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                letterSpacing = 1.sp
-                            )
+                            StatsSectionHeader(getLocalized("CANCIONES", "SONGS"), allTopSongs.size, songsLimit) { songsLimit = it }
 
                             if (topSongs.isEmpty()) {
                                 EmptyStatsCard(getLocalized("Sin canciones reproducidas en este período.", "No songs played in this period."))
@@ -619,13 +679,13 @@ fun MusicInsightsScreen(
                                     )
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
-                                        topSongs.forEachIndexed { index, song ->
+                                        allTopSongs.take(songsLimit).forEachIndexed { index, song ->
                                             val artBytes = rememberAlbumArt(song.uriString)
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .clickable {
-                                                        onPlaySongs?.invoke(topSongs, index)
+                                                        onPlaySongs?.invoke(allTopSongs.take(songsLimit), index)
                                                         onDismiss()
                                                     }
                                                     .padding(vertical = 8.dp),
@@ -698,7 +758,7 @@ fun MusicInsightsScreen(
                                                     color = MaterialTheme.colorScheme.primary
                                                 )
                                             }
-                                            if (index < topSongs.lastIndex) {
+                                            if (index < minOf(songsLimit, allTopSongs.size) - 1) {
                                                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
                                             }
                                         }
@@ -709,13 +769,7 @@ fun MusicInsightsScreen(
 
                         // 4. Top Artists Section
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = getLocalized("TOP 5 ARTISTAS", "TOP 5 ARTISTS"),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                letterSpacing = 1.sp
-                            )
+                            StatsSectionHeader(getLocalized("ARTISTAS", "ARTISTS"), allTopArtists.size, artistsLimit) { artistsLimit = it }
 
                             if (topArtists.isEmpty()) {
                                 EmptyStatsCard(getLocalized("No hay suficientes datos de artistas.", "Not enough artist data."))
@@ -728,7 +782,7 @@ fun MusicInsightsScreen(
                                     )
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
-                                        topArtists.forEachIndexed { index, (artist, plays) ->
+                                        allTopArtists.take(artistsLimit).forEachIndexed { index, (artist, plays) ->
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
@@ -769,7 +823,7 @@ fun MusicInsightsScreen(
                                                     color = MaterialTheme.colorScheme.secondary
                                                 )
                                             }
-                                            if (index < topArtists.lastIndex) {
+                                            if (index < minOf(artistsLimit, allTopArtists.size) - 1) {
                                                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
                                             }
                                         }
@@ -781,13 +835,7 @@ fun MusicInsightsScreen(
                         // 5. Top Albums Section
                         if (topAlbums.isNotEmpty()) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    text = getLocalized("TOP 5 ÁLBUMES", "TOP 5 ALBUMS"),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    letterSpacing = 1.sp
-                                )
+                                StatsSectionHeader(getLocalized("ÁLBUMES", "ALBUMS"), allTopAlbums.size, albumsLimit) { albumsLimit = it }
 
                                 Card(
                                     shape = RoundedCornerShape(24.dp),
@@ -797,7 +845,7 @@ fun MusicInsightsScreen(
                                     )
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
-                                        topAlbums.forEachIndexed { index, (album, artist, playData) ->
+                                        allTopAlbums.take(albumsLimit).forEachIndexed { index, (album, artist, playData) ->
                                             val (plays, uri) = playData
                                             val artBytes = rememberAlbumArt(uri)
                                             Row(
@@ -868,7 +916,7 @@ fun MusicInsightsScreen(
                                                     color = MaterialTheme.colorScheme.tertiary
                                                 )
                                             }
-                                            if (index < topAlbums.lastIndex) {
+                                            if (index < minOf(albumsLimit, allTopAlbums.size) - 1) {
                                                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
                                             }
                                         }
@@ -880,13 +928,7 @@ fun MusicInsightsScreen(
                         // 6. Top Genres with Percentage Progress Bars
                         if (topGenres.isNotEmpty()) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    text = getLocalized("GÉNEROS MÁS ESCUCHADOS", "TOP GENRES BREAKDOWN"),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    letterSpacing = 1.sp
-                                )
+                                StatsSectionHeader(getLocalized("GÉNEROS MÁS ESCUCHADOS", "TOP GENRES BREAKDOWN"), allTopGenres.size, genresLimit) { genresLimit = it }
 
                                 Card(
                                     shape = RoundedCornerShape(24.dp),
@@ -907,9 +949,9 @@ fun MusicInsightsScreen(
                                             listOf(Color(0xFF654EA3), Color(0xFFEAAFC8))
                                         )
 
-                                        topGenres.forEachIndexed { i, (genre, plays) ->
-                                            val percentage = (plays.toFloat() / totalGenrePlays * 100).toInt()
-                                            val barFraction = (plays.toFloat() / totalGenrePlays).coerceIn(0.08f, 1f)
+                                        allTopGenres.take(genresLimit).forEachIndexed { i, (genre, plays) ->
+                                            val percentage = (plays.toFloat() / allGenrePlays * 100).toInt()
+                                            val barFraction = (plays.toFloat() / allGenrePlays).coerceIn(0.08f, 1f)
                                             val gradient = genreGradients.getOrElse(i) { listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary) }
 
                                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1209,16 +1251,26 @@ fun MusicInsightsScreen(
             val slideProgress = remember { androidx.compose.animation.core.Animatable(0f) }
 
             // Story auto-advance timer
+            var lastTimedSlide by remember { mutableIntStateOf(-1) }
             LaunchedEffect(currentSlide, isPaused) {
-                if (!isPaused) {
+                if (lastTimedSlide != currentSlide) {
                     slideProgress.snapTo(0f)
-                    slideProgress.animateTo(
-                        targetValue = 1f,
-                        animationSpec = androidx.compose.animation.core.tween(
-                            durationMillis = 5500,
-                            easing = androidx.compose.animation.core.LinearEasing
+                    lastTimedSlide = currentSlide
+                }
+                if (!isPaused) {
+                    // Con las animaciones del sistema desactivadas (escala 0) animateTo termina al instante
+                    // y las historias pasaban todas de golpe: el temporizador ignora esa escala.
+                    withContext(object : androidx.compose.ui.MotionDurationScale {
+                        override val scaleFactor: Float get() = 1f
+                    }) {
+                        slideProgress.animateTo(
+                            targetValue = 1f,
+                            animationSpec = androidx.compose.animation.core.tween(
+                                durationMillis = (5500 * (1f - slideProgress.value)).toInt().coerceAtLeast(1),
+                                easing = androidx.compose.animation.core.LinearEasing
+                            )
                         )
-                    )
+                    }
                     if (currentSlide < totalSlides - 1) {
                         currentSlide++
                     }
@@ -1265,12 +1317,15 @@ fun MusicInsightsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)
-                    .pointerInput(currentSlide) {
+                    .pointerInput(Unit) {
                         detectTapGestures(
                             onPress = {
                                 isPaused = true
-                                val released = tryAwaitRelease()
-                                isPaused = false
+                                try {
+                                    tryAwaitRelease()
+                                } finally {
+                                    isPaused = false
+                                }
                             },
                             onTap = { offset ->
                                 val screenWidth = size.width
@@ -1288,10 +1343,10 @@ fun MusicInsightsScreen(
                     when (currentSlide) {
                         0 -> Brush.verticalGradient(listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)))
                         1 -> Brush.verticalGradient(listOf(Color(0xFF2E0854), Color(0xFF180B28), Color(0xFF003838)))
-                        2 -> Brush.verticalGradient(listOf(Color(0xFF3A1C71), Color(0xFFD76D77), Color(0xFFFFAF7B)))
-                        3 -> Brush.verticalGradient(listOf(Color(0xFF11998E), Color(0xFF38EF7D), Color(0xFF051923)))
-                        4 -> Brush.verticalGradient(listOf(Color(0xFF8A2387), Color(0xFFE94057), Color(0xFFF27121)))
-                        5 -> Brush.verticalGradient(listOf(Color(0xFF654EA3), Color(0xFFEAAFC8), Color(0xFF1B1B2F)))
+                        2 -> Brush.verticalGradient(listOf(Color(0xFF241247), Color(0xFF4A2340), Color(0xFF5A3524)))
+                        3 -> Brush.verticalGradient(listOf(Color(0xFF0C3B3A), Color(0xFF14554A), Color(0xFF051923)))
+                        4 -> Brush.verticalGradient(listOf(Color(0xFF3B1240), Color(0xFF59213A), Color(0xFF4A2A1C)))
+                        5 -> Brush.verticalGradient(listOf(Color(0xFF2E2352), Color(0xFF45304F), Color(0xFF1B1B2F)))
                         else -> Brush.verticalGradient(listOf(Color(0xFF1E0836), Color(0xFF0F0C20), Color(0xFF070B19)))
                     }
                 }
@@ -1351,7 +1406,7 @@ fun MusicInsightsScreen(
                             Icon(
                                 imageVector = Icons.Rounded.GraphicEq,
                                 contentDescription = null,
-                                tint = Color(0xFF00FFCC),
+                                tint = Color(0xFF7ADBC8),
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
@@ -1360,7 +1415,7 @@ fun MusicInsightsScreen(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 2.sp,
-                                color = Color(0xFF00FFCC)
+                                color = Color(0xFF7ADBC8)
                             )
                         }
 
@@ -1415,7 +1470,7 @@ fun MusicInsightsScreen(
                                             text = "$totalMinListened",
                                             fontSize = 64.sp,
                                             fontWeight = FontWeight.Black,
-                                            color = Color(0xFF00FFCC),
+                                            color = Color(0xFF7ADBC8),
                                             lineHeight = 70.sp
                                         )
                                         Text(
@@ -1458,7 +1513,7 @@ fun MusicInsightsScreen(
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold,
                                             letterSpacing = 2.sp,
-                                            color = Color(0xFFFF66CC)
+                                            color = Color(0xFFDD94C4)
                                         )
 
                                         Box(
@@ -1514,7 +1569,7 @@ fun MusicInsightsScreen(
                                                         text = "${pct.toInt()}%",
                                                         fontSize = 13.sp,
                                                         fontWeight = FontWeight.Black,
-                                                        color = Color(0xFF00FFCC)
+                                                        color = Color(0xFF7ADBC8)
                                                     )
                                                 }
                                             }
@@ -1534,7 +1589,7 @@ fun MusicInsightsScreen(
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold,
                                             letterSpacing = 2.sp,
-                                            color = Color(0xFFFFD200)
+                                            color = Color(0xFFE6C56E)
                                         )
 
                                         Text(
@@ -1547,7 +1602,7 @@ fun MusicInsightsScreen(
                                             text = fullDayNames.getOrElse(peakDayIndex) { "Viernes" },
                                             fontSize = 36.sp,
                                             fontWeight = FontWeight.Black,
-                                            color = Color(0xFFFFD200)
+                                            color = Color(0xFFE6C56E)
                                         )
 
                                         Spacer(modifier = Modifier.height(8.dp))
@@ -1594,7 +1649,7 @@ fun MusicInsightsScreen(
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold,
                                             letterSpacing = 2.sp,
-                                            color = Color(0xFF00FFCC)
+                                            color = Color(0xFF7ADBC8)
                                         )
 
                                         val top1 = topSongs.firstOrNull()
@@ -1603,7 +1658,7 @@ fun MusicInsightsScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .size(150.dp)
-                                                    .shadow(24.dp, RoundedCornerShape(24.dp), spotColor = Color(0xFF00FFCC))
+                                                    .shadow(24.dp, RoundedCornerShape(24.dp), spotColor = Color(0xFF7ADBC8))
                                                     .clip(RoundedCornerShape(24.dp))
                                                     .background(Color.DarkGray)
                                             ) {
@@ -1667,7 +1722,7 @@ fun MusicInsightsScreen(
                                                         text = "#${idx + 2}",
                                                         fontWeight = FontWeight.Black,
                                                         fontSize = 13.sp,
-                                                        color = Color(0xFF00FFCC),
+                                                        color = Color(0xFF7ADBC8),
                                                         modifier = Modifier.width(26.dp)
                                                     )
                                                     Text(
@@ -1697,7 +1752,7 @@ fun MusicInsightsScreen(
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold,
                                             letterSpacing = 2.sp,
-                                            color = Color(0xFFFF66CC)
+                                            color = Color(0xFFDD94C4)
                                         )
 
                                         val topArtistName = topArtists.firstOrNull()?.first ?: "N/A"
@@ -1707,7 +1762,7 @@ fun MusicInsightsScreen(
                                             artist = topArtistName,
                                             modifier = Modifier
                                                 .size(150.dp)
-                                                .shadow(24.dp, CircleShape, spotColor = Color(0xFFFF66CC))
+                                                .shadow(24.dp, CircleShape, spotColor = Color(0xFFDD94C4))
                                                 .clip(CircleShape)
                                         )
 
@@ -1752,7 +1807,7 @@ fun MusicInsightsScreen(
                                                     Text(
                                                         text = "$plays plays",
                                                         fontSize = 12.sp,
-                                                        color = Color(0xFFFF66CC),
+                                                        color = Color(0xFFDD94C4),
                                                         fontWeight = FontWeight.Bold
                                                     )
                                                 }
@@ -1773,7 +1828,7 @@ fun MusicInsightsScreen(
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold,
                                             letterSpacing = 2.sp,
-                                            color = Color(0xFFFFD200)
+                                            color = Color(0xFFE6C56E)
                                         )
 
                                         Box(
@@ -1786,7 +1841,7 @@ fun MusicInsightsScreen(
                                             Icon(
                                                 imageVector = Icons.Rounded.Psychology,
                                                 contentDescription = null,
-                                                tint = Color(0xFFFFD200),
+                                                tint = Color(0xFFE6C56E),
                                                 modifier = Modifier.size(54.dp)
                                             )
                                         }
@@ -1850,7 +1905,7 @@ fun MusicInsightsScreen(
                                                     Icon(
                                                         imageVector = Icons.Rounded.GraphicEq,
                                                         contentDescription = null,
-                                                        tint = Color(0xFF00FFCC),
+                                                        tint = Color(0xFF7ADBC8),
                                                         modifier = Modifier.size(18.dp)
                                                     )
                                                     Spacer(modifier = Modifier.width(6.dp))
@@ -1859,7 +1914,7 @@ fun MusicInsightsScreen(
                                                         fontWeight = FontWeight.Black,
                                                         fontSize = 12.sp,
                                                         letterSpacing = 2.sp,
-                                                        color = Color(0xFF00FFCC)
+                                                        color = Color(0xFF7ADBC8)
                                                     )
                                                 }
 
@@ -1911,15 +1966,15 @@ fun MusicInsightsScreen(
                                                     horizontalArrangement = Arrangement.SpaceAround
                                                 ) {
                                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Text(text = "$totalMinListened", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color(0xFF00FFCC))
+                                                        Text(text = "$totalMinListened", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color(0xFF7ADBC8))
                                                         Text(text = getLocalized("Minutos", "Minutes"), fontSize = 10.sp, color = Color.White.copy(alpha = 0.6f))
                                                     }
                                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Text(text = topArtists.firstOrNull()?.first ?: "N/A", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFFFF66CC), maxLines = 1)
+                                                        Text(text = topArtists.firstOrNull()?.first ?: "N/A", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFFDD94C4), maxLines = 1)
                                                         Text(text = getLocalized("Top Artista", "Top Artist"), fontSize = 10.sp, color = Color.White.copy(alpha = 0.6f))
                                                     }
                                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Text(text = favoriteGenre, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFFFFD200), maxLines = 1)
+                                                        Text(text = favoriteGenre, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFFE6C56E), maxLines = 1)
                                                         Text(text = getLocalized("Género", "Genre"), fontSize = 10.sp, color = Color.White.copy(alpha = 0.6f))
                                                     }
                                                 }
@@ -1931,7 +1986,7 @@ fun MusicInsightsScreen(
                                                 ) {
                                                     topSongs.take(3).forEachIndexed { idx, song ->
                                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                                            Text(text = "#${idx + 1}", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF00FFCC), modifier = Modifier.width(20.dp))
+                                                            Text(text = "#${idx + 1}", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF7ADBC8), modifier = Modifier.width(20.dp))
                                                             Text(text = "${song.title} · ${song.artist}", fontSize = 11.sp, color = Color.White.copy(alpha = 0.9f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                         }
                                                     }
@@ -1969,7 +2024,7 @@ fun MusicInsightsScreen(
                                     .height(52.dp),
                                 shape = RoundedCornerShape(18.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF00FFCC),
+                                    containerColor = Color(0xFF7ADBC8),
                                     contentColor = Color.Black
                                 )
                             ) {
