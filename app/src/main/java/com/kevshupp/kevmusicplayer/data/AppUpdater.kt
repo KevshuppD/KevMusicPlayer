@@ -121,12 +121,28 @@ object AppUpdater {
     private fun fromFeed(): UpdateInfo? {
         val (code, feed) = get("https://github.com/$REPO/releases.atom")
         if (code != 200) error("releases.atom respondió $code")
-        // Solo las de Android (vX.Y.Z); las del PC son desktop-vX.Y.Z
-        val tag = Regex("""/releases/tag/(v\d+\.\d+\.\d+)"""").findAll(feed).map { it.groupValues[1] }.distinct()
-            .reduceOrNull { a, b -> if (isNewerVersion(a, b)) b else a } ?: return null
-        val notes = runCatching { get("https://raw.githubusercontent.com/$REPO/main/changelog/$tag.md").second }.getOrDefault("")
-        return UpdateInfo(tag, "https://github.com/$REPO/releases/download/$tag/KevMusicPlayer-$tag.apk", notes)
+        // Solo las de Android (vX.Y.Z); las del PC son desktop-vX.Y.Z. El feed también trae tags sin release
+        // (mientras la CI compila el APK aún no existe): se ofrece la más alta cuyo APK ya se puede descargar.
+        val tags = Regex("""/releases/tag/(v\d+\.\d+\.\d+)"""").findAll(feed).map { it.groupValues[1] }.distinct()
+            .sortedWith { a, b -> if (a == b) 0 else if (isNewerVersion(a, b)) 1 else -1 }.toList()
+        for (tag in tags.take(3)) {
+            val apk = "https://github.com/$REPO/releases/download/$tag/KevMusicPlayer-$tag.apk"
+            if (!apkExists(apk)) continue
+            val notes = runCatching { get("https://raw.githubusercontent.com/$REPO/main/changelog/$tag.md").second }.getOrDefault("")
+            return UpdateInfo(tag, apk, notes)
+        }
+        return null
     }
+
+    private fun apkExists(url: String): Boolean = runCatching {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.requestMethod = "HEAD"
+        conn.instanceFollowRedirects = true
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
+        conn.setRequestProperty("User-Agent", "KevMusicPlayer-Updater")
+        try { conn.responseCode == 200 } finally { conn.disconnect() }
+    }.getOrDefault(false)
 
     fun currentVersion(context: Context): String {
         val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
