@@ -70,6 +70,32 @@ object DlnaClient {
             "<InstanceID>0</InstanceID><CurrentURI>${escape(url)}</CurrentURI><CurrentURIMetaData>${escape(metadata)}</CurrentURIMetaData>")
     }
 
+    /** Siguiente canción ya preparada: sin ella los botones "siguiente" de la tele no tienen a dónde ir y el cambio no tiene hueco. */
+    fun setNextUri(r: DlnaRenderer, url: String, metadata: String) {
+        soap(r.avTransportUrl, AV_TRANSPORT, "SetNextAVTransportURI",
+            "<InstanceID>0</InstanceID><NextURI>${escape(url)}</NextURI><NextURIMetaData>${escape(metadata)}</NextURIMetaData>")
+    }
+
+    /** NORMAL, REPEAT_ONE, REPEAT_ALL, SHUFFLE, RANDOM…; null si la tele no lo informa. Es lo que cambian sus botones de repetir y aleatorio. */
+    fun playMode(r: DlnaRenderer): String? = runCatching {
+        tag(soap(r.avTransportUrl, AV_TRANSPORT, "GetTransportSettings", "<InstanceID>0</InstanceID>"), "PlayMode")?.trim()?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    /** Acciones que la tele permite ahora (Play, Pause, Next, Previous…): sin "Next" su botón de siguiente no hace nada. */
+    fun transportActions(r: DlnaRenderer): String? = runCatching {
+        tag(soap(r.avTransportUrl, AV_TRANSPORT, "GetCurrentTransportActions", "<InstanceID>0</InstanceID>"), "Actions")?.let(::unescape)?.trim()
+    }.getOrNull()
+
+    /** PlayMedia y modos de reproducción que dice soportar la tele. */
+    fun deviceCapabilities(r: DlnaRenderer): String? = runCatching {
+        val xml = soap(r.avTransportUrl, AV_TRANSPORT, "GetDeviceCapabilities", "<InstanceID>0</InstanceID>")
+        "PlayMedia=${tag(xml, "PlayMedia")?.trim()} PlayModes=${tag(xml, "PlayModes")?.trim()}"
+    }.getOrNull()
+
+    fun setPlayMode(r: DlnaRenderer, mode: String) {
+        soap(r.avTransportUrl, AV_TRANSPORT, "SetPlayMode", "<InstanceID>0</InstanceID><NewPlayMode>$mode</NewPlayMode>")
+    }
+
     fun play(r: DlnaRenderer) { soap(r.avTransportUrl, AV_TRANSPORT, "Play", "<InstanceID>0</InstanceID><Speed>1</Speed>") }
     fun pause(r: DlnaRenderer) { soap(r.avTransportUrl, AV_TRANSPORT, "Pause", "<InstanceID>0</InstanceID>") }
     fun stop(r: DlnaRenderer) { soap(r.avTransportUrl, AV_TRANSPORT, "Stop", "<InstanceID>0</InstanceID>") }
@@ -81,6 +107,12 @@ object DlnaClient {
     /** PLAYING, PAUSED_PLAYBACK, STOPPED, TRANSITIONING o NO_MEDIA_PRESENT. */
     fun transportState(r: DlnaRenderer): String =
         tag(soap(r.avTransportUrl, AV_TRANSPORT, "GetTransportInfo", "<InstanceID>0</InstanceID>"), "CurrentTransportState").orEmpty()
+
+    /** Posición y dirección de lo que suena ahora: la tele puede haber pasado a otra canción por su mando. */
+    fun positionInfo(r: DlnaRenderer): Pair<Long, String?> {
+        val xml = soap(r.avTransportUrl, AV_TRANSPORT, "GetPositionInfo", "<InstanceID>0</InstanceID>")
+        return parseTime(tag(xml, "RelTime")) to tag(xml, "TrackURI")?.let(::unescape)?.trim()?.takeIf { it.isNotBlank() }
+    }
 
     fun positionMs(r: DlnaRenderer): Long =
         parseTime(tag(soap(r.avTransportUrl, AV_TRANSPORT, "GetPositionInfo", "<InstanceID>0</InstanceID>"), "RelTime"))
@@ -104,7 +136,16 @@ object DlnaClient {
             """<item id="0" parentID="-1" restricted="1"><dc:title>${escape(title)}</dc:title><dc:creator>${escape(artist)}</dc:creator>""" +
             """<upnp:artist>${escape(artist)}</upnp:artist><upnp:album>${escape(album)}</upnp:album><upnp:albumArtURI>${escape(artUrl)}</upnp:albumArtURI>""" +
             """<upnp:class>object.item.audioItem.musicTrack</upnp:class>""" +
-            """<res protocolInfo="http-get:*:$mime:*" duration="${formatTime(durationMs)}">${escape(url)}</res></item></DIDL-Lite>"""
+            """<res protocolInfo="${protocolInfo(mime)}" duration="${formatTime(durationMs)}">${escape(url)}</res></item></DIDL-Lite>"""
+
+    /**
+     * Con `*` en las banderas DLNA, la Samsung dice que solo permite Pause y Stop (sin Seek, Next ni Previous).
+     * `OP=01` anuncia que acepta rangos de bytes (lo que sirve [CastMediaServer]) y las banderas, que es streaming con salto.
+     */
+    internal fun protocolInfo(mime: String): String {
+        val profile = if (mime == "audio/mpeg") "DLNA.ORG_PN=MP3;" else ""
+        return "http-get:*:$mime:${profile}DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+    }
 
     internal fun formatTime(ms: Long): String {
         val s = (ms / 1000).coerceAtLeast(0)

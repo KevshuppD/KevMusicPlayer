@@ -47,7 +47,7 @@ class DlnaClientTest {
         val xml = DlnaClient.didl("A & B", "C<D", "E", "http://h/s.mp3", "audio/mpeg", "http://h/a.jpg", 61_000)
         assertTrue(xml.contains("<dc:title>A &amp; B</dc:title>"))
         assertTrue(xml.contains("C&lt;D"))
-        assertTrue(xml.contains("""protocolInfo="http-get:*:audio/mpeg:*" duration="00:01:01""""))
+        assertTrue(xml.contains("""protocolInfo="http-get:*:audio/mpeg:DLNA.ORG_PN=MP3;DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="00:01:01""""))
     }
 
     @Test

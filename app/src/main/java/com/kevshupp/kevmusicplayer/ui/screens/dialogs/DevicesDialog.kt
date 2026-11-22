@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -60,6 +61,7 @@ fun DevicesDialog(
     fun t(a: String, b: String) = if (es) a else b
 
     LaunchedEffect(Unit) { AudioOutputs.start(context) }
+    var choosing by remember { mutableStateOf<CastController.Device?>(null) }
     val outputs by AudioOutputs.outputs.collectAsState()
     val connectOn = remember { RemoteControlServer.isEnabled(context) }
     val pcs by RemoteControlServer.handoffTargets.collectAsState()
@@ -163,7 +165,15 @@ fun DevicesDialog(
             // PCs y TVs
             val showPcs = connectOn || pc != null
             if (showPcs || castEnabled) Column {
-                SheetLabel(t("Otros dispositivos", "Other devices"))
+                val searching by CastController.searching.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SheetLabel(t("Otros dispositivos", "Other devices"))
+                    // Se sigue buscando mientras la hoja está abierta, aunque ya haya TVs en la lista
+                    if (castEnabled && castAvailable && searching && tvs.isNotEmpty()) {
+                        Spacer(Modifier.width(8.dp))
+                        CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                    }
+                }
                 if (showPcs) pcs.forEach { name ->
                     val here = pc?.pc == name
                     DeviceRow(Icons.Rounded.Computer, name, "KevMusic Desktop", here) {
@@ -175,19 +185,56 @@ fun DevicesDialog(
                     }
                 }
                 if (castEnabled) tvs.forEach { tv ->
-                    val here = cast.device == tv.name
-                    val kind = if (tv.dlna != null) "DLNA" else "Chromecast"
+                    val here = cast.device == tv.name || (tv.twin != null && cast.device == tv.twin.name)
+                    val saved = CastController.savedProtocol(tv)
+                    val kind = when {
+                        tv.twin != null -> (if (saved == CastController.PROTOCOL_DLNA) "DLNA" else if (saved == CastController.PROTOCOL_CHROMECAST) "Chromecast" else "Chromecast / DLNA")
+                        tv.dlna != null -> "DLNA"
+                        else -> "Chromecast"
+                    }
+                    val hint = if (tv.twin != null && saved != null) " · " + t("mantén para cambiar", "hold to change") else ""
+                    val connect = { protocol: String? ->
+                        if (here) CastController.disconnect()
+                        val (songs, position) = queue()
+                        CastController.castTo(tv, songs, position, protocol)
+                        onCastStarted()
+                    }
                     DeviceRow(
                         if (tv.dlna != null) Icons.Rounded.Tv else Icons.Rounded.Cast, tv.name,
-                        if (tv.id == CastController.lastDeviceId() && !here) "TV · $kind · " + t("Último usado", "Last used") else "TV · $kind",
-                        here
+                        if (tv.id == CastController.lastDeviceId() && !here) "TV · $kind · " + t("Último usado", "Last used") + hint else "TV · $kind$hint",
+                        here,
+                        onLongClick = if (tv.twin != null && !cast.connecting) ({ choosing = tv }) else null
                     ) {
-                        if (!here && !cast.connecting) {
-                            val (songs, position) = queue()
-                            CastController.castTo(tv, songs, position)
-                            onCastStarted()
-                        }
+                        if (cast.connecting || here) return@DeviceRow
+                        // Una TV con Chromecast y DLNA: la primera vez se pregunta y se recuerda
+                        if (tv.twin != null && saved == null) choosing = tv else connect(null)
                     }
+                    if (choosing?.id == tv.id) AlertDialog(
+                        onDismissRequest = { choosing = null },
+                        title = { Text(t("¿Cómo conectar a ${tv.name}?", "How to connect to ${tv.name}?")) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    t("Esta TV admite las dos. Se recordará tu elección; mantén pulsada la TV para cambiarla.", "This TV supports both. Your choice is remembered; hold the TV to change it."),
+                                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                listOf(
+                                    Triple(CastController.PROTOCOL_CHROMECAST, "Chromecast", t("Cola propia: la TV puede mostrar siguiente y anterior. La carátula depende del receptor de Google.", "Own queue: the TV can show next and previous. Artwork depends on Google's receiver.")),
+                                    Triple(CastController.PROTOCOL_DLNA, "DLNA", t("Carátula a pantalla completa. Siguiente, repetir y aleatorio solo desde el teléfono.", "Full-screen artwork. Next, repeat and shuffle only from the phone."))
+                                ).forEach { (protocol, label, desc) ->
+                                    DeviceRow(
+                                        if (protocol == CastController.PROTOCOL_DLNA) Icons.Rounded.Tv else Icons.Rounded.Cast, label, desc,
+                                        saved == protocol
+                                    ) {
+                                        choosing = null
+                                        connect(protocol)
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {},
+                        dismissButton = { TextButton(onClick = { choosing = null }) { Text(t("Cancelar", "Cancel")) } }
+                    )
                 }
                 when {
                     castEnabled && !castAvailable ->
@@ -285,6 +332,7 @@ private fun SheetHint(text: String) {
 }
 
 /** Fila de la hoja: sin tarjeta; la actual va en el color principal con una marca. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun DeviceRow(
     icon: ImageVector,
@@ -292,11 +340,12 @@ internal fun DeviceRow(
     detail: String?,
     current: Boolean,
     trailing: ImageVector? = null,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val primary = MaterialTheme.colorScheme.primary
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .heightIn(min = 56.dp).padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

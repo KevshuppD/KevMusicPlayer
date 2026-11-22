@@ -490,6 +490,23 @@ private fun recordTypeLabel(type: String, getLocalized: (String, String) -> Stri
     else -> null
 }
 
+/** Resultados de álbumes y artistas ya buscados en esta sesión: al volver a la pestaña o repetir la búsqueda salen al instante. */
+private object OnlineSearchMemory {
+    private const val TTL_MS = 15 * 60_000L
+    private val map = object : java.util.LinkedHashMap<String, Pair<Long, List<Any>>>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, List<Any>>>?) = size > 40
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    fun <T> get(kind: String, query: String): List<T>? = synchronized(map) {
+        map["$kind|${query.trim().lowercase()}"]?.takeIf { System.currentTimeMillis() - it.first < TTL_MS }?.second as List<T>?
+    }
+
+    fun put(kind: String, query: String, value: List<Any>) = synchronized(map) {
+        map["$kind|${query.trim().lowercase()}"] = System.currentTimeMillis() to value
+    }
+}
+
 /** Álbumes de Deezer para una búsqueda en la pestaña Álbumes (modo bajo demanda). */
 class OnDemandAlbumSearchState(val albums: List<DeezerAlbum>, val loading: Boolean, val dialogState: ArtistOnlineState)
 
@@ -500,37 +517,29 @@ fun rememberOnDemandAlbumSearch(query: String, librarySongs: List<AudioFile>): O
     // Reutiliza el diálogo de álbum del perfil de artista, que solo necesita el matcher y el álbum abierto
     val dialogState = remember { ArtistOnlineState(matcher) }
     SideEffect { dialogState.matcher = matcher }
-    var albums by remember { mutableStateOf<List<DeezerAlbum>>(emptyList()) }
+    var albums by remember { mutableStateOf(OnlineSearchMemory.get<DeezerAlbum>("album", query).orEmpty()) }
     var loading by remember { mutableStateOf(false) }
     LaunchedEffect(query, ready) {
-        albums = emptyList()
+        val hit = if (ready && query.isNotBlank()) OnlineSearchMemory.get<DeezerAlbum>("album", query) else null
+        albums = hit.orEmpty()
         loading = false
-        if (!ready || query.isBlank()) return@LaunchedEffect
+        if (!ready || query.isBlank() || hit != null) return@LaunchedEffect
         kotlinx.coroutines.delay(600)
         loading = true
-        albums = try { DeezerTrackSearch.searchAlbums(query.trim(), 20) } catch (e: Exception) { emptyList() }
+        albums = try {
+            DeezerTrackSearch.searchAlbums(query.trim(), 20).also { OnlineSearchMemory.put("album", query, it) }
+        } catch (e: Exception) { emptyList() }
         loading = false
     }
     return OnDemandAlbumSearchState(albums, loading, dialogState)
 }
 
-/** Sección "En línea · bajo demanda" al final de la cuadrícula de álbumes. */
+/** Álbumes de Deezer al final de la cuadrícula de álbumes, sin cabecera propia. */
 fun androidx.compose.foundation.lazy.grid.LazyGridScope.onDemandAlbumSection(
     state: OnDemandAlbumSearchState,
     getLocalized: (String, String) -> String
 ) {
     if (state.albums.isEmpty() && !state.loading) return
-    item(key = "ondemand_albums_header", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-            Icon(Icons.Rounded.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                getLocalized("En línea · bajo demanda", "Online · on demand"),
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onBackground
-            )
-        }
-    }
     if (state.loading) {
         item(key = "ondemand_albums_loading", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
@@ -590,16 +599,23 @@ class OnDemandArtistSearchState(val artists: List<com.kevshupp.kevmusicplayer.da
 fun rememberOnDemandArtistSearch(query: String, libraryArtists: Set<String>): OnDemandArtistSearchState {
     val ready = rememberOnDemandReady(query.isBlank())
     val known = remember(libraryArtists) { libraryArtists.map { LibraryMatcher.normalize(it) }.toSet() }
-    var artists by remember { mutableStateOf<List<com.kevshupp.kevmusicplayer.data.telegram.DeezerArtist>>(emptyList()) }
+    var artists by remember {
+        mutableStateOf(
+            OnlineSearchMemory.get<com.kevshupp.kevmusicplayer.data.telegram.DeezerArtist>("artist", query).orEmpty()
+                .filterNot { LibraryMatcher.normalize(it.name) in known }
+        )
+    }
     var loading by remember { mutableStateOf(false) }
     LaunchedEffect(query, ready, known) {
-        artists = emptyList()
+        val hit = if (ready && query.isNotBlank()) OnlineSearchMemory.get<com.kevshupp.kevmusicplayer.data.telegram.DeezerArtist>("artist", query) else null
+        artists = hit.orEmpty().filterNot { LibraryMatcher.normalize(it.name) in known }
         loading = false
-        if (!ready || query.isBlank()) return@LaunchedEffect
+        if (!ready || query.isBlank() || hit != null) return@LaunchedEffect
         kotlinx.coroutines.delay(600)
         loading = true
         artists = try {
-            DeezerTrackSearch.searchArtists(query.trim(), 15).filterNot { LibraryMatcher.normalize(it.name) in known }
+            DeezerTrackSearch.searchArtists(query.trim(), 15).also { OnlineSearchMemory.put("artist", query, it) }
+                .filterNot { LibraryMatcher.normalize(it.name) in known }
         } catch (e: Exception) {
             emptyList()
         }
@@ -618,7 +634,6 @@ fun LazyListScope.onDemandArtistSection(
     onOpen: (String) -> Unit
 ) {
     if (state.artists.isEmpty() && !state.loading) return
-    item(key = "ondemand_artists_header") { SearchHeader(getLocalized("En línea · bajo demanda", "Online · on demand")) }
     if (state.loading) {
         item(key = "ondemand_artists_loading") {
             Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {

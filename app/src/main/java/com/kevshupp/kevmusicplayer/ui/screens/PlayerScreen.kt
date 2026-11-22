@@ -1239,7 +1239,10 @@ fun PlayerScreen(
                      queue = {
                          val start = player.currentMediaItemIndex.coerceAtLeast(0)
                          val songs = (start until player.mediaItemCount).mapNotNull { i ->
-                             viewModel?.audioFileMap?.get(player.getMediaItemAt(i).mediaId)?.takeIf { it.id > 0 }
+                             val mediaId = player.getMediaItemAt(i).mediaId
+                             // Las bajo demanda (id negativo) también se envían: DlnaSession las descarga al llegarles el turno
+                             viewModel?.audioFileMap?.get(mediaId)?.takeIf { it.id > 0 }
+                                 ?: mediaId.toLongOrNull()?.let { com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks.audioFileFor(context, it) }
                          }
                          songs to player.currentPosition
                      },
@@ -1247,6 +1250,39 @@ fun PlayerScreen(
                      onOpenTogether = { showDevicesDialog = false; showTogetherDialog = true },
                      onDismiss = { showDevicesDialog = false }
                  )
+             }
+
+             // Canción bajo demanda que está cargando o falló: cancelar / reintentar sin tener que ir a la búsqueda
+             val odId = playerState.currentSong?.mediaId?.toLongOrNull()?.takeIf { it < 0 }?.let { -it }
+             if (odId != null) {
+                 val odStatus by com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks.statuses.collectAsState()
+                 val st = odStatus[odId]
+                 val busy = st == com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Queued ||
+                     st == com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Requesting ||
+                     st is com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Downloading
+                 val failed = st is com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Failed
+                 if (busy || failed) {
+                     Row(
+                         modifier = Modifier
+                             .fillMaxWidth()
+                             .padding(horizontal = 24.dp, vertical = 6.dp)
+                             .clip(RoundedCornerShape(16.dp))
+                             .background((if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary).copy(alpha = 0.15f))
+                             .padding(start = 14.dp, end = 4.dp),
+                         verticalAlignment = Alignment.CenterVertically
+                     ) {
+                         Text(
+                             if (failed) (st as com.kevshupp.kevmusicplayer.data.telegram.DownloadStatus.Failed).reason
+                             else "Pidiendo la canción al bot…",
+                             modifier = Modifier.weight(1f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                             color = MaterialTheme.colorScheme.onBackground
+                         )
+                         TextButton(onClick = {
+                             if (failed) com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks.retry(context, odId)
+                             else com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks.cancel(odId)
+                         }) { Text(if (failed) "Reintentar" else "Cancelar") }
+                     }
+                 }
              }
 
              // Sonando en un PC ("Sonar en este PC" de KevMusic Desktop): aviso con "Traer aquí"

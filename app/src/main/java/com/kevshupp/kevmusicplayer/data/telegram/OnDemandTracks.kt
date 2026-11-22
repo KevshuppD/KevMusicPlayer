@@ -42,6 +42,9 @@ object OnDemandTracks {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val inFlight = HashMap<Long, CompletableDeferred<File>>()
+    private val jobs = HashMap<Long, kotlinx.coroutines.Job>()
+    /** Tiempo máximo total de una petición: pasado esto falla en vez de dejar la canción cargando. */
+    private const val TOTAL_TIMEOUT_MS = 150_000L
 
     private val _statuses = MutableStateFlow<Map<Long, DownloadStatus>>(emptyMap())
     /** Estado por id de Deezer (positivo), para la búsqueda y la cola. */
@@ -117,23 +120,43 @@ object OnDemandTracks {
             inFlight[deezerId]?.let { it to false } ?: CompletableDeferred<File>().also { inFlight[deezerId] = it }.let { it to true }
         }
         if (owner) {
-            scope.launch {
+            val job = scope.launch {
                 try {
-                    deferred.complete(download(app, deezerId))
+                    deferred.complete(kotlinx.coroutines.withTimeout(TOTAL_TIMEOUT_MS) { download(app, deezerId) })
                 } catch (e: Throwable) {
-                    val reason = when (e) {
-                        is kotlinx.coroutines.TimeoutCancellationException -> "El bot no respondió"
+                    val cancelled = e is kotlinx.coroutines.CancellationException && e !is kotlinx.coroutines.TimeoutCancellationException
+                    val reason = when {
+                        cancelled -> "Cancelada"
+                        e is kotlinx.coroutines.TimeoutCancellationException -> "El bot no respondió"
                         else -> e.message ?: "Error"
                     }
-                    _statuses.update { it + (deezerId to DownloadStatus.Failed(reason)) }
-                    TelemetryLogger.logError(app, "OnDemand", "No se pudo obtener $deezerId: $reason", e)
+                    _statuses.update { if (cancelled) it - deezerId else it + (deezerId to DownloadStatus.Failed(reason)) }
+                    if (!cancelled) TelemetryLogger.logError(app, "OnDemand", "No se pudo obtener $deezerId: $reason", e)
                     deferred.completeExceptionally(java.io.IOException(reason, e))
                 } finally {
-                    synchronized(inFlight) { inFlight.remove(deezerId) }
+                    synchronized(inFlight) { inFlight.remove(deezerId); jobs.remove(deezerId) }
                 }
             }
+            synchronized(inFlight) { jobs[deezerId] = job }
         }
         return deferred.await()
+    }
+
+    /** Cancela la petición en curso (la canción falla con "Cancelada" y la cola salta a la siguiente). */
+    fun cancel(deezerId: Long) {
+        synchronized(inFlight) { jobs[deezerId] }?.cancel()
+    }
+
+    /** Vuelve a pedirla desde cero: cancela lo que hubiera y empieza otra petición. */
+    fun retry(context: Context, deezerId: Long) {
+        val app = context.applicationContext
+        cancel(deezerId)
+        _statuses.update { it - deezerId }
+        scope.launch {
+            // Espera a que la cancelación termine (libera el candado del bot) antes de pedirla otra vez
+            withTimeoutOrNull(3_000) { while (synchronized(inFlight) { inFlight.containsKey(deezerId) }) kotlinx.coroutines.delay(50) }
+            runCatching { ensureFile(app, deezerId) }
+        }
     }
 
     /** Descarga en segundo plano las próximas canciones remotas de la cola. */

@@ -3,6 +3,7 @@ package com.kevshupp.kevmusicplayer.data.cast
 import android.content.Context
 import com.kevshupp.kevmusicplayer.data.AudioFile
 import com.kevshupp.kevmusicplayer.data.TelemetryLogger
+import com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks
 import com.kevshupp.kevmusicplayer.playback.getPhysicalPath
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,9 @@ class DlnaSession(
     /** Título, si suena y error. */
     private val onStatus: (String, Boolean, String?) -> Unit,
     private val onSongChanged: (Long) -> Unit,
-    private val onLost: (String) -> Unit
+    private val onLost: (String) -> Unit,
+    /** La tele cambió su modo de reproducción (botones de repetir o aleatorio): modo anterior y nuevo. */
+    private val onPlayMode: (String, String) -> Unit = { _, _ -> }
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val commands = Mutex()
@@ -40,6 +43,9 @@ class DlnaSession(
     @Volatile private var sawPlaying = false
     @Volatile private var playing = false
     @Volatile private var error: String? = null
+
+    /** 0 no repetir, 1 repetir una (`Player.REPEAT_MODE_ONE`), 2 repetir todo. Lo fija el reproductor del teléfono. */
+    @Volatile var repeatMode = 0
 
     @Volatile var positionMs = 0L
         private set
@@ -63,10 +69,26 @@ class DlnaSession(
         if (pollJob == null) pollJob = scope.launch { pollLoop() }
     }
 
+    /**
+     * La cola del teléfono cambió (añadir, quitar, mover) con la sesión abierta: se cambian las siguientes sin
+     * tocar la que suena. [songs] empieza en la canción actual; si no coincide con la de la TV se ignora.
+     */
+    fun syncQueue(songs: List<AudioFile>) {
+        scope.launch {
+            commands.withLock {
+                val current = queue.getOrNull(index) ?: return@withLock
+                if (songs.firstOrNull()?.id != current.id) return@withLock
+                queue = queue.take(index) + songs
+                runCatching { preloadNext() }
+            }
+        }
+    }
+
     /** Si el dispositivo rechaza una canción (formato), pasa a la siguiente, hasta 3 seguidas. */
     private suspend fun playIndex(startMs: Long, attempt: Int = 0) {
         val song = queue.getOrNull(index) ?: return finish()
         changing = true
+        preparedNext = null
         sawPlaying = false
         positionMs = startMs
         publish(song)
@@ -91,7 +113,12 @@ class DlnaSession(
     }
 
     private suspend fun start(song: AudioFile, startMs: Long) {
-        val path = getPhysicalPath(context, song.id, song.uriString) ?: error("Archivo no encontrado")
+        val path = if (OnDemandTracks.isRemoteId(song.id)) {
+            // Bajo demanda: se pide al bot (mismo candado y descarga compartida que el reproductor) y luego se sirve el archivo
+            OnDemandTracks.ensureFile(context, OnDemandTracks.deezerIdOf(song.id)).absolutePath
+        } else {
+            getPhysicalPath(context, song.id, song.uriString) ?: error("Archivo no encontrado")
+        }
         val mime = CastMediaServer.mimeOf(path) ?: error("Formato no admitido")
         val url = "$baseUrl/song/${song.id}.${path.substringAfterLast('.')}"
         // Muchas teles no aceptan otra URI mientras reproducen
@@ -103,6 +130,82 @@ class DlnaSession(
             // Solo se puede saltar cuando ya empezó
             runCatching { waitUntilPlaying(); DlnaClient.seek(renderer, startMs) }
         }
+        runCatching { preloadNext() }
+        // Una vez por sesión: qué permite la tele (si "Next" no está en la lista, su botón de siguiente no puede funcionar)
+        if (!capabilitiesLogged) {
+            capabilitiesLogged = true
+            delay(1500)
+            TelemetryLogger.logInfo(
+                context, "Cast",
+                "${renderer.name} acciones permitidas: ${DlnaClient.transportActions(renderer)} · capacidades: ${DlnaClient.deviceCapabilities(renderer)}"
+            )
+        }
+    }
+
+    private var capabilitiesLogged = false
+
+    /** Índice de la canción que sigue a la actual según el modo de repetición, o null si no hay (o se repite la misma). */
+    private fun nextIndex(): Int? = when {
+        repeatMode == 1 -> null
+        index + 1 < queue.size -> index + 1
+        repeatMode == 2 && queue.size > 1 -> 0
+        else -> null
+    }
+
+    /** Índice al que se pasa al terminar o al pulsar siguiente; fuera de rango si se acabó la cola. */
+    private fun advancedIndex(): Int = when {
+        repeatMode == 1 -> index
+        index + 1 < queue.size -> index + 1
+        repeatMode == 2 -> 0
+        else -> queue.size
+    }
+
+    /** Deja preparada en la tele la canción siguiente (si ya está lista en el teléfono; las bajo demanda se piden al llegarles el turno). */
+    private fun preloadNext() {
+        val i = nextIndex() ?: return
+        val song = queue[i]
+        // Ya preparada para esta canción (la cola se sincroniza justo tras empezar): no repetir la orden
+        val key = (queue.getOrNull(index)?.id ?: return) to song.id
+        if (preparedNext == key) return
+        val path = if (OnDemandTracks.isRemoteId(song.id)) OnDemandTracks.readyFile(context, OnDemandTracks.deezerIdOf(song.id))?.absolutePath
+            else getPhysicalPath(context, song.id, song.uriString)
+        path ?: return
+        val mime = CastMediaServer.mimeOf(path) ?: return
+        val url = "$baseUrl/song/${song.id}.${path.substringAfterLast('.')}"
+        try {
+            DlnaClient.setNextUri(renderer, url, DlnaClient.didl(song.title, song.artist, song.album, url, mime, "$baseUrl/art/${song.id}.jpg", song.duration))
+            preparedNext = key
+            TelemetryLogger.logInfo(context, "Cast", "${renderer.name} aceptó la siguiente canción: ${song.title}")
+        } catch (e: Exception) {
+            if (!nextUriRejectedLogged) {
+                nextUriRejectedLogged = true
+                TelemetryLogger.logInfo(context, "Cast", "${renderer.name} no aceptó la siguiente canción preparada: ${e.message}")
+            }
+        }
+    }
+
+    private var nextUriRejectedLogged = false
+    /** (canción actual, siguiente) ya enviada a la tele; se borra al cambiar de canción porque SetAVTransportURI la descarta. */
+    @Volatile private var preparedNext: Pair<Long, Long>? = null
+    @Volatile private var lastPlayMode: String? = null
+
+    /** Sigue los botones de repetir y aleatorio de la tele: solo avisa de cambios, la primera lectura es la referencia. */
+    private fun checkPlayMode() {
+        val mode = DlnaClient.playMode(renderer) ?: return
+        val previous = lastPlayMode
+        lastPlayMode = mode
+        if (previous == null) {
+            TelemetryLogger.logInfo(context, "Cast", "${renderer.name} modo de reproducción inicial: $mode")
+        } else if (mode != previous) {
+            TelemetryLogger.logInfo(context, "Cast", "${renderer.name} cambió el modo de reproducción: $previous → $mode")
+            onPlayMode(previous, mode)
+        }
+    }
+
+    /** El teléfono cambió repetir o aleatorio: se refleja en los iconos de la tele (sin tomarlo luego por un cambio suyo). */
+    fun pushPlayMode(mode: String) = command {
+        DlnaClient.setPlayMode(renderer, mode)
+        lastPlayMode = mode
     }
 
     private suspend fun waitUntilPlaying() {
@@ -133,10 +236,11 @@ class DlnaSession(
             if (changing || commands.isLocked) continue
             try {
                 val state = DlnaClient.transportState(renderer)
-                val position = DlnaClient.positionMs(renderer)
+                val (position, trackUri) = DlnaClient.positionInfo(renderer)
                 failures = 0
-                onPoll(state, position)
+                onPoll(state, position, trackUri)
                 if (++polls % 3 == 0) refreshVolume()
+                if (polls % 2 == 0) checkPlayMode()
             } catch (e: Exception) {
                 if (++failures >= 6) {
                     TelemetryLogger.logInfo(context, "Cast", "DLNA sin respuesta: ${e.message}")
@@ -147,8 +251,30 @@ class DlnaSession(
         }
     }
 
-    private suspend fun onPoll(state: String, position: Long) {
+    private suspend fun onPoll(state: String, position: Long, trackUri: String?) {
         val song = queue.getOrNull(index) ?: return
+        // La tele cambió de canción sola (botón "siguiente" del mando o paso a la canción preparada): se sigue su cambio.
+        // Justo tras empezar una canción algunas teles aún informan de la anterior, así que se espera unos segundos.
+        val playingId = trackUri?.let { Regex("/song/(-?\\d+)\\.").find(it)?.groupValues?.get(1)?.toLongOrNull() }
+        if (state == "PLAYING" && playingId != null && playingId != song.id && System.currentTimeMillis() - startedAt > TRACK_CHANGE_GRACE_MS) {
+            val found = queue.indexOfFirst { it.id == playingId }
+            if (found >= 0) {
+                TelemetryLogger.logInfo(context, "Cast", "${renderer.name} cambió de canción por su cuenta: ${queue[found].title}")
+                commands.withLock {
+                    index = found
+                    startedAt = System.currentTimeMillis()
+                    sawPlaying = true
+                    positionMs = 0L
+                    error = null
+                    val now = queue[found]
+                    publish(now)
+                    onSongChanged(now.id)
+                    preparedNext = null
+                    runCatching { preloadNext() }
+                }
+                return
+            }
+        }
         if (position > 0) positionMs = position
         val stopped = state == "STOPPED" || state == "NO_MEDIA_PRESENT"
         when {
@@ -159,7 +285,7 @@ class DlnaSession(
             state == "PAUSED_PLAYBACK" -> setPlaying(false, song)
             // Terminó sola: parar desde el mando de la tele lejos del final no debe saltar a otra canción
             stopped && sawPlaying && positionMs >= song.duration - END_MARGIN_MS -> commands.withLock {
-                index++
+                index = advancedIndex()
                 playIndex(0L)
             }
             stopped && sawPlaying -> setPlaying(false, song)
@@ -205,8 +331,10 @@ class DlnaSession(
     }
 
     fun next() = command {
-        if (index + 1 < queue.size) {
-            index++
+        val target = if (repeatMode == 1) (if (index + 1 < queue.size) index + 1 else if (queue.size > 1) 0 else -1)
+            else advancedIndex()
+        if (target in queue.indices) {
+            index = target
             playIndex(0L)
         }
     }
@@ -261,5 +389,6 @@ class DlnaSession(
     private companion object {
         const val END_MARGIN_MS = 8000L
         const val START_TIMEOUT_MS = 20_000L
+        const val TRACK_CHANGE_GRACE_MS = 4_000L
     }
 }

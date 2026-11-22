@@ -3,6 +3,7 @@ package com.kevshupp.kevmusicplayer.data.cast
 import android.content.Context
 import android.net.ConnectivityManager
 import com.kevshupp.kevmusicplayer.data.AppDatabase
+import com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks
 import com.kevshupp.kevmusicplayer.playback.getPhysicalPath
 import com.kevshupp.kevmusicplayer.ui.screens.loadAlbumArtBitmap
 import fi.iki.elonen.NanoHTTPD
@@ -35,11 +36,24 @@ class CastMediaServer(private val context: Context) : NanoHTTPD(0) {
         val parts = session.uri.trim('/').split('/')
         if (parts.size != 3 || parts[0] != token) return notFound()
         val id = parts[2].substringBefore('.').toLongOrNull() ?: return notFound()
+        // Bajo demanda: el archivo es el de la caché o la biblioteca, que DlnaSession ya aseguró con ensureFile
+        if (OnDemandTracks.isRemoteId(id)) {
+            val deezerId = OnDemandTracks.deezerIdOf(id)
+            return try {
+                when (parts[1]) {
+                    "song" -> serveFile(OnDemandTracks.readyFile(context, deezerId) ?: return notFound(), session.headers["range"], session.method)
+                    "art" -> serveArt("kmpremote://deezer/$deezerId", session.parameters["shape"]?.firstOrNull() == "square")
+                    else -> notFound()
+                }
+            } catch (e: Exception) {
+                newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "error")
+            }
+        }
         val song = runBlocking(Dispatchers.IO) { AppDatabase.getDatabase(context).audioDao().getAudioFileById(id) } ?: return notFound()
         return try {
             when (parts[1]) {
                 "song" -> serveFile(File(getPhysicalPath(context, song.id, song.uriString) ?: return notFound()), session.headers["range"], session.method)
-                "art" -> serveArt(song.uriString)
+                "art" -> serveArt(song.uriString, session.parameters["shape"]?.firstOrNull() == "square")
                 else -> notFound()
             }
         } catch (e: Exception) {
@@ -67,11 +81,33 @@ class CastMediaServer(private val context: Context) : NanoHTTPD(0) {
         }
     }
 
-    private fun serveArt(uri: String): Response {
+    private fun serveArt(uri: String, square: Boolean = false): Response {
         val bitmap = loadAlbumArtBitmap(context, uri) ?: return notFound()
         val out = ByteArrayOutputStream()
-        // Nunca reciclar: viene de la caché de carátulas
-        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+        // Nunca reciclar el original: viene de la caché de carátulas. Las teles recortan por el centro para llenar su
+        // recuadro (16:9 o cuadrado según el modelo): la carátula va entera, a toda la altura y centrada, sobre un
+        // lienzo 16:9 negro; así no pierde nada ni recortando a 16:9 ni a cuadrado
+        // Chromecast ([square]): su receptor ya coloca la carátula a su manera; si recibe una imagen 16:9 con bandas la achica en una
+        // esquina, así que se le da la carátula cuadrada, sin bandas ni recorte
+        val height = if (square) maxOf(bitmap.width, bitmap.height).coerceIn(1, 800) else 720
+        val width = if (square) height else 1280
+        val canvasBitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = android.graphics.Canvas(canvasBitmap)
+            canvas.drawColor(android.graphics.Color.BLACK)
+            val scale = minOf(height.toFloat() / bitmap.height, width.toFloat() / bitmap.width)
+            val w = (bitmap.width * scale).toInt().coerceAtLeast(1)
+            val h = (bitmap.height * scale).toInt().coerceAtLeast(1)
+            val left = (width - w) / 2
+            val top = (height - h) / 2
+            canvas.drawBitmap(
+                bitmap, null, android.graphics.Rect(left, top, left + w, top + h),
+                android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+            )
+            canvasBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+        } finally {
+            canvasBitmap.recycle()
+        }
         val bytes = out.toByteArray()
         return newFixedLengthResponse(Response.Status.OK, "image/jpeg", ByteArrayInputStream(bytes), bytes.size.toLong())
             .apply { addHeader("Access-Control-Allow-Origin", "*") }

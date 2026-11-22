@@ -17,6 +17,7 @@ import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OfflinePin
 import androidx.compose.material.icons.rounded.QueuePlayNext
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -48,6 +49,16 @@ class OnDemandSearchState(
     val statuses: Map<Long, DownloadStatus>
 )
 
+/** Resultados ya buscados en esta sesión (consulta → pistas de Deezer): repetir o ampliar una búsqueda es instantáneo. */
+private val searchMemory = object : java.util.LinkedHashMap<String, Pair<Long, List<DeezerTrack>>>(32, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, List<DeezerTrack>>>?) = size > 40
+}
+private const val MEMORY_TTL_MS = 15 * 60_000L
+
+private fun remembered(key: String): List<DeezerTrack>? = synchronized(searchMemory) {
+    searchMemory[key]?.takeIf { System.currentTimeMillis() - it.first < MEMORY_TTL_MS }?.second
+}
+
 @Composable
 fun rememberOnDemandSearch(query: String, librarySongs: List<AudioFile>): OnDemandSearchState {
     // Se vuelve a leer al cambiar la búsqueda, para notar el interruptor de Ajustes sin reiniciar
@@ -58,13 +69,21 @@ fun rememberOnDemandSearch(query: String, librarySongs: List<AudioFile>): OnDema
     var tracks by remember { mutableStateOf<List<DeezerTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     LaunchedEffect(query, ready, matcher) {
-        tracks = emptyList()
         loading = false
-        if (!ready || query.isBlank()) return@LaunchedEffect
-        kotlinx.coroutines.delay(600)
-        loading = true
+        if (!ready || query.isBlank()) {
+            tracks = emptyList()
+            return@LaunchedEffect
+        }
+        val key = query.trim().lowercase()
+        val hit = remembered(key)
+        // Con la búsqueda ya guardada no se vacía la lista antes de rellenarla: sin parpadeo al volver a la pestaña
+        if (hit == null) tracks = emptyList()
+        // Ya buscada: se muestra al momento y sin esperar los 600 ms que evitan una petición por tecla
+        if (hit == null) kotlinx.coroutines.delay(600)
+        loading = hit == null
         tracks = try {
-            affinity.rank(DeezerTrackSearch.search(query.trim(), 25).filterNot { matcher.hasTrack(it) }) { it.artist }
+            val found = hit ?: DeezerTrackSearch.search(query.trim(), 25).also { synchronized(searchMemory) { searchMemory[key] = System.currentTimeMillis() to it } }
+            affinity.rank(found.filterNot { matcher.hasTrack(it) }) { it.artist }
         } catch (e: Exception) {
             emptyList()
         }
@@ -90,23 +109,28 @@ fun LazyListScope.onDemandSection(
     state: OnDemandSearchState,
     limit: Int,
     viewModel: MediaBrowserViewModel?,
-    getLocalized: (String, String) -> String
+    getLocalized: (String, String) -> String,
+    isCompact: Boolean = false,
+    songStyle: String = "card",
+    tracks: List<DeezerTrack> = state.tracks,
+    showLoading: Boolean = true
 ) {
-    if (state.tracks.isEmpty() && !state.loading) return
-    item(key = "ondemand_header") { SearchHeader(getLocalized("En línea · bajo demanda", "Online · on demand")) }
-    if (state.loading) {
+    if (tracks.isEmpty() && !(showLoading && state.loading)) return
+    if (showLoading && state.loading) {
         item(key = "ondemand_loading") {
             Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
             }
         }
     }
-    items(state.tracks.take(limit), key = { "ondemand_${it.id}" }) { track ->
+    items(tracks.take(limit), key = { "ondemand_${it.id}" }) { track ->
         val context = LocalContext.current
         OnDemandSearchResultItem(
             track = track,
             status = state.statuses[track.id],
             getLocalized = getLocalized,
+            isCompact = isCompact,
+            songStyle = songStyle,
             onPlay = { viewModel?.playOnDemand(track) },
             onQueue = { next ->
                 viewModel?.queueOnDemand(track, next)
@@ -155,7 +179,9 @@ internal fun OnDemandSearchResultItem(
     status: DownloadStatus?,
     getLocalized: (String, String) -> String,
     onPlay: () -> Unit,
-    onQueue: (next: Boolean) -> Unit
+    onQueue: (next: Boolean) -> Unit,
+    isCompact: Boolean = false,
+    songStyle: String = "card"
 ) {
     val context = LocalContext.current
     val offline = rememberOnDemandOffline(track)
@@ -178,19 +204,22 @@ internal fun OnDemandSearchResultItem(
         else -> Icons.Rounded.Cloud
     }
     var menuOpen by remember { mutableStateOf(false) }
+    // Con el estilo "modern" de la biblioteca la fila es idéntica a la de una canción local (mismo tamaño, sin tarjeta)
+    val modern = songStyle == "modern"
+    val artSize = if (modern) (if (isCompact) 44.dp else 52.dp) else 48.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
+            .padding(vertical = if (modern) 0.dp else 3.dp)
+            .clip(RoundedCornerShape(if (modern) 12.dp else 16.dp))
+            .background(if (modern) androidx.compose.ui.graphics.Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
             .clickable(onClick = onPlay)
-            .padding(8.dp),
+            .padding(horizontal = if (modern) (if (isCompact) 8.dp else 10.dp) else 8.dp, vertical = if (modern) (if (isCompact) 4.dp else 7.dp) else 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(artSize)
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
         ) {
@@ -224,6 +253,27 @@ internal fun OnDemandSearchResultItem(
                 )
             }
         }
+        // Petición al bot en curso (cola, reproductor o TV): cancelar para no quedar esperando; fallida: reintentar
+        val odBusy = status == DownloadStatus.Queued || status == DownloadStatus.Requesting || status is DownloadStatus.Downloading
+        if (odBusy && !offline.inLibrary && !offline.cached) {
+            IconButton(onClick = { OnDemandTracks.cancel(track.id) }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = getLocalized("Cancelar", "Cancel"),
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        } else if (status is DownloadStatus.Failed && !offline.inLibrary && !offline.cached) {
+            IconButton(onClick = { OnDemandTracks.retry(context, track.id) }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Rounded.Refresh,
+                    contentDescription = getLocalized("Reintentar", "Retry"),
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
         // Descarga fallida: el reintento queda a la vista, sin tener que abrir el menú
         if (dl is DownloadStatus.Failed && !offline.inLibrary) {
             IconButton(onClick = { OnDemandTracks.saveToLibrary(context, track) }, modifier = Modifier.size(40.dp)) {
@@ -235,15 +285,6 @@ internal fun OnDemandSearchResultItem(
                 )
             }
         }
-        // Sin tinte explícito heredaban un color oscuro y no se veían sobre el fondo
-        IconButton(onClick = { onQueue(true) }, modifier = Modifier.size(40.dp)) {
-            Icon(
-                Icons.Rounded.QueuePlayNext,
-                contentDescription = getLocalized("Reproducir a continuación", "Play next"),
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp)
-            )
-        }
         Box {
             IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
                 Icon(
@@ -254,6 +295,14 @@ internal fun OnDemandSearchResultItem(
                 )
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(getLocalized("Reproducir a continuación", "Play next")) },
+                    leadingIcon = { Icon(Icons.Rounded.QueuePlayNext, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        onQueue(true)
+                    }
+                )
                 DropdownMenuItem(
                     text = { Text(getLocalized("Añadir a la cola", "Add to queue")) },
                     leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) },
@@ -310,4 +359,34 @@ fun SearchHeader(text: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp)
     )
+}
+
+
+private fun normalizeForSearch(text: String) =
+    java.text.Normalizer.normalize(text.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").trim()
+
+/** Qué tan bien responde una canción a la búsqueda: 3 título exacto, 2 empieza igual, 1 contiene todas las palabras, 0 nada. */
+internal fun searchRelevance(title: String, artist: String, query: String): Int {
+    val q = normalizeForSearch(query)
+    if (q.isEmpty()) return 0
+    val t = normalizeForSearch(title)
+    val full = "${normalizeForSearch(artist)} $t"
+    val both = "$t ${normalizeForSearch(artist)}"
+    return when {
+        t == q || full == q || both == q -> 3
+        t.startsWith(q) || full.startsWith(q) -> 2
+        q.split(Regex("\\s+")).all { it in full } -> 1
+        else -> 0
+    }
+}
+
+/**
+ * Reparte los resultados en línea: los que responden a la búsqueda mejor que cualquier canción de tu biblioteca
+ * van arriba de la lista; el resto, al final.
+ */
+internal fun splitOnDemandByRelevance(tracks: List<DeezerTrack>, local: List<AudioFile>, query: String): Pair<List<DeezerTrack>, List<DeezerTrack>> {
+    if (tracks.isEmpty() || query.isBlank()) return emptyList<DeezerTrack>() to tracks
+    val bestLocal = local.maxOfOrNull { searchRelevance(it.title, it.artist, query) } ?: 0
+    val (top, rest) = tracks.partition { searchRelevance(it.title, it.artist, query) > bestLocal }
+    return top.sortedByDescending { searchRelevance(it.title, it.artist, query) } to rest
 }

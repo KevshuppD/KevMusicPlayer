@@ -787,11 +787,18 @@ fun LibraryScreen(
                             when (tab) {
                                 "Songs" -> {
                                     val onDemand = rememberOnDemandSearch(searchQuery, audioFiles)
+                                    // Lo que responde mejor a la búsqueda que tu biblioteca va arriba; el resto, al final
+                                    val onDemandSplit = remember(onDemand.tracks, filteredFiles, searchQuery) {
+                                        splitOnDemandByRelevance(onDemand.tracks, filteredFiles, searchQuery)
+                                    }
                                     SongListView(
                                         songs = filteredFiles,
                                         listState = songsListState,
+                                        headerContent = if (searchQuery.isBlank() || onDemandSplit.first.isEmpty()) null else {
+                                            { onDemandSection(onDemand, Int.MAX_VALUE, viewModel, getLocalized, isCompact, librarySongStyle, onDemandSplit.first, showLoading = false) }
+                                        },
                                         footerContent = if (searchQuery.isBlank()) null else {
-                                            { onDemandSection(onDemand, Int.MAX_VALUE, viewModel, getLocalized) }
+                                            { onDemandSection(onDemand, Int.MAX_VALUE, viewModel, getLocalized, isCompact, librarySongStyle, onDemandSplit.second) }
                                         },
                                         isCompact = isCompact,
                                         songStyle = librarySongStyle,

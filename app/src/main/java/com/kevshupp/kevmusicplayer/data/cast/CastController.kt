@@ -24,7 +24,18 @@ import kotlinx.coroutines.launch
 /** Transmite la cola a un Chromecast o a un dispositivo DLNA (ver [DlnaSession]); el reproductor local queda en pausa. */
 object CastController {
     data class CastState(val device: String? = null, val connecting: Boolean = false, val title: String = "", val playing: Boolean = false, val error: String? = null)
-    data class Device(val id: String, val name: String, val route: MediaRouter.RouteInfo? = null, val dlna: DlnaRenderer? = null)
+    /**
+     * [twin]: la misma TV vista también por DLNA (mismo IP o mismo nombre). Se muestra una sola entrada, por Chromecast
+     * (cola real, la TV habilita siguiente y anterior) y, si no conecta, se transmite por DLNA.
+     */
+    data class Device(
+        val id: String, val name: String, val route: MediaRouter.RouteInfo? = null, val dlna: DlnaRenderer? = null,
+        val ip: String? = null, val twin: DlnaRenderer? = null
+    )
+
+    private val _searching = MutableStateFlow(false)
+    /** Mientras la hoja de dispositivos está abierta y se buscan TVs: para mostrar un indicador de búsqueda. */
+    val searching: StateFlow<Boolean> = _searching
 
     data class VolumeChange(val level: Float, val at: Long)
 
@@ -65,7 +76,10 @@ object CastController {
 
     private fun refreshDevices(router: MediaRouter) {
         castDevices = router.routes.filter { !it.isDefault && it.isEnabled && it.matchesSelector(selector) }
-            .map { Device(it.id, it.name, it) }
+            .map { route ->
+                val ip = runCatching { com.google.android.gms.cast.CastDevice.getFromBundle(route.extras)?.inetAddress?.hostAddress }.getOrNull()
+                Device(route.id, route.name, route, ip = ip)
+            }
         publishDevices()
     }
 
@@ -76,7 +90,12 @@ object CastController {
 
     private fun publishDevices() {
         val last = lastDeviceId()
-        _devices.value = (castDevices + dlnaDevices).sortedByDescending { it.id == last }
+        fun key(name: String) = name.lowercase().filter { it.isLetterOrDigit() }
+        fun same(c: Device, d: Device) = (c.ip != null && c.ip == d.ip) ||
+            key(c.name).let { a -> key(d.name).let { b -> a.length >= 4 && b.length >= 4 && (a == b || a.contains(b) || b.contains(a)) } }
+        val merged = castDevices.map { c -> dlnaDevices.firstOrNull { same(c, it) }?.let { c.copy(twin = it.dlna) } ?: c }
+        val rest = dlnaDevices.filter { d -> castDevices.none { same(it, d) } }
+        _devices.value = (merged + rest).sortedByDescending { it.id == last || it.twin?.id == last }
     }
 
     private var enabledFlow: MutableStateFlow<Boolean>? = null
@@ -96,6 +115,7 @@ object CastController {
     /** Busca mientras el diálogo está abierto. El bloqueo hace que Android no descarte el multicast de las respuestas. */
     private fun startDlnaDiscovery() {
         if (dlnaDiscovery?.isActive == true) return
+        _searching.value = true
         dlnaDiscovery = scope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val wifi = app.getSystemService(android.net.wifi.WifiManager::class.java)
             val lock = runCatching { wifi?.createMulticastLock("kevmusic-dlna")?.apply { acquire() } }.getOrNull()
@@ -106,7 +126,7 @@ object CastController {
                         emptyList()
                     }
                     if (found.isNotEmpty() || dlnaDevices.isNotEmpty()) {
-                        dlnaDevices = found.map { Device(it.id, it.name, dlna = it) }
+                        dlnaDevices = found.map { Device(it.id, it.name, dlna = it, ip = runCatching { java.net.URI(it.avTransportUrl).host }.getOrNull()) }
                         publishDevices()
                     }
                     kotlinx.coroutines.delay(4000)
@@ -195,6 +215,23 @@ object CastController {
                 togglePlay()
             }
 
+            override fun onRepeatModeChanged(repeatMode: Int) {
+                val session = dlna ?: return
+                session.repeatMode = repeatMode
+                // Iconos de la tele al día (DLNA solo tiene un modo a la vez: repetir tiene prioridad)
+                session.pushPlayMode(
+                    when (repeatMode) {
+                        androidx.media3.common.Player.REPEAT_MODE_ONE -> "REPEAT_ONE"
+                        androidx.media3.common.Player.REPEAT_MODE_ALL -> "REPEAT_ALL"
+                        else -> "NORMAL"
+                    }
+                )
+            }
+
+            override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+                if (dlna != null && reason == androidx.media3.common.Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) syncDlnaQueue(player)
+            }
+
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                 if (!isCasting || mediaItem == null) return
                 if (mediaItem.mediaId == followingMediaId) {
@@ -221,10 +258,27 @@ object CastController {
         val start = player.currentMediaItemIndex.coerceAtLeast(0)
         val ids = (start until player.mediaItemCount).take(MAX_QUEUE).mapNotNull { player.getMediaItemAt(it).mediaId.toLongOrNull() }
         scope.launch {
-            val dao = com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(app).audioDao()
-            val songs = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ids.filter { it > 0 }.mapNotNull { dao.getAudioFileById(it) } }
+            val songs = songsFor(ids)
             if (songs.isNotEmpty()) send(songs, positionMs)
         }
+    }
+
+    /** Las canciones de la cola en su orden: locales desde Room y bajo demanda (ids negativos) desde sus datos guardados. */
+    private suspend fun songsFor(ids: List<Long>): List<AudioFile> {
+        val dao = com.kevshupp.kevmusicplayer.data.AppDatabase.getDatabase(app).audioDao()
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            ids.mapNotNull { id ->
+                if (id < 0) com.kevshupp.kevmusicplayer.data.telegram.OnDemandTracks.audioFileFor(app, id) else dao.getAudioFileById(id)
+            }
+        }
+    }
+
+    /** La cola cambió con la TV conectada por DLNA: se actualizan las siguientes sin reiniciar la canción. */
+    private fun syncDlnaQueue(player: androidx.media3.common.Player) {
+        val session = dlna ?: return
+        val start = player.currentMediaItemIndex.coerceAtLeast(0)
+        val ids = (start until player.mediaItemCount).take(MAX_QUEUE).mapNotNull { player.getMediaItemAt(it).mediaId.toLongOrNull() }
+        scope.launch { session.syncQueue(songsFor(ids)) }
     }
 
     /** La TV pasó a otra canción: el teléfono la muestra, sin sonar. */
@@ -262,13 +316,25 @@ object CastController {
     private val sessionListener = object : SessionManagerListener<CastSession> {
         override fun onSessionStarted(session: CastSession, sessionId: String) = onConnected(session)
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) = onConnected(session)
-        override fun onSessionStartFailed(session: CastSession, error: Int) = fail("No se pudo conectar con el dispositivo ($error)")
+        override fun onSessionStartFailed(session: CastSession, error: Int) = failOrFallback("No se pudo conectar con el dispositivo ($error)")
         override fun onSessionResumeFailed(session: CastSession, error: Int) = fail("No se pudo conectar con el dispositivo ($error)")
         override fun onSessionEnded(session: CastSession, error: Int) = cleanUp()
         override fun onSessionStarting(session: CastSession) { _state.value = _state.value.copy(connecting = true, error = null) }
         override fun onSessionEnding(session: CastSession) {}
         override fun onSessionResuming(session: CastSession, sessionId: String) {}
         override fun onSessionSuspended(session: CastSession, reason: Int) {}
+    }
+
+    /** La misma TV por DLNA, por si el Chromecast no conecta: (dispositivo, canciones, posición). */
+    private var dlnaFallback: Triple<DlnaRenderer, List<AudioFile>, Long>? = null
+
+    private fun failOrFallback(message: String) {
+        val fallback = dlnaFallback
+        dlnaFallback = null
+        if (fallback == null) return fail(message)
+        TelemetryLogger.logInfo(app, "Cast", "Chromecast no conectó ($message): se transmite por DLNA a ${fallback.first.name}")
+        cleanUp()
+        castToDlna(fallback.first, fallback.second, fallback.third)
     }
 
     private fun fail(message: String) {
@@ -278,6 +344,7 @@ object CastController {
 
     private fun onConnected(session: CastSession) {
         connectTimeout?.cancel()
+        dlnaFallback = null
         _state.value = _state.value.copy(device = session.castDevice?.friendlyName ?: "Chromecast", connecting = false, error = null)
         localPlayer?.pause()
         session.remoteMediaClient?.registerCallback(clientCallback)
@@ -311,12 +378,30 @@ object CastController {
     fun stopDiscovery() {
         runCatching { MediaRouter.getInstance(app).removeCallback(routeCallback) }
         dlnaDiscovery?.cancel()
+        _searching.value = false
     }
 
-    fun castTo(device: Device, songs: List<AudioFile>, positionMs: Long) {
+    const val PROTOCOL_CHROMECAST = "chromecast"
+    const val PROTOCOL_DLNA = "dlna"
+
+    private fun protocolKey(device: Device) = "protocol_" + (device.ip ?: device.name)
+
+    /** Por dónde conectar una TV que admite Chromecast y DLNA: lo que el usuario eligió, o null si aún no ha elegido. */
+    fun savedProtocol(device: Device): String? =
+        if (device.twin == null || !::app.isInitialized) null else lastPrefs().getString(protocolKey(device), null)
+
+    /**
+     * [protocol] solo importa en una TV con las dos opciones ([Device.twin]): se guarda y se usa en adelante.
+     * Sin él se usa lo guardado y, si nunca se eligió, Chromecast con DLNA de respaldo.
+     */
+    fun castTo(device: Device, songs: List<AudioFile>, positionMs: Long, protocol: String? = null) {
         lastPrefs().edit().putString("last_device", device.id).apply()
+        if (device.twin != null && protocol != null) lastPrefs().edit().putString(protocolKey(device), protocol).apply()
         publishDevices()
+        val chosen = if (device.twin != null) protocol ?: savedProtocol(device) else null
+        if (chosen == PROTOCOL_DLNA && device.twin != null) return castToDlna(device.twin, songs, positionMs)
         device.dlna?.let { return castToDlna(it, songs, positionMs) }
+        dlnaFallback = device.twin?.let { Triple(it, songs, positionMs) }
         pending = songs to positionMs
         _state.value = CastState(connecting = true)
         val session = runCatching { CastContext.getSharedInstance(app).sessionManager.currentCastSession }.getOrNull()
@@ -330,13 +415,32 @@ object CastController {
                 TelemetryLogger.logInfo(app, "Cast", "Sin respuesta de ${device.name}")
                 runCatching { CastContext.getSharedInstance(app).sessionManager.endCurrentSession(true) }
                 runCatching { MediaRouter.getInstance(app).let { it.unselect(MediaRouter.UNSELECT_REASON_STOPPED) } }
-                fail("${device.name} no respondió. Si es una tele sin Chromecast, prueba con su entrada DLNA.")
+                failOrFallback("${device.name} no respondió. Si es una tele sin Chromecast, prueba con su entrada DLNA.")
             }
         }
     }
 
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+
+    /** Con la pantalla apagada el Wi-Fi entra en ahorro y la TV deja de recibir el audio: se mantiene activo mientras se transmite. */
+    private fun holdWifi() {
+        if (wifiLock?.isHeld == true) return
+        wifiLock = runCatching {
+            val mode = if (android.os.Build.VERSION.SDK_INT >= 29) android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                else android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            app.applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
+                ?.createWifiLock(mode, "kevmusic-cast")?.apply { setReferenceCounted(false); acquire() }
+        }.getOrNull()
+    }
+
+    private fun releaseWifi() {
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        wifiLock = null
+    }
+
     private fun castToDlna(renderer: DlnaRenderer, songs: List<AudioFile>, positionMs: Long) {
         dlna?.stop {}
+        holdWifi()
         val base = ensureServer() ?: return fail("No hay red local: conecta el teléfono al mismo Wi-Fi que el dispositivo")
         val session = DlnaSession(
             app, renderer, base,
@@ -344,12 +448,34 @@ object CastController {
                 _state.value = _state.value.copy(title = title, playing = playing, error = error)
             },
             onSongChanged = { id -> scope.launch { followSong(id.toString()) } },
-            onLost = { message -> scope.launch { fail(message) } }
+            onLost = { message -> scope.launch { fail(message) } },
+            onPlayMode = { previous, mode -> scope.launch { applyTvPlayMode(previous, mode) } }
         )
         dlna = session
+        session.repeatMode = localPlayer?.repeatMode ?: 0
         _state.value = CastState(device = renderer.name)
         localPlayer?.pause()
-        session.load(songs.filter { getPhysicalPath(app, it.id, it.uriString)?.let(CastMediaServer::mimeOf) != null }, positionMs)
+        // Las bajo demanda se aceptan: su formato se conoce al descargarlas
+        session.load(songs.filter { it.id < 0 || getPhysicalPath(app, it.id, it.uriString)?.let(CastMediaServer::mimeOf) != null }, positionMs)
+    }
+
+    private fun isShuffleMode(mode: String) = mode.uppercase() in setOf("SHUFFLE", "RANDOM")
+
+    /** Los botones de repetir y aleatorio de la tele cambian el reproductor del teléfono (en el hilo principal). */
+    private fun applyTvPlayMode(previous: String, mode: String) {
+        val player = localPlayer ?: return
+        when (mode.uppercase()) {
+            "REPEAT_ONE" -> player.repeatMode = androidx.media3.common.Player.REPEAT_MODE_ONE
+            "REPEAT_ALL" -> player.repeatMode = androidx.media3.common.Player.REPEAT_MODE_ALL
+            "NORMAL", "DIRECT_1" -> player.repeatMode = androidx.media3.common.Player.REPEAT_MODE_OFF
+        }
+        // El aleatorio del teléfono (reordena la cola) solo se toca al entrar o salir del modo aleatorio de la tele
+        if (isShuffleMode(previous) != isShuffleMode(mode)) {
+            val phoneShuffle = com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.shuffleEnabled.value
+            if (phoneShuffle != null && phoneShuffle != isShuffleMode(mode)) {
+                com.kevshupp.kevmusicplayer.data.remote.RemoteControlServer.shuffleToggleRequests.tryEmit(Unit)
+            }
+        }
     }
 
     private fun ensureServer(): String? {
@@ -389,7 +515,7 @@ object CastController {
             putString(MediaMetadata.KEY_TITLE, song.title)
             putString(MediaMetadata.KEY_ARTIST, song.artist)
             putString(MediaMetadata.KEY_ALBUM_TITLE, song.album)
-            addImage(WebImage(Uri.parse("$base/art/${song.id}.jpg")))
+            addImage(WebImage(Uri.parse("$base/art/${song.id}.jpg?shape=square"), 640, 640))
         }
         val info = MediaInfo.Builder("$base/song/${song.id}.${path.substringAfterLast('.')}")
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
@@ -410,6 +536,7 @@ object CastController {
     }
 
     private fun cleanUp() {
+        releaseWifi()
         connectTimeout?.cancel()
         runCatching { client()?.unregisterCallback(clientCallback) }
         pending = null

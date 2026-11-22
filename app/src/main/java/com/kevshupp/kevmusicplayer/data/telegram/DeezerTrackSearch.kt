@@ -42,6 +42,8 @@ data class DeezerArtist(
 object DeezerTrackSearch {
     private const val API = "https://api.deezer.com"
     private const val ARTIST_CACHE_TTL_MS = 7L * 24 * 60 * 60 * 1000
+    /** Búsquedas de canciones, álbumes y artistas: se reutilizan 12 h (también sin red) en vez de pedirlas cada vez. */
+    private const val SEARCH_CACHE_TTL_MS = 12L * 60 * 60 * 1000
 
     /** Carpeta de la caché en disco de los perfiles de artista; la asigna la Application al arrancar. */
     @Volatile
@@ -72,17 +74,17 @@ object DeezerTrackSearch {
      */
     suspend fun search(query: String, limit: Int = 30, includeUnavailable: Boolean = false): List<DeezerTrack> =
         if (query.isBlank()) emptyList()
-        else getData("$API/search", "q" to query.trim(), "limit" to "$limit").let { parseTracks(it, includeUnavailable) }
+        else getData("$API/search", "q" to query.trim(), "limit" to "$limit", cacheTtlMs = SEARCH_CACHE_TTL_MS).let { parseTracks(it, includeUnavailable) }
 
     suspend fun searchAlbums(query: String, limit: Int = 30): List<DeezerAlbum> {
         if (query.isBlank()) return emptyList()
-        val data = getData("$API/search/album", "q" to query.trim(), "limit" to "$limit")
+        val data = getData("$API/search/album", "q" to query.trim(), "limit" to "$limit", cacheTtlMs = SEARCH_CACHE_TTL_MS)
         return (0 until data.length()).mapNotNull { i -> data.optJSONObject(i)?.let(::parseAlbum) }
     }
 
     suspend fun searchArtists(query: String, limit: Int = 20): List<DeezerArtist> {
         if (query.isBlank()) return emptyList()
-        val data = getData("$API/search/artist", "q" to query.trim(), "limit" to "$limit")
+        val data = getData("$API/search/artist", "q" to query.trim(), "limit" to "$limit", cacheTtlMs = SEARCH_CACHE_TTL_MS)
         return (0 until data.length()).mapNotNull { i ->
             val a = data.optJSONObject(i) ?: return@mapNotNull null
             DeezerArtist(

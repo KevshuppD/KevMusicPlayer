@@ -586,6 +586,17 @@ class PlaybackService : MediaLibraryService() {
 
         com.kevshupp.kevmusicplayer.data.cast.CastController.bindPlayer(this, player)
         com.kevshupp.kevmusicplayer.data.remote.PcRemote.bindPlayer(player)
+        // Al empezar o terminar una transmisión se recalcula la notificación para entrar o salir del primer plano
+        serviceScope.launch(Dispatchers.Main) {
+            var wasCasting = false
+            com.kevshupp.kevmusicplayer.data.cast.CastController.state.collect { st ->
+                val casting = st.device != null
+                if (casting != wasCasting) {
+                    wasCasting = casting
+                    runCatching { triggerNotificationUpdate() }
+                }
+            }
+        }
         val sessionBuilder = MediaLibrarySession.Builder(this, player, callback)
         if (pendingIntent != null) {
             sessionBuilder.setSessionActivity(pendingIntent)
@@ -867,7 +878,14 @@ class PlaybackService : MediaLibraryService() {
      * ("not allowed due to bg restriction") y Media3, que publica la notificación con esa llamada, la dejaba
      * congelada en la canción anterior. En ese caso se publica como notificación normal.
      */
-    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) = onUpdateNotificationInner(
+        session,
+        // Transmitiendo (DLNA/Chromecast) el reproductor local está en pausa, pero el servicio debe seguir en primer plano:
+        // si no, Android congela el sondeo de la TV y el servidor de audio y la transmisión se corta en segundo plano
+        startInForegroundRequired || com.kevshupp.kevmusicplayer.data.cast.CastController.isCasting
+    )
+
+    private fun onUpdateNotificationInner(session: MediaSession, startInForegroundRequired: Boolean) {
         val restricted = com.kevshupp.kevmusicplayer.data.BackgroundRestriction.isRestricted(this)
         if (restricted && startInForegroundRequired && !loggedBackgroundRestriction) {
             loggedBackgroundRestriction = true
